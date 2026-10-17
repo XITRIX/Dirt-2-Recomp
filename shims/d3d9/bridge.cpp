@@ -466,7 +466,12 @@ void d3d_create_device(X86* c) {
     pp.apply_window(focus);
     rt::log("d3d9: CreateDevice %ux%u fmt %u fullscreen %d flags 0x%X", p ? p->BackBufferWidth : 0,
             p ? p->BackBufferHeight : 0, p ? p->BackBufferFormat : 0, pp.windowed ? 0 : 1, a[4]);
-    const HRESULT hr = self ? self->CreateDevice(a[1], D3DDEVTYPE(a[2]), focus, a[4], p, &dev) : D3DERR_INVALIDCALL;
+    // The game uses the device from its loader threads as well as the render
+    // thread; Windows drivers tolerate that, DXVK only serialises with
+    // D3DCREATE_MULTITHREADED. Without it, concurrent calls corrupt DXVK state
+    // (device lost on Metal, flicker).
+    const DWORD flags = a[4] | D3DCREATE_MULTITHREADED;
+    const HRESULT hr = self ? self->CreateDevice(a[1], D3DDEVTYPE(a[2]), focus, flags, p, &dev) : D3DERR_INVALIDCALL;
     pp.done();
     if (a[6]) wr32(a[6], SUCCEEDED(hr) ? wrap(dev) : 0);
     rt::log("d3d9: CreateDevice -> 0x%08X", uint32_t(hr));
@@ -749,7 +754,10 @@ void d3d_get_adapter_monitor(X86* c) {
 void capture_back_buffer(IDirect3DDevice9* dev, uint32_t frame) {
     static const char* dir = std::getenv("DIRT2_SCREENSHOT_DIR");
     static const uint32_t every = std::getenv("DIRT2_SCREENSHOT_EVERY") ? std::atoi(std::getenv("DIRT2_SCREENSHOT_EVERY")) : 120;
-    if (!dir || !every || frame % every) return;
+    static const uint32_t from = std::getenv("DIRT2_SCREENSHOT_FROM") ? std::atoi(std::getenv("DIRT2_SCREENSHOT_FROM")) : 0;
+    static const uint32_t count = std::getenv("DIRT2_SCREENSHOT_COUNT") ? std::atoi(std::getenv("DIRT2_SCREENSHOT_COUNT")) : 0;
+    if (!dir || !every || frame < from || frame % every) return;
+    if (count && frame >= from + count * every) return;
     IDirect3DSurface9* bb = nullptr;
     if (FAILED(dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &bb))) return;
     D3DSURFACE_DESC d{};
@@ -794,6 +802,19 @@ void dev_present(X86* c) {
     const uint32_t frame = ++frames;
     if (self) capture_back_buffer(self, frame);
     if (frame == 1) rt::log("d3d9: first Present");
+    static const bool log_present = std::getenv("DIRT2_LOG_PRESENT") != nullptr;
+    if (log_present) {
+        static std::mutex mu;
+        static std::map<uint32_t, uint32_t> per_thread;
+        std::lock_guard lk(mu);
+        ++per_thread[rt::current_thread_id()];
+        if (frame % 300 == 0) {
+            std::string line;
+            for (auto& [t, n] : per_thread) line += " t" + std::to_string(t) + "=" + std::to_string(n);
+            rt::log("d3d9: Present by thread:%s (caller %08X)", line.c_str(), rd32(c->esp));
+            per_thread.clear();
+        }
+    }
     if (frame % 300 == 0) {
         const auto now = std::chrono::steady_clock::now();
         rt::log("d3d9: %u presents, %.1f fps", frame, 300.0 / std::chrono::duration<double>(now - t0).count());
@@ -807,6 +828,7 @@ void dev_present(X86* c) {
 }
 void swap_present(X86* c) {
     const Args a{c};
+    if (std::getenv("DIRT2_LOG_PRESENT")) rt::log("d3d9: SwapChain::Present by t%u (caller %08X)", rt::current_thread_id(), rd32(c->esp));
     auto* self = static_cast<IDirect3DSwapChain9*>(to_host(a[0]));
     const HRESULT hr = self ? self->Present(a.ptr<const RECT>(1), a.ptr<const RECT>(2), nullptr,
                                             a.ptr<const RGNDATA>(4), a[5])

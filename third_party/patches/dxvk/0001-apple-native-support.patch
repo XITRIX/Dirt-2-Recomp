@@ -454,10 +454,10 @@ index f9d1e98d..2d90be6a 100644
      }
  
 diff --git a/src/wsi/sdl3/wsi_platform_sdl3.cpp b/src/wsi/sdl3/wsi_platform_sdl3.cpp
-index 9975cdac..983a6908 100644
+index 9975cdac..4953ebe2 100644
 --- a/src/wsi/sdl3/wsi_platform_sdl3.cpp
 +++ b/src/wsi/sdl3/wsi_platform_sdl3.cpp
-@@ -9,6 +9,49 @@
+@@ -9,6 +9,51 @@
  
  namespace dxvk::wsi {
  
@@ -499,7 +499,9 @@ index 9975cdac..983a6908 100644
 +      bool r = false; onMain([&] { r = rawSetWindowFullscreenMode(w, m); }); return r;
 +    }
 +    bool SDLCALL mainCreateSurface(SDL_Window* w, VkInstance i, const VkAllocationCallbacks* a, VkSurfaceKHR* s) {
-+      bool r = false; onMain([&] { r = rawCreateSurface(w, i, a, s); }); return r;
++      bool r = false; onMain([&] { r = rawCreateSurface(w, i, a, s); });
++      Logger::info(str::format("SDL3 WSI: created Vulkan surface for window ", (void*)w));
++      return r;
 +    }
 +  }
 +#endif
@@ -507,7 +509,7 @@ index 9975cdac..983a6908 100644
    Sdl3WsiDriver::Sdl3WsiDriver() {
      libsdl = LoadLibraryA( // FIXME: Get soname as string from meson
  #if defined(_WIN32)
-@@ -19,6 +62,14 @@ namespace dxvk::wsi {
+@@ -19,6 +64,14 @@ namespace dxvk::wsi {
          "libSDL3.so.0"
  #endif
        );
@@ -522,7 +524,7 @@ index 9975cdac..983a6908 100644
      if (libsdl == nullptr)
        throw DxvkError("SDL3 WSI: Failed to load SDL3 DLL.");
  
-@@ -31,6 +82,17 @@ namespace dxvk::wsi {
+@@ -31,6 +84,17 @@ namespace dxvk::wsi {
        }
      #include "wsi_platform_sdl3_funcs.h"
  
