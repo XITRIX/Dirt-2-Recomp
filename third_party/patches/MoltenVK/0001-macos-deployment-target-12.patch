@@ -1,0 +1,66 @@
+diff --git a/ExternalDependencies.xcodeproj/project.pbxproj b/ExternalDependencies.xcodeproj/project.pbxproj
+index 8d50b215..61774617 100644
+--- a/ExternalDependencies.xcodeproj/project.pbxproj
++++ b/ExternalDependencies.xcodeproj/project.pbxproj
+@@ -5943,7 +5943,7 @@
+ 				GCC_WARN_UNUSED_VARIABLE = NO;
+ 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+ 				MACH_O_TYPE = staticlib;
+-				MACOSX_DEPLOYMENT_TARGET = 11.0;
++				MACOSX_DEPLOYMENT_TARGET = 12.0;
+ 				SKIP_INSTALL = YES;
+ 				TVOS_DEPLOYMENT_TARGET = 14.5;
+ 			};
+@@ -5993,7 +5993,7 @@
+ 				GCC_WARN_UNUSED_VARIABLE = NO;
+ 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+ 				MACH_O_TYPE = staticlib;
+-				MACOSX_DEPLOYMENT_TARGET = 11.0;
++				MACOSX_DEPLOYMENT_TARGET = 12.0;
+ 				SKIP_INSTALL = YES;
+ 				TVOS_DEPLOYMENT_TARGET = 14.5;
+ 				VALIDATE_PRODUCT = YES;
+diff --git a/MoltenVK/MoltenVK.xcodeproj/project.pbxproj b/MoltenVK/MoltenVK.xcodeproj/project.pbxproj
+index 2cfceaa4..f3bff097 100644
+--- a/MoltenVK/MoltenVK.xcodeproj/project.pbxproj
++++ b/MoltenVK/MoltenVK.xcodeproj/project.pbxproj
+@@ -2624,7 +2624,7 @@
+ 					"\"${BUILT_PRODUCTS_DIR}\"",
+ 				);
+ 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+-				MACOSX_DEPLOYMENT_TARGET = 11.0;
++				MACOSX_DEPLOYMENT_TARGET = 12.0;
+ 				MARKETING_VERSION = "${CURRENT_PROJECT_VERSION}";
+ 				MTL_ENABLE_DEBUG_INFO = YES;
+ 				PRELINK_LIBS = "${CONFIGURATION_BUILD_DIR}/libMoltenVKShaderConverter.a";
+@@ -2702,7 +2702,7 @@
+ 					"\"${BUILT_PRODUCTS_DIR}\"",
+ 				);
+ 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+-				MACOSX_DEPLOYMENT_TARGET = 11.0;
++				MACOSX_DEPLOYMENT_TARGET = 12.0;
+ 				MARKETING_VERSION = "${CURRENT_PROJECT_VERSION}";
+ 				MTL_ENABLE_DEBUG_INFO = NO;
+ 				PRELINK_LIBS = "${CONFIGURATION_BUILD_DIR}/libMoltenVKShaderConverter.a";
+diff --git a/MoltenVKShaderConverter/MoltenVKShaderConverter.xcodeproj/project.pbxproj b/MoltenVKShaderConverter/MoltenVKShaderConverter.xcodeproj/project.pbxproj
+index 3b6abaaa..dc8c7b14 100644
+--- a/MoltenVKShaderConverter/MoltenVKShaderConverter.xcodeproj/project.pbxproj
++++ b/MoltenVKShaderConverter/MoltenVKShaderConverter.xcodeproj/project.pbxproj
+@@ -686,7 +686,7 @@
+ 				);
+ 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+ 				MACH_O_TYPE = staticlib;
+-				MACOSX_DEPLOYMENT_TARGET = 11.0;
++				MACOSX_DEPLOYMENT_TARGET = 12.0;
+ 				PRODUCT_NAME = MoltenVKShaderConverter;
+ 				SKIP_INSTALL = YES;
+ 				TVOS_DEPLOYMENT_TARGET = 14.5;
+@@ -750,7 +750,7 @@
+ 				);
+ 				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+ 				MACH_O_TYPE = staticlib;
+-				MACOSX_DEPLOYMENT_TARGET = 11.0;
++				MACOSX_DEPLOYMENT_TARGET = 12.0;
+ 				PRODUCT_NAME = MoltenVKShaderConverter;
+ 				SKIP_INSTALL = YES;
+ 				TVOS_DEPLOYMENT_TARGET = 14.5;

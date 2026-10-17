@@ -2,6 +2,7 @@
 // Unknown targets are appended to recomp_discovered.txt so the next lift can
 // include them as extra entry points.
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <mutex>
 #include <unordered_map>
@@ -25,6 +26,13 @@ void record_unknown(uint32_t addr) {
 }
 
 }  // namespace
+
+uint32_t alloc_thunk(recomp_fn fn) {
+    static std::atomic<uint32_t> next{kThunkBase + 0xC0000};
+    const uint32_t a = next.fetch_add(16);
+    register_thunk(a, fn);
+    return a;
+}
 
 void register_thunk(uint32_t addr, recomp_fn fn) {
     std::lock_guard lk(g_mu);

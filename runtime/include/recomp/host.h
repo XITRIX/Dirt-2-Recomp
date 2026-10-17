@@ -58,6 +58,8 @@ recomp_fn lookup(uint32_t addr);
 // by `callee_pops`), returns eax.
 uint32_t invoke(X86* c, uint32_t addr, std::initializer_list<uint32_t> args, bool callee_pops);
 void register_thunk(uint32_t addr, recomp_fn fn);
+// Allocates a guest address that dispatches to fn (COM vtable slots, callbacks).
+uint32_t alloc_thunk(recomp_fn fn);
 
 // ---- SEH (seh.cpp) ----
 // Called with esp at the RaiseException/RtlUnwind return address.

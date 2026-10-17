@@ -12,3 +12,4 @@
 .DS_Store
 *.xcodeproj/xcuserdata/
 .cache/
+*.log

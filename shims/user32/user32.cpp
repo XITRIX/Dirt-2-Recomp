@@ -7,6 +7,7 @@
 #include <map>
 #include <mutex>
 
+#include "../../platform/platform.h"
 #include "../guest_printf.h"
 #include "../shim.h"
 
@@ -24,6 +25,7 @@ struct Window {
     uint32_t wndproc = 0, style = 0, exstyle = 0, userdata = 0;
     int32_t x = 0, y = 0, w = 1280, h = 720;
     bool visible = false;
+    platform::Window host = nullptr;  // SDL window backing this HWND
 };
 struct Msg {
     uint32_t hwnd, msg, wparam, lparam;
@@ -37,7 +39,12 @@ uint32_t g_next_hwnd = 0x00010010, g_next_atom = 0xC000;
 uint32_t g_focus = 0;
 int g_cursor_count = 0;
 
-int32_t g_screen_w = 1920, g_screen_h = 1080;
+void screen_size(int32_t* w, int32_t* h) {
+    static int sw = 0, sh = 0;
+    if (!sw) platform::display_size(&sw, &sh);
+    *w = sw;
+    *h = sh;
+}
 
 std::string class_key(uint32_t name_or_atom, bool wide) {
     if (name_or_atom < 0x10000) return "#" + std::to_string(name_or_atom);
@@ -91,6 +98,9 @@ uint32_t create_window(X86* c, const Args& a, bool wide) {
     w.y = int32_t(a[5]) == int32_t(0x80000000) ? 0 : int32_t(a[5]);
     if (int32_t(a[6]) > 0 && int32_t(a[6]) != int32_t(0x80000000)) w.w = int32_t(a[6]);
     if (int32_t(a[7]) > 0 && int32_t(a[7]) != int32_t(0x80000000)) w.h = int32_t(a[7]);
+    // Top-level windows get a real host window; child windows are records only.
+    if (!(w.style & 0x40000000))  // WS_CHILD
+        w.host = platform::create_window(w.w, w.h, "DiRT 2");
     uint32_t hwnd;
     {
         std::lock_guard lk(g_mu);
@@ -155,6 +165,14 @@ const Mode kModes[] = {{800, 600, 60}, {1024, 768, 60}, {1280, 720, 60}, {1280, 
 }  // namespace
 
 namespace shim {
+// Host window behind an HWND (used by the D3D9 bridge).
+void* host_window(uint32_t hwnd) {
+    std::lock_guard lk(g_mu);
+    if (!hwnd && !g_windows.empty()) return g_windows.begin()->second.host;
+    auto it = g_windows.find(hwnd);
+    return it == g_windows.end() ? nullptr : it->second.host;
+}
+
 // Used by the platform layer to deliver input and lifecycle messages.
 void post_message(uint32_t hwnd, uint32_t msg, uint32_t wp, uint32_t lp) {
     std::lock_guard lk(g_mu);
@@ -171,8 +189,14 @@ STDCALL(user32, CreateWindowExA, 12) { return create_window(c, a, false); }
 STDCALL(user32, CreateWindowExW, 12) { return create_window(c, a, true); }
 STDCALL(user32, DestroyWindow, 1) {
     send(c, a[0], WM_DESTROY, 0, 0);
-    std::lock_guard lk(g_mu);
-    g_windows.erase(a[0]);
+    platform::Window host = nullptr;
+    {
+        std::lock_guard lk(g_mu);
+        auto it = g_windows.find(a[0]);
+        if (it != g_windows.end()) host = it->second.host;
+        g_windows.erase(a[0]);
+    }
+    if (host) platform::destroy_window(host);
     return 1;
 }
 STDCALL(user32, DefWindowProcA, 4) { return a[1] == WM_NCCREATE ? 1 : 0; }
@@ -188,14 +212,25 @@ STDCALL(user32, PostQuitMessage, 1) {
     return 0;
 }
 STDCALL(user32, ShowWindow, 2) {
+    platform::Window host = nullptr;
+    bool was_visible;
     {
         std::lock_guard lk(g_mu);
         auto it = g_windows.find(a[0]);
         if (it == g_windows.end()) return 0;
+        was_visible = it->second.visible;
         it->second.visible = a[1] != 0;
+        host = it->second.host;
     }
+    if (host) platform::show_window(host, a[1] != 0);
     send(c, a[0], WM_SHOWWINDOW, a[1] != 0, 0);
-    return 0;
+    if (a[1] && !was_visible) {
+        // Windows activates a newly shown top-level window.
+        send(c, a[0], WM_ACTIVATEAPP, 1, 0);
+        send(c, a[0], WM_ACTIVATE, 1, 0);
+        send(c, a[0], WM_SETFOCUS, 0, 0);
+    }
+    return was_visible;
 }
 STDCALL(user32, UpdateWindow, 1) { return 1; }
 STDCALL(user32, IsWindowVisible, 1) {
@@ -204,12 +239,20 @@ STDCALL(user32, IsWindowVisible, 1) {
     return it != g_windows.end() && it->second.visible;
 }
 STDCALL(user32, SetWindowPos, 7) {
-    std::lock_guard lk(g_mu);
-    auto it = g_windows.find(a[0]);
-    if (it == g_windows.end()) return 0;
+    platform::Window host = nullptr;
+    int32_t w = 0, h = 0;
     const uint32_t flags = a[6];
-    if (!(flags & 0x2)) { it->second.x = int32_t(a[2]); it->second.y = int32_t(a[3]); }  // SWP_NOMOVE
-    if (!(flags & 0x1)) { it->second.w = int32_t(a[4]); it->second.h = int32_t(a[5]); }  // SWP_NOSIZE
+    {
+        std::lock_guard lk(g_mu);
+        auto it = g_windows.find(a[0]);
+        if (it == g_windows.end()) return 0;
+        if (!(flags & 0x2)) { it->second.x = int32_t(a[2]); it->second.y = int32_t(a[3]); }  // SWP_NOMOVE
+        if (!(flags & 0x1)) { it->second.w = int32_t(a[4]); it->second.h = int32_t(a[5]); }  // SWP_NOSIZE
+        host = it->second.host;
+        w = it->second.w;
+        h = it->second.h;
+    }
+    if (host && !(flags & 0x1) && w > 0 && h > 0) platform::set_window_size(host, w, h);
     return 1;
 }
 STDCALL(user32, AdjustWindowRect, 3) { return 1; }  // borderless: client == window
@@ -277,11 +320,13 @@ STDCALL(user32, BeginPaint, 2) {
 }
 STDCALL(user32, EndPaint, 2) { return 1; }
 STDCALL(user32, GetSystemMetrics, 1) {
+    int32_t sw, sh;
+    screen_size(&sw, &sh);
     switch (a[0]) {
-        case 0: return uint32_t(g_screen_w);   // SM_CXSCREEN
-        case 1: return uint32_t(g_screen_h);   // SM_CYSCREEN
-        case 78: return uint32_t(g_screen_w);  // SM_CXVIRTUALSCREEN
-        case 79: return uint32_t(g_screen_h);
+        case 0: return uint32_t(sw);   // SM_CXSCREEN
+        case 1: return uint32_t(sh);   // SM_CYSCREEN
+        case 78: return uint32_t(sw);  // SM_CXVIRTUALSCREEN
+        case 79: return uint32_t(sh);
         case 80: return 1;                     // SM_CMONITORS
         default: return 0;
     }
