@@ -90,6 +90,7 @@ void post_message(uint32_t hwnd, uint32_t msg, uint32_t wp, uint32_t lp);
 
 // Opens a file by Windows path (kernel32/file.cpp); CreateFile semantics.
 uint32_t open_file(const std::string& win, uint32_t access, uint32_t disposition);
+uint32_t open_file_ex(const std::string& win, uint32_t access, uint32_t disposition, uint32_t flags_attrs);
 
 // Signals an event handle (kernel32/sync.cpp).
 bool set_event(uint32_t h);

@@ -66,6 +66,13 @@ void show_window(Window w, bool show) {
     });
 }
 
+void set_fullscreen(Window w, bool fullscreen) {
+    on_main([&] {
+        SDL_SetWindowFullscreenMode(static_cast<SDL_Window*>(w), nullptr);
+        SDL_SetWindowFullscreen(static_cast<SDL_Window*>(w), fullscreen);
+    });
+}
+
 void drawable_size(Window w, int* width, int* height) {
     on_main([&] { SDL_GetWindowSizeInPixels(static_cast<SDL_Window*>(w), width, height); });
 }

@@ -58,6 +58,11 @@ if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
   target_link_libraries(dirt2_gen PUBLIC recomp_runtime)
   # Generated code is machine-written: silence warnings, keep -O2 even in debug.
   target_compile_options(dirt2_gen PRIVATE -w -O2 -fno-strict-aliasing)
+  # x86 memory ordering for the lifted code (acquire loads / release stores).
+  option(DIRT2_TSO "Emulate x86 TSO memory ordering in lifted code" ON)
+  if(DIRT2_TSO)
+    target_compile_definitions(dirt2_gen PRIVATE RECOMP_TSO=1)
+  endif()
 
   add_executable(dirt2 platform/sdl/sdl_main.cpp)
   target_link_libraries(dirt2 PRIVATE dirt2_shims dirt2_gen recomp_runtime dxvk_d3d9 SDL3::SDL3)

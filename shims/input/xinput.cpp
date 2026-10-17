@@ -1,0 +1,160 @@
+// XInput 1.3 on SDL3 gamepads (GameController on Apple platforms).
+// Player 1 falls back to a keyboard-driven virtual pad when no gamepad is
+// connected, which is what development on a Mac without a controller needs.
+#include <SDL3/SDL.h>
+
+#include <algorithm>
+#include <mutex>
+
+#include "../shim.h"
+
+using namespace shim;
+
+namespace {
+
+constexpr uint32_t ERROR_DEVICE_NOT_CONNECTED = 1167;
+
+enum : uint16_t {
+    XI_DPAD_UP = 0x0001, XI_DPAD_DOWN = 0x0002, XI_DPAD_LEFT = 0x0004, XI_DPAD_RIGHT = 0x0008,
+    XI_START = 0x0010, XI_BACK = 0x0020, XI_LTHUMB = 0x0040, XI_RTHUMB = 0x0080,
+    XI_LSHOULDER = 0x0100, XI_RSHOULDER = 0x0200, XI_A = 0x1000, XI_B = 0x2000, XI_X = 0x4000, XI_Y = 0x8000,
+};
+
+struct PadState {
+    uint16_t buttons = 0;
+    uint8_t lt = 0, rt = 0;
+    int16_t lx = 0, ly = 0, rx = 0, ry = 0;
+    bool operator==(const PadState&) const = default;
+};
+
+std::mutex g_mu;
+SDL_Gamepad* g_pads[4] = {};
+PadState g_last[4];
+uint32_t g_packet[4] = {};
+
+// Opens newly connected gamepads into free player slots.
+void refresh_pads() {
+    int count = 0;
+    SDL_JoystickID* ids = SDL_GetGamepads(&count);
+    for (int i = 0; i < count; ++i) {
+        bool open = false;
+        for (SDL_Gamepad* p : g_pads)
+            if (p && SDL_GetGamepadID(p) == ids[i]) open = true;
+        if (open) continue;
+        for (SDL_Gamepad*& p : g_pads)
+            if (!p) {
+                p = SDL_OpenGamepad(ids[i]);
+                if (p) rt::log("xinput: player slot -> %s", SDL_GetGamepadName(p));
+                break;
+            }
+    }
+    SDL_free(ids);
+    for (SDL_Gamepad*& p : g_pads)
+        if (p && !SDL_GamepadConnected(p)) {
+            SDL_CloseGamepad(p);
+            p = nullptr;
+        }
+}
+
+int16_t axis(SDL_Gamepad* p, SDL_GamepadAxis a, bool invert) {
+    const int v = SDL_GetGamepadAxis(p, a);
+    return int16_t(std::clamp(invert ? -v : v, -32767, 32767));
+}
+
+PadState read_pad(SDL_Gamepad* p) {
+    PadState s;
+    struct { SDL_GamepadButton b; uint16_t x; } map[] = {
+        {SDL_GAMEPAD_BUTTON_DPAD_UP, XI_DPAD_UP}, {SDL_GAMEPAD_BUTTON_DPAD_DOWN, XI_DPAD_DOWN},
+        {SDL_GAMEPAD_BUTTON_DPAD_LEFT, XI_DPAD_LEFT}, {SDL_GAMEPAD_BUTTON_DPAD_RIGHT, XI_DPAD_RIGHT},
+        {SDL_GAMEPAD_BUTTON_START, XI_START}, {SDL_GAMEPAD_BUTTON_BACK, XI_BACK},
+        {SDL_GAMEPAD_BUTTON_LEFT_STICK, XI_LTHUMB}, {SDL_GAMEPAD_BUTTON_RIGHT_STICK, XI_RTHUMB},
+        {SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, XI_LSHOULDER}, {SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, XI_RSHOULDER},
+        {SDL_GAMEPAD_BUTTON_SOUTH, XI_A}, {SDL_GAMEPAD_BUTTON_EAST, XI_B},
+        {SDL_GAMEPAD_BUTTON_WEST, XI_X}, {SDL_GAMEPAD_BUTTON_NORTH, XI_Y},
+    };
+    for (auto& m : map)
+        if (SDL_GetGamepadButton(p, m.b)) s.buttons |= m.x;
+    s.lt = uint8_t(std::clamp(SDL_GetGamepadAxis(p, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) / 128, 0, 255));
+    s.rt = uint8_t(std::clamp(SDL_GetGamepadAxis(p, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) / 128, 0, 255));
+    s.lx = axis(p, SDL_GAMEPAD_AXIS_LEFTX, false);
+    s.ly = axis(p, SDL_GAMEPAD_AXIS_LEFTY, true);  // XInput: up is positive
+    s.rx = axis(p, SDL_GAMEPAD_AXIS_RIGHTX, false);
+    s.ry = axis(p, SDL_GAMEPAD_AXIS_RIGHTY, true);
+    return s;
+}
+
+PadState read_keyboard() {
+    PadState s;
+    const bool* k = SDL_GetKeyboardState(nullptr);
+    if (!k) return s;
+    if (k[SDL_SCANCODE_UP]) s.buttons |= XI_DPAD_UP;
+    if (k[SDL_SCANCODE_DOWN]) s.buttons |= XI_DPAD_DOWN;
+    if (k[SDL_SCANCODE_LEFT]) { s.buttons |= XI_DPAD_LEFT; s.lx = -32767; }
+    if (k[SDL_SCANCODE_RIGHT]) { s.buttons |= XI_DPAD_RIGHT; s.lx = 32767; }
+    if (k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_SPACE]) s.buttons |= XI_A;
+    if (k[SDL_SCANCODE_ESCAPE]) s.buttons |= XI_B;
+    if (k[SDL_SCANCODE_TAB]) s.buttons |= XI_START;
+    if (k[SDL_SCANCODE_BACKSPACE]) s.buttons |= XI_BACK;
+    if (k[SDL_SCANCODE_W]) s.rt = 255;
+    if (k[SDL_SCANCODE_S]) s.lt = 255;
+    if (k[SDL_SCANCODE_Q]) s.buttons |= XI_LSHOULDER;
+    if (k[SDL_SCANCODE_E]) s.buttons |= XI_RSHOULDER;
+    if (k[SDL_SCANCODE_X]) s.buttons |= XI_X;
+    if (k[SDL_SCANCODE_Y]) s.buttons |= XI_Y;
+    return s;
+}
+
+}  // namespace
+
+STDCALL_ORD(xinput1_3, 2, 2) {  // XInputGetState(index, XINPUT_STATE*)
+    const uint32_t idx = a[0];
+    if (idx > 3 || !a[1]) return ERROR_DEVICE_NOT_CONNECTED;
+    std::lock_guard lk(g_mu);
+    refresh_pads();
+    PadState s;
+    if (g_pads[idx]) s = read_pad(g_pads[idx]);
+    else if (idx == 0) s = read_keyboard();
+    else return ERROR_DEVICE_NOT_CONNECTED;
+    if (!(s == g_last[idx])) {
+        g_last[idx] = s;
+        ++g_packet[idx];
+    }
+    const uint32_t d = a[1];
+    wr32(d + 0, g_packet[idx]);
+    wr16(d + 4, s.buttons);
+    wr8(d + 6, s.lt);
+    wr8(d + 7, s.rt);
+    wr16(d + 8, uint16_t(s.lx));
+    wr16(d + 10, uint16_t(s.ly));
+    wr16(d + 12, uint16_t(s.rx));
+    wr16(d + 14, uint16_t(s.ry));
+    return 0;
+}
+
+STDCALL_ORD(xinput1_3, 3, 2) {  // XInputSetState(index, XINPUT_VIBRATION*)
+    const uint32_t idx = a[0];
+    if (idx > 3) return ERROR_DEVICE_NOT_CONNECTED;
+    std::lock_guard lk(g_mu);
+    if (!g_pads[idx]) return idx == 0 ? 0 : ERROR_DEVICE_NOT_CONNECTED;
+    if (a[1]) SDL_RumbleGamepad(g_pads[idx], rd16(a[1]), rd16(a[1] + 2), 10000);
+    return 0;
+}
+
+STDCALL_ORD(xinput1_3, 4, 3) {  // XInputGetCapabilities(index, flags, XINPUT_CAPABILITIES*)
+    const uint32_t idx = a[0];
+    if (idx > 3 || !a[2]) return ERROR_DEVICE_NOT_CONNECTED;
+    std::lock_guard lk(g_mu);
+    refresh_pads();
+    if (!g_pads[idx] && idx != 0) return ERROR_DEVICE_NOT_CONNECTED;
+    const uint32_t d = a[2];
+    std::memset(rt::host_ptr(d), 0, 20);
+    wr8(d + 0, 1);         // XINPUT_DEVTYPE_GAMEPAD
+    wr8(d + 1, 1);         // XINPUT_DEVSUBTYPE_GAMEPAD
+    wr16(d + 4, 0xF3FF);   // all buttons
+    wr8(d + 6, 0xFF);
+    wr8(d + 7, 0xFF);
+    for (int i = 0; i < 4; ++i) wr16(d + 8 + 2 * i, 0xFFC0);
+    wr16(d + 16, 0xFFFF);
+    wr16(d + 18, 0xFFFF);
+    return 0;
+}

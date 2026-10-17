@@ -52,20 +52,81 @@ extern uint8_t* recomp_mem;
 
 #define RECOMP_MEM(a) (recomp_mem + (uint32_t)(a))
 
+#if defined(RECOMP_TSO)
+/* x86 TSO on a weakly ordered host: every guest load is an acquire and every
+ * store a release (ldar/stlr on ARM64), so cross-thread publication patterns
+ * written for x86 stay correct. Unaligned accesses (rare) use plain copies
+ * with fences, since ldar/stlr require natural alignment. */
+#define RECOMP_LD(T, a)                                                              \
+    do {                                                                             \
+        const uint8_t* p_ = RECOMP_MEM(a);                                           \
+        if (__builtin_expect(((uintptr_t)p_ & (sizeof(T) - 1)) == 0, 1))             \
+            return __atomic_load_n((const T*)p_, __ATOMIC_ACQUIRE);                   \
+        T v_;                                                                        \
+        memcpy(&v_, p_, sizeof(T));                                                  \
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);                                     \
+        return v_;                                                                   \
+    } while (0)
+#define RECOMP_ST(T, a, v)                                                           \
+    do {                                                                             \
+        uint8_t* p_ = RECOMP_MEM(a);                                                 \
+        if (__builtin_expect(((uintptr_t)p_ & (sizeof(T) - 1)) == 0, 1)) {           \
+            __atomic_store_n((T*)p_, (v), __ATOMIC_RELEASE);                          \
+            return;                                                                  \
+        }                                                                            \
+        __atomic_thread_fence(__ATOMIC_RELEASE);                                     \
+        const T v_ = (v);                                                            \
+        memcpy(p_, &v_, sizeof(T));                                                  \
+    } while (0)
+static inline uint8_t rd8(uint32_t a) { return __atomic_load_n(RECOMP_MEM(a), __ATOMIC_ACQUIRE); }
+static inline uint16_t rd16(uint32_t a) { RECOMP_LD(uint16_t, a); }
+static inline uint32_t rd32(uint32_t a) { RECOMP_LD(uint32_t, a); }
+static inline uint64_t rd64(uint32_t a) { RECOMP_LD(uint64_t, a); }
+static inline void wr8(uint32_t a, uint8_t v) { __atomic_store_n(RECOMP_MEM(a), v, __ATOMIC_RELEASE); }
+static inline void wr16(uint32_t a, uint16_t v) { RECOMP_ST(uint16_t, a, v); }
+static inline void wr32(uint32_t a, uint32_t v) { RECOMP_ST(uint32_t, a, v); }
+static inline void wr64(uint32_t a, uint64_t v) { RECOMP_ST(uint64_t, a, v); }
+static inline XMM rd128(uint32_t a) {
+    XMM v;
+    memcpy(&v, RECOMP_MEM(a), 16);
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    return v;
+}
+static inline void wr128(uint32_t a, XMM v) {
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    memcpy(RECOMP_MEM(a), &v, 16);
+}
+#else
 static inline uint8_t rd8(uint32_t a) { return *RECOMP_MEM(a); }
 static inline uint16_t rd16(uint32_t a) { uint16_t v; memcpy(&v, RECOMP_MEM(a), 2); return v; }
 static inline uint32_t rd32(uint32_t a) { uint32_t v; memcpy(&v, RECOMP_MEM(a), 4); return v; }
 static inline uint64_t rd64(uint32_t a) { uint64_t v; memcpy(&v, RECOMP_MEM(a), 8); return v; }
-static inline float rdf32(uint32_t a) { float v; memcpy(&v, RECOMP_MEM(a), 4); return v; }
-static inline double rdf64(uint32_t a) { double v; memcpy(&v, RECOMP_MEM(a), 8); return v; }
 static inline XMM rd128(uint32_t a) { XMM v; memcpy(&v, RECOMP_MEM(a), 16); return v; }
 static inline void wr8(uint32_t a, uint8_t v) { *RECOMP_MEM(a) = v; }
 static inline void wr16(uint32_t a, uint16_t v) { memcpy(RECOMP_MEM(a), &v, 2); }
 static inline void wr32(uint32_t a, uint32_t v) { memcpy(RECOMP_MEM(a), &v, 4); }
 static inline void wr64(uint32_t a, uint64_t v) { memcpy(RECOMP_MEM(a), &v, 8); }
-static inline void wrf32(uint32_t a, float v) { memcpy(RECOMP_MEM(a), &v, 4); }
-static inline void wrf64(uint32_t a, double v) { memcpy(RECOMP_MEM(a), &v, 8); }
 static inline void wr128(uint32_t a, XMM v) { memcpy(RECOMP_MEM(a), &v, 16); }
+#endif
+static inline float rdf32(uint32_t a) { const uint32_t u = rd32(a); float v; memcpy(&v, &u, 4); return v; }
+static inline double rdf64(uint32_t a) { const uint64_t u = rd64(a); double v; memcpy(&v, &u, 8); return v; }
+static inline void wrf32(uint32_t a, float v) { uint32_t u; memcpy(&u, &v, 4); wr32(a, u); }
+static inline void wrf64(uint32_t a, double v) { uint64_t u; memcpy(&u, &v, 8); wr64(a, u); }
+
+/* xchg with a memory operand is implicitly locked on x86. */
+#define RECOMP_XCHG(T, name)                                                          \
+    static inline T name(uint32_t a, T v) {                                           \
+        T* p = (T*)RECOMP_MEM(a);                                                     \
+        if (__builtin_expect(((uintptr_t)p & (sizeof(T) - 1)) == 0, 1))               \
+            return __atomic_exchange_n(p, v, __ATOMIC_SEQ_CST);                       \
+        T old;                                                                        \
+        memcpy(&old, p, sizeof(T));                                                   \
+        memcpy(p, &v, sizeof(T));                                                     \
+        return old;                                                                   \
+    }
+RECOMP_XCHG(uint8_t, xchg8)
+RECOMP_XCHG(uint16_t, xchg16)
+RECOMP_XCHG(uint32_t, xchg32)
 
 /* Partial register writes. */
 #define SET_LO8(r, v) ((r) = ((r) & 0xFFFFFF00u) | (uint8_t)(v))

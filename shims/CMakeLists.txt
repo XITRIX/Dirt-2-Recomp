@@ -12,6 +12,11 @@ add_library(dirt2_shims OBJECT
   misc/misc.cpp
   xlive/xlive.cpp
   ws2_32/ws2_32.cpp
-  d3d9/bridge.cpp)
+  d3d9/bridge.cpp
+  audio/dsound.cpp
+  input/dinput8.cpp
+  input/xinput.cpp
+  d3dx9/d3dx9.cpp
+  video/bink.cpp)
 target_link_libraries(dirt2_shims PUBLIC recomp_runtime dxvk_d3d9 SDL3::SDL3)
 target_compile_options(dirt2_shims PRIVATE -Wall -Wno-unused-parameter -Wno-unused-function)

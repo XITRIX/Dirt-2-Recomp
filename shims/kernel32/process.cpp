@@ -31,7 +31,7 @@ const Module kModules[] = {
     {"xinput1_3.dll", 0x6B000000}, {"dinput8.dll", 0x6F000000}, {"dsound.dll", 0x73F10000},
     {"openal32.dll", 0x6E000000}, {"binkw32.dll", 0x6D000000}, {"xlive.dll", 0x6C000000},
     {"ddraw.dll", 0x73760000}, {"imagehlp.dll", 0x76C90000}, {"crypt32.dll", 0x77AA0000},
-    {"wintrust.dll", 0x76C30000}, {"dbghelp.dll", 0x59A60000},
+    {"wintrust.dll", 0x76C30000}, {"dbghelp.dll", 0x59A60000}, {"psapi.dll", 0x76BF0000},
 };
 
 std::string lower(std::string s) {
@@ -90,6 +90,7 @@ uint32_t g_exception_filter = 0;
 
 uint32_t processor_count() {
     // The game picks workerMap{2,4,8}Core.xml from this; cap at 8.
+    if (const char* e = std::getenv("DIRT2_CPUS")) return std::clamp<uint32_t>(uint32_t(std::atoi(e)), 1, 8);
     const unsigned n = std::thread::hardware_concurrency();
     return std::clamp<uint32_t>(n ? n : 4, 1, 8);
 }
@@ -152,7 +153,7 @@ STDCALL(kernel32, GetProcAddress, 2) {
 }
 STDCALL(kernel32, GetCurrentProcess, 0) { return kCurrentProcess; }
 STDCALL(kernel32, GetCurrentProcessId, 0) { return 0x10; }
-STDCALL(kernel32, OpenProcess, 3) { return 0; }
+STDCALL(kernel32, OpenProcess, 3) { return a[2] == 0x10 ? kCurrentProcess : 0; }  // only our own process
 STDCALL(kernel32, GetExitCodeProcess, 2) { return 0; }
 STDCALL(kernel32, CreateProcessA, 10) {
     rt::log("CreateProcessA(%s, %s) not supported", a.str(0) ? a.str(0) : "", a.str(1) ? a.str(1) : "");
@@ -245,8 +246,7 @@ STDCALL(kernel32, GetVersionExA, 1) {
     }
     return 1;
 }
-STDCALL(kernel32, GetSystemInfo, 1) {
-    const uint32_t d = a[0];
+static void fill_system_info(uint32_t d) {
     std::memset(rt::host_ptr(d), 0, 36);
     wr32(d + 4, rt::kPage);
     wr32(d + 8, 0x10000);
@@ -256,6 +256,13 @@ STDCALL(kernel32, GetSystemInfo, 1) {
     wr32(d + 24, 586);
     wr32(d + 28, rt::kGranularity);
     wr16(d + 32, 6);
+}
+STDCALL(kernel32, GetSystemInfo, 1) {
+    fill_system_info(a[0]);
+    return 0;
+}
+STDCALL(kernel32, GetNativeSystemInfo, 1) {
+    fill_system_info(a[0]);
     return 0;
 }
 STDCALL(kernel32, IsProcessorFeaturePresent, 1) {

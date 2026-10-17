@@ -236,3 +236,24 @@ STDCALL(crypt32, CertFreeCertificateContext, 1) { return 1; }
 STDCALL(winmm, timeGetTime, 0) {
     return uint32_t(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
+
+// ---- psapi: the process list contains only the game itself ----
+STDCALL(psapi, EnumProcesses, 3) {  // (pids, cb, *needed)
+    if (a[1] >= 4 && a[0]) wr32(a[0], 0x10);
+    if (a[2]) wr32(a[2], 4);
+    return 1;
+}
+STDCALL(psapi, EnumProcessModules, 4) {  // (process, modules, cb, *needed)
+    if (a[2] >= 4 && a[1]) wr32(a[1], recomp_image_info.image_base);
+    if (a[3]) wr32(a[3], 4);
+    return 1;
+}
+STDCALL(psapi, GetModuleBaseNameA, 4) { return copy_out(a[2], a[3], "dirt2_game.exe"); }  // (process, module, name, size)
+STDCALL(psapi, GetProcessMemoryInfo, 3) {  // (process, PROCESS_MEMORY_COUNTERS*, cb)
+    if (a[1] && a[2] >= 40) {
+        std::memset(rt::host_ptr(a[1]), 0, a[2]);
+        wr32(a[1], a[2]);
+        wr32(a[1] + 12, 512u << 20);  // WorkingSetSize
+    }
+    return 1;
+}

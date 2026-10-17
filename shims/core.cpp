@@ -11,7 +11,7 @@ namespace shim {
 bool g_trace = std::getenv("RECOMP_TRACE") != nullptr;
 
 void trace_call(const char* sym, uint32_t ret_addr, const Args& a, uint32_t result) {
-    rt::log("%s(%08X, %08X, %08X, %08X) = %08X  [from %08X]", sym + 4, a[0], a[1], a[2], a[3], result, ret_addr);
+    rt::log("t%u %s(%08X, %08X, %08X, %08X) = %08X  [from %08X]", rt::current_thread_id(), sym + 4, a[0], a[1], a[2], a[3], result, ret_addr);
 }
 
 namespace {

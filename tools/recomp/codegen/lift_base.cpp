@@ -98,6 +98,14 @@ bool FnLifter::lift_base(LInsn& li) {
             line("c->esp = c->ebp; c->ebp = pop32(c);");
             return true;
         case ZYDIS_MNEMONIC_XCHG:
+            if (o0->type == ZYDIS_OPERAND_TYPE_MEMORY || o1->type == ZYDIS_OPERAND_TYPE_MEMORY) {
+                // Atomic like the locked x86 instruction.
+                const ZydisDecodedOperand& mem = o0->type == ZYDIS_OPERAND_TYPE_MEMORY ? *o0 : *o1;
+                const ZydisDecodedOperand& reg = o0->type == ZYDIS_OPERAND_TYPE_MEMORY ? *o1 : *o0;
+                line("const {} old = xchg{}({}, {});", T, b, ea(mem), rd(reg));
+                raw(wr(reg, "old"));
+                return true;
+            }
             line("const {0} a = {1}, b = {2};", T, rd(*o0), rd(*o1));
             raw(wr(*o0, "b"));
             raw(wr(*o1, "a"));

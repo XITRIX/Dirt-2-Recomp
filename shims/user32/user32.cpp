@@ -26,6 +26,7 @@ struct Window {
     int32_t x = 0, y = 0, w = 1280, h = 720;
     bool visible = false;
     platform::Window host = nullptr;  // SDL window backing this HWND
+    std::string class_name;
 };
 struct Msg {
     uint32_t hwnd, msg, wparam, lparam;
@@ -91,6 +92,7 @@ uint32_t create_window(X86* c, const Args& a, bool wide) {
         k = it->second;
     }
     Window w;
+    w.class_name = a[1] < 0x10000 ? key : (wide ? from_utf16(a[1]) : std::string(rt::host_str(a[1])));
     w.wndproc = k.wndproc;
     w.exstyle = a[0];
     w.style = a[3];
@@ -406,3 +408,33 @@ STDCALL(gdi32, GetObjectA, 3) {
 }
 STDCALL(gdi32, GetDIBits, 7) { return 0; }
 STDCALL(gdi32, ExtEscape, 6) { return 0; }
+
+// Resolved dynamically by the game's window scan.
+STDCALL(user32, EnumWindows, 2) {  // (callback, lParam)
+    std::vector<uint32_t> hwnds;
+    {
+        std::lock_guard lk(g_mu);
+        for (auto& [h, w] : g_windows) hwnds.push_back(h);
+    }
+    for (uint32_t h : hwnds)
+        if (!callback(c, a[0], {h, a[1]})) break;
+    return 1;
+}
+STDCALL(user32, GetClassNameA, 3) {  // (hwnd, buf, max)
+    std::lock_guard lk(g_mu);
+    auto it = g_windows.find(a[0]);
+    if (it == g_windows.end()) return 0;
+    return copy_out(a[1], a[2], it->second.class_name);
+}
+// EnumDisplayDevicesA(device, index, DISPLAY_DEVICEA*, flags): one adapter with one monitor.
+STDCALL(user32, EnumDisplayDevicesA, 4) {
+    if (a[1] != 0 || !a[2]) return 0;
+    const uint32_t d = a[2];
+    std::memset(rt::host_ptr(d + 4), 0, 420);
+    const bool monitor = a[0] != 0;  // asking for the monitors of an adapter
+    copy_out(d + 4, 32, monitor ? "\\\\.\\DISPLAY1\\Monitor0" : "\\\\.\\DISPLAY1");
+    copy_out(d + 36, 128, monitor ? "Generic PnP Monitor" : "Apple GPU");
+    wr32(d + 164, monitor ? 0x3 : 0x5);  // ACTIVE|ATTACHED or ATTACHED_TO_DESKTOP|PRIMARY_DEVICE
+    copy_out(d + 168, 128, monitor ? "MONITOR\\DEFAULT_MONITOR" : "PCI\\VEN_106B&DEV_0001");
+    return 1;
+}

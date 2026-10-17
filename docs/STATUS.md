@@ -9,7 +9,7 @@ Target executable: `dirt2_game.exe`, SHA-256 `49b1e00ea1d4bd02e633ceed63390b5cae
 | 1 | Skeleton, PE loader, analysis report | Done |
 | 2 | Full lift to C, links on macOS arm64 with stub imports | Done, with Unicorn differential tests |
 | 3 | Headless boot on macOS to the main loop | In progress: boots through CRT, GFWL and engine init to `Direct3DCreate9` |
-| 4 | Frontend renders (DXVK d3d9 + MoltenVK), audio, input, Bink | |
+| 4 | Frontend renders (DXVK d3d9 + MoltenVK), audio, input, Bink | In progress: DXVK device created by the game; blocked on an update-thread crash before the first frame |
 | 5 | Playable race on macOS | |
 | 6 | Playable race on iOS | |
 | 7 | tvOS, visionOS, performance | |
@@ -84,7 +84,12 @@ After editing `cases.txt`, run `tests/lifter/assemble.py` to regenerate `cases.b
 | advapi32, shell32, shlwapi, ole32, oleaut32, version, imagehlp, crypt32, wintrust, winmm | Complete for the imported set |
 | xlive (GFWL) | All 134 ordinals: offline, one local profile, async calls complete through XOVERLAPPED |
 | ws2_32 | Network reported as down (online services are gone) |
-| d3d9, d3dx9, d3dcompiler, dinput8, xinput, OpenAL, binkw32, dsound, ddraw | Not yet: milestone 4 |
+| d3d9 | Bridge to DXVK 3.1.1 native on MoltenVK 1.4.1 (see Graphics below) |
+| d3dx9 | Constant tables from CTAB, built-in run-time shaders, input semantics, mip filter/fill |
+| dinput8 / xinput1_3 | Keyboard and mouse via SDL3; XInput on SDL3 gamepads, keyboard fallback pad |
+| dsound | `GetDeviceID`, `DllGetClassObject` (hardware detection only) |
+| binkw32 | Stubs: videos are skipped until the FFmpeg decoder lands |
+| OpenAL, ddraw, d3dcompiler | Not yet |
 
 Notable fixes found by booting:
 
@@ -100,6 +105,39 @@ Debugging aids:
 - `tools/scripts/relift.sh [seconds]` re-lifts, rebuilds and runs headless with a time limit.
 - Runtime misses go to `recomp_discovered.txt`; merge them into `tools/recomp/config/entries.txt`.
 
+## Graphics (milestone 4)
+
+**Stack:** game → guest COM bridge (`shims/d3d9`) → DXVK 3.1.1 d3d9 (native, SDL3 WSI) → MoltenVK 1.4.1 → Metal.
+
+- DXVK and MoltenVK are pinned submodules. The Apple changes are in `third_party/patches` and applied by `tools/scripts/apply_patches.sh`; `tools/scripts/build_graphics.sh` builds both.
+- DXVK patches:
+  - Darwin build fixes.
+  - Vulkan and SDL resolved from the process, so static linking on iOS works.
+  - MoltenVK gaps treated as optional: geometry shaders, cull distance, depth clip, robustness2, null descriptors.
+  - Null descriptors backed by zero-filled dummy images (one per view type) and a dummy buffer.
+  - SDL window calls and surface creation marshalled to the main thread.
+- `tests/dxvk_smoke` checks SDL3 → DXVK → MoltenVK → Metal with a pixel readback.
+- **Bridge:**
+  - Guest proxies with generated vtables (`tools/scripts/gen_d3d9_vtables.py`, 17 interfaces).
+  - Arguments converted by C++ signature; pointer-free structs are passed zero-copy.
+  - `D3DPRESENT_PARAMETERS` and HWNDs are marshalled.
+  - Objects are wrapped by their dynamic type.
+  - Every Lock/Unlock goes through guest-memory staging; vertex and index buffers keep a persistent shadow.
+  - Exclusive fullscreen becomes borderless desktop fullscreen (`DIRT2_WINDOWED=1` for a window).
+- **Run-time HLSL:** the game compiles one fixed file of 8 immediate-mode shaders. `tools/scripts/sm3asm.py` assembles them to SM3 bytecode with CTAB, and there is no HLSL compiler dependency.
+- The lifted code builds with `RECOMP_TSO` (acquire loads, release stores) by default. Memory `xchg` is atomic.
+
+**Boot now reaches:**
+- launcher check, GFWL, hardware detection, DirectInput/XInput;
+- window creation and `CreateDevice` (1024×768 → `D3D_OK`);
+- the built-in shaders and the D3D pipeline cache;
+- the Bink and TrackIR probes.
+
+**Current blocker:** the engine's update thread (thread 264) calls a virtual function through a member that holds a list node instead of an object (`f_0085FFB0`, `mov esi,[ecx+0xC]`, called from `f_00864970`).
+- It is timing-dependent: it disappears with `RECOMP_TRACE=1`.
+- It is not fixed by TSO emulation, atomic `xchg`, header-stored heap free lists, or Windows-style pending overlapped I/O.
+- Next step: a guest write-watch on that member to find the writer.
+
 ## Run
 
 ```bash
@@ -108,4 +146,4 @@ cmake --preset macos-arm64 && cmake --build build/macos-arm64
 ./build/macos-arm64/dirt2 --game "<game dir>"
 ```
 
-Current stop point: `d3d9!Direct3DCreate9` from 0x00EC5F11, after CRT init, the launcher check, GFWL sign-in, settings load and the start of 17 engine threads. Next step is the D3D9 bridge.
+Graphics prerequisites: `tools/scripts/build_graphics.sh` (MoltenVK + DXVK) and `brew install sdl3 glslang`.

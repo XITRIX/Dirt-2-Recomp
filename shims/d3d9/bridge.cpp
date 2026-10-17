@@ -13,6 +13,7 @@
 // address the 4 GB guest space.
 #include <d3d9.h>
 
+#include <cstdlib>
 #include <map>
 #include <mutex>
 #include <tuple>
@@ -21,6 +22,7 @@
 #include <utility>
 #include <vector>
 
+#include "../../platform/platform.h"
 #include "../shim.h"
 
 namespace shim {
@@ -221,19 +223,51 @@ void pp_out(uint32_t g, const D3DPRESENT_PARAMETERS& p, uint32_t guest_hwnd) {
     wr32(g + 52, p.PresentationInterval);
 }
 
+// Exclusive fullscreen becomes a windowed swapchain on a borderless desktop-
+// fullscreen window; the game still sees the parameters it asked for.
+// DIRT2_WINDOWED=1 keeps a normal window sized to the back buffer instead.
+void present_window(const D3DPRESENT_PARAMETERS& p, bool fullscreen) {
+    if (!p.hDeviceWindow) return;
+    static const bool force_windowed = std::getenv("DIRT2_WINDOWED") != nullptr;
+    if (fullscreen && !force_windowed) {
+        platform::set_fullscreen(p.hDeviceWindow, true);
+    } else {
+        platform::set_fullscreen(p.hDeviceWindow, false);
+        if (p.BackBufferWidth && p.BackBufferHeight)
+            platform::set_window_size(p.hDeviceWindow, int(p.BackBufferWidth), int(p.BackBufferHeight));
+    }
+    platform::show_window(p.hDeviceWindow, true);
+}
+
 template <>
 struct Arg<D3DPRESENT_PARAMETERS*> {
     uint32_t s;
     D3DPRESENT_PARAMETERS v{};
     uint32_t hwnd = 0;
+    BOOL windowed = TRUE;
+    UINT refresh = 0;
     D3DPRESENT_PARAMETERS* get() {
         if (!s) return nullptr;
         hwnd = rd32(s + 28);
         pp_in(s, v);
+        windowed = v.Windowed;
+        refresh = v.FullScreen_RefreshRateInHz;
+        if (!windowed) {
+            v.Windowed = TRUE;
+            v.FullScreen_RefreshRateInHz = 0;
+        }
         return &v;
     }
+    void apply_window(HWND fallback) {
+        if (!s) return;
+        if (!v.hDeviceWindow) v.hDeviceWindow = fallback;
+        present_window(v, !windowed);
+    }
     void done() {
-        if (s) pp_out(s, v, hwnd);
+        if (!s) return;
+        v.Windowed = windowed;
+        v.FullScreen_RefreshRateInHz = refresh;
+        pp_out(s, v, hwnd);
     }
 };
 
@@ -332,6 +366,7 @@ void QI(X86* c) {
 
 // Hand-written bridges (defined below the generated vtables).
 void d3d_create_device(X86* c);
+void dev_reset(X86* c);
 void d3d_get_adapter_monitor(X86* c);
 void dev_present(X86* c);
 void swap_present(X86* c);
@@ -354,6 +389,7 @@ void ib_unlock(X86* c);
 OVERRIDE(IDirect3D9, CreateDevice, d3d_create_device)
 OVERRIDE(IDirect3D9, GetAdapterMonitor, d3d_get_adapter_monitor)
 OVERRIDE(IDirect3DDevice9, Present, dev_present)
+OVERRIDE(IDirect3DDevice9, Reset, dev_reset)
 OVERRIDE(IDirect3DSwapChain9, Present, swap_present)
 OVERRIDE(IDirect3DSurface9, LockRect, surf_lock)
 OVERRIDE(IDirect3DSurface9, UnlockRect, surf_unlock)
@@ -386,9 +422,9 @@ void d3d_create_device(X86* c) {
     IDirect3DDevice9* dev = nullptr;
     HWND focus = HWND(host_window(a[3]));
     D3DPRESENT_PARAMETERS* p = pp.get();
-    if (p && !p->hDeviceWindow) p->hDeviceWindow = focus;
-    rt::log("d3d9: CreateDevice %ux%u fmt %u windowed %d flags 0x%X", p ? p->BackBufferWidth : 0,
-            p ? p->BackBufferHeight : 0, p ? p->BackBufferFormat : 0, p ? p->Windowed : 0, a[4]);
+    pp.apply_window(focus);
+    rt::log("d3d9: CreateDevice %ux%u fmt %u fullscreen %d flags 0x%X", p ? p->BackBufferWidth : 0,
+            p ? p->BackBufferHeight : 0, p ? p->BackBufferFormat : 0, pp.windowed ? 0 : 1, a[4]);
     const HRESULT hr = self ? self->CreateDevice(a[1], D3DDEVTYPE(a[2]), focus, a[4], p, &dev) : D3DERR_INVALIDCALL;
     pp.done();
     if (a[6]) wr32(a[6], SUCCEEDED(hr) ? wrap(dev) : 0);
@@ -398,6 +434,20 @@ void d3d_create_device(X86* c) {
 }
 
 // IDirect3D9::GetAdapterMonitor returns an HMONITOR.
+// IDirect3DDevice9::Reset(D3DPRESENT_PARAMETERS*)
+void dev_reset(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<IDirect3DDevice9*>(to_host(a[0]));
+    Arg<D3DPRESENT_PARAMETERS*> pp{a[1]};
+    D3DPRESENT_PARAMETERS* p = pp.get();
+    pp.apply_window(HWND(host_window(0)));
+    const HRESULT hr = self ? self->Reset(p) : D3DERR_INVALIDCALL;
+    pp.done();
+    rt::log("d3d9: Reset %ux%u -> 0x%08X", p ? p->BackBufferWidth : 0, p ? p->BackBufferHeight : 0, uint32_t(hr));
+    c->eax = uint32_t(hr);
+    c->esp += 4 * 3;
+}
+
 void d3d_get_adapter_monitor(X86* c) {
     c->eax = 0x00010001;
     c->esp += 4 * 3;
@@ -761,3 +811,8 @@ STDCALL(d3d9, Direct3DCreate9, 1) {
     return wrap(d3d);
 }
 STDCALL(d3d9, D3DPERF_SetOptions, 1) { return 0; }
+
+namespace shim {
+// Host object behind a guest D3D9 proxy (used by the D3DX shims).
+void* d3d9_host(uint32_t proxy) { return to_host(proxy); }
+}  // namespace shim

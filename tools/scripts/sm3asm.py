@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Assembles the game's run-time HLSL shaders into D3D9 SM3 bytecode.
+
+DiRT 2 compiles one fixed HLSL file with D3DXCompileShader at run time: the
+eight immediate-mode shaders (untextured / prelit / textured, vs and ps). The
+real game shaders ship precompiled in the shader packs. Rather than bundling an
+HLSL compiler, these eight are written here in SM3 assembly, encoded to
+bytecode with a CTAB constant table, and emitted as C arrays.
+
+Matrices are declared row_major (registers hold matrix rows) so the transform
+is four dp4s; the constant table records that class, and ID3DXConstantTable
+uploads accordingly.
+
+Usage: sm3asm.py <out.inc>
+"""
+import struct
+import sys
+
+# Register types.
+TEMP, INPUT, CONST, OUTPUT, COLOROUT, SAMPLER = 0, 1, 2, 6, 8, 10
+# Opcodes.
+MOV, MUL, DP4, DCL, TEXLD, END = 0x01, 0x05, 0x09, 0x1F, 0x42, 0xFFFF
+# Declaration usages.
+POSITION, TEXCOORD, COLOR = 0, 5, 10
+SWIZZLE_XYZW = 0xE4
+
+
+def regtype(t: int) -> int:
+    return ((t & 7) << 28) | (((t >> 3) & 3) << 11)
+
+
+def dst(t: int, n: int, mask: int = 0xF) -> int:
+    return 0x80000000 | regtype(t) | (mask << 16) | n
+
+
+def src(t: int, n: int, swz: int = SWIZZLE_XYZW) -> int:
+    return 0x80000000 | regtype(t) | (swz << 16) | n
+
+
+def ins(op: int, *operands: int) -> list[int]:
+    return [op | (len(operands) << 24), *operands]
+
+
+def dcl_usage(usage: int, reg: int, mask: int = 0xF, t: int = INPUT, index: int = 0) -> list[int]:
+    return ins(DCL, 0x80000000 | usage | (index << 16), dst(t, reg, mask))
+
+
+def dcl_sampler2d(n: int) -> list[int]:
+    return ins(DCL, 0x80000000 | (2 << 27), dst(SAMPLER, n))
+
+
+def ctab(version: int, target: str, constants: list[tuple]) -> list[int]:
+    """constants: (name, register_set, index, count, class, type, rows, cols)."""
+    header = 28
+    info_off = header
+    type_off = info_off + 20 * len(constants)
+    strings_off = type_off + 16 * len(constants)
+    strings = bytearray()
+
+    def add_string(s: str) -> int:
+        off = strings_off + len(strings)
+        strings.extend(s.encode() + b"\0")
+        return off
+
+    creator = add_string("DiRT2 recomp sm3asm")
+    tgt = add_string(target)
+    infos, types = bytearray(), bytearray()
+    for i, (name, rset, idx, cnt, cls, typ, rows, cols) in enumerate(constants):
+        infos += struct.pack("<IHHHHII", add_string(name), rset, idx, cnt, 0, type_off + 16 * i, 0)
+        types += struct.pack("<HHHHHHI", cls, typ, rows, cols, 1, 0, 0)
+    body = struct.pack("<IIIIIII", header, creator, version, len(constants), info_off, 0, tgt) + infos + types + strings
+    body = b"CTAB" + body
+    while len(body) % 4:
+        body += b"\0"
+    words = list(struct.unpack(f"<{len(body) // 4}I", body))
+    return [0xFFFE | (len(words) << 16), *words]
+
+
+VS, PS = 0xFFFE0300, 0xFFFF0300
+MVP = ("modelviewproj", 2, 0, 4, 2, 3, 4, 4)       # float4x4, row_major, c0-c3
+DIFFUSE = ("diffuse", 2, 0, 1, 1, 3, 1, 4)          # float4, c0
+TEXTURE0 = ("texture0", 3, 0, 1, 4, 10, 1, 1)       # sampler2D, s0
+
+
+def transform() -> list[int]:
+    out = []
+    for i in range(4):
+        out += ins(DP4, dst(OUTPUT, 0, 1 << i), src(CONST, i), src(INPUT, 0))
+    return out
+
+
+SHADERS = {
+    ("vsUntextured", "vs_3_0"): (VS, [MVP],
+        dcl_usage(POSITION, 0) + dcl_usage(POSITION, 0, t=OUTPUT) + transform()),
+    ("vsPrelitUntextured", "vs_3_0"): (VS, [MVP],
+        dcl_usage(POSITION, 0) + dcl_usage(COLOR, 1) + dcl_usage(POSITION, 0, t=OUTPUT) + dcl_usage(COLOR, 1, t=OUTPUT)
+        + transform() + ins(MOV, dst(OUTPUT, 1), src(INPUT, 1))),
+    ("vsTextured", "vs_3_0"): (VS, [MVP],
+        dcl_usage(POSITION, 0) + dcl_usage(TEXCOORD, 1) + dcl_usage(POSITION, 0, t=OUTPUT)
+        + dcl_usage(TEXCOORD, 1, 0x3, t=OUTPUT) + transform() + ins(MOV, dst(OUTPUT, 1, 0x3), src(INPUT, 1))),
+    ("vsPrelitTextured", "vs_3_0"): (VS, [MVP],
+        dcl_usage(POSITION, 0) + dcl_usage(TEXCOORD, 1) + dcl_usage(COLOR, 2) + dcl_usage(POSITION, 0, t=OUTPUT)
+        + dcl_usage(TEXCOORD, 1, 0x3, t=OUTPUT) + dcl_usage(COLOR, 2, t=OUTPUT) + transform()
+        + ins(MOV, dst(OUTPUT, 1, 0x3), src(INPUT, 1)) + ins(MOV, dst(OUTPUT, 2), src(INPUT, 2))),
+    ("psUntextured", "ps_3_0"): (PS, [DIFFUSE],
+        ins(MOV, dst(COLOROUT, 0), src(CONST, 0))),
+    ("psPrelitUntextured", "ps_3_0"): (PS, [],
+        dcl_usage(COLOR, 0) + ins(MOV, dst(COLOROUT, 0), src(INPUT, 0))),
+    ("psTextured", "ps_3_0"): (PS, [TEXTURE0],
+        dcl_usage(TEXCOORD, 0, 0x3) + dcl_sampler2d(0) + ins(TEXLD, dst(TEMP, 0), src(INPUT, 0), src(SAMPLER, 0))
+        + ins(MOV, dst(COLOROUT, 0), src(TEMP, 0))),
+    ("psPrelitTextured", "ps_3_0"): (PS, [TEXTURE0],
+        dcl_usage(TEXCOORD, 0, 0x3) + dcl_usage(COLOR, 1) + dcl_sampler2d(0)
+        + ins(TEXLD, dst(TEMP, 0), src(INPUT, 0), src(SAMPLER, 0))
+        + ins(MUL, dst(COLOROUT, 0), src(TEMP, 0), src(INPUT, 1))),
+}
+
+
+def main() -> None:
+    out = ["// Generated by tools/scripts/sm3asm.py. Do not edit.", ""]
+    entries = []
+    for i, ((fn, profile), (version, consts, code)) in enumerate(SHADERS.items()):
+        words = [version] + ctab(version, profile, consts) + code + [END]
+        out.append(f"static const uint32_t kShader{i}[] = {{")
+        for k in range(0, len(words), 8):
+            out.append("    " + ", ".join(f"0x{w:08X}u" for w in words[k:k + 8]) + ",")
+        out.append("};")
+        entries.append(f'    {{"{fn}", "{profile}", kShader{i}, {len(words)}}},')
+    out.append("")
+    out.append("static const BuiltinShader kBuiltinShaders[] = {")
+    out += entries
+    out.append("};")
+    open(sys.argv[1], "w").write("\n".join(out) + "\n")
+
+
+if __name__ == "__main__":
+    main()

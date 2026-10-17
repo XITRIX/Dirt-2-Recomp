@@ -26,6 +26,7 @@ struct File : KObject {
     }
     int fd = -1;
     bool console = false;
+    bool overlapped = false;  // opened with FILE_FLAG_OVERLAPPED
     std::string win, host;
     std::mutex mu;  // serialises seek+read/write pairs
 };
@@ -89,6 +90,10 @@ std::shared_ptr<File> file_for(uint32_t h) {
 }  // namespace
 
 uint32_t shim::open_file(const std::string& win, uint32_t access, uint32_t disposition) {
+    return open_file_ex(win, access, disposition, 0);
+}
+
+uint32_t shim::open_file_ex(const std::string& win, uint32_t access, uint32_t disposition, uint32_t flags_attrs) {
     const std::string host = vfs::host_path(win);
     int flags = O_RDONLY;
     if ((access & GENERIC_WRITE) && (access & GENERIC_READ)) flags = O_RDWR;
@@ -119,6 +124,7 @@ uint32_t shim::open_file(const std::string& win, uint32_t access, uint32_t dispo
     f->fd = fd;
     f->win = vfs::full_path(win);
     f->host = host;
+    f->overlapped = (flags_attrs & 0x40000000) != 0;
     set_last_error((existed && (disposition == CREATE_ALWAYS || disposition == OPEN_ALWAYS)) ? ERROR_ALREADY_EXISTS : 0);
     return handle_new(f);
 }
@@ -147,7 +153,7 @@ uint32_t get_attrs(const std::string& win) {
 
 // Completes an OVERLAPPED request: Internal, InternalHigh, then signals hEvent.
 void complete_overlapped(uint32_t ov, uint32_t bytes) {
-    wr32(ov + 0, 0);
+    wr32(ov + 0, 0);  // STATUS_SUCCESS
     wr32(ov + 4, bytes);
     if (const uint32_t ev = rd32(ov + 16)) set_event(ev);
 }
@@ -179,6 +185,14 @@ uint32_t do_io(uint32_t h, uint32_t buf, uint32_t n, uint32_t done_out, uint32_t
             return 0;
         }
         complete_overlapped(ov, uint32_t(r));
+        // Like Windows for real asynchronous handles: report the request as
+        // pending even though the data is already there; the caller then
+        // completes it through its event / GetOverlappedResult path.
+        if (f->overlapped) {
+            if (done_out) wr32(done_out, 0);
+            set_last_error(ERROR_IO_PENDING);
+            return 0;
+        }
     }
     return 1;
 }
@@ -244,20 +258,25 @@ uint32_t full_path_out(const std::string& in, uint32_t cap, uint32_t buf, uint32
 }  // namespace
 
 STDCALL(kernel32, CreateFileA, 7) {
-    const uint32_t h = open_file(a.str(0), a[1], a[4]);
+    const uint32_t h = open_file_ex(a.str(0), a[1], a[4], a[5]);
     if (h == kInvalidHandle) rt::log("CreateFileA(%s) failed: %u", a.str(0), last_error());
     return h;
 }
 STDCALL(kernel32, CreateFileW, 7) {
     const std::string n = from_utf16(a[0]);
-    const uint32_t h = open_file(n, a[1], a[4]);
+    const uint32_t h = open_file_ex(n, a[1], a[4], a[5]);
     if (h == kInvalidHandle) rt::log("CreateFileW(%s) failed: %u", n.c_str(), last_error());
     return h;
 }
 STDCALL(kernel32, ReadFile, 5) { return do_io(a[0], a[1], a[2], a[3], a[4], false); }
 STDCALL(kernel32, WriteFile, 5) { return do_io(a[0], a[1], a[2], a[3], a[4], true); }
-STDCALL(kernel32, GetOverlappedResult, 4) {
+STDCALL(kernel32, GetOverlappedResult, 4) {  // (file, ov, *bytes, wait)
     if (a[2]) wr32(a[2], rd32(a[1] + 4));
+    const uint32_t status = rd32(a[1]);
+    if (status == 0xC0000011) {  // STATUS_END_OF_FILE
+        set_last_error(ERROR_HANDLE_EOF);
+        return 0;
+    }
     return 1;
 }
 STDCALL(kernel32, CancelIo, 1) { return 1; }

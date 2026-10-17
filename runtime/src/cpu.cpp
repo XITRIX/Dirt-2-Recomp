@@ -25,13 +25,25 @@ void log(const char* fmt, ...) {
 void fatal(const char* fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    std::fprintf(stderr, "[rt] FATAL: ");
+    std::fprintf(stderr, "[rt] FATAL (thread %u): ", current_thread_id());
     std::vfprintf(stderr, fmt, ap);
     std::fprintf(stderr, "\n");
     va_end(ap);
     if (X86* c = current_cpu())
         std::fprintf(stderr, "  eax=%08X ecx=%08X edx=%08X ebx=%08X esp=%08X ebp=%08X esi=%08X edi=%08X [esp]=%08X\n",
                      c->eax, c->ecx, c->edx, c->ebx, c->esp, c->ebp, c->esi, c->edi, c->esp ? rd32(c->esp) : 0);
+    if (X86* c = current_cpu()) {
+        // Memory around the general registers that look like guest pointers.
+        const uint32_t regs[] = {c->eax, c->ecx, c->edx, c->ebx, c->esi, c->edi, c->ebp};
+        const char* names[] = {"eax", "ecx", "edx", "ebx", "esi", "edi", "ebp"};
+        for (int i = 0; i < 7; ++i) {
+            const uint32_t r = regs[i];
+            if (r < 0x10000 || r >= 0x80000000u) continue;
+            std::fprintf(stderr, "  [%s=%08X]:", names[i], r);
+            for (int k = 0; k < 8; ++k) std::fprintf(stderr, " %08X", rd32(r + 4 * k));
+            std::fprintf(stderr, "\n");
+        }
+    }
     void* frames[32];
     const int n = backtrace(frames, 32);
     backtrace_symbols_fd(frames, n, 2);

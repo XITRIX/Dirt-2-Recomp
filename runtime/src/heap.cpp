@@ -21,7 +21,9 @@ struct Header {
     uint32_t size;   // requested size
     uint32_t cls;    // size class, or kLargeTag
     uint32_t magic;
-    uint32_t pad;
+    uint32_t next;   // free-list link: kept out of the payload, so a freed object's
+                     // contents (its vtable pointer) survive until the block is reused,
+                     // as on the Windows heap; some game code touches objects right after freeing them
 };
 constexpr uint32_t kMagic = 0x48454150;  // "HEAP"
 
@@ -68,9 +70,7 @@ uint32_t heap_alloc(uint32_t size, bool zero) {
     const uint32_t total = g_class_size[cls] + kHeader;
     uint32_t block = g_free[cls];
     if (block) {
-        uint32_t next;
-        std::memcpy(&next, host_ptr(block + kHeader), 4);
-        g_free[cls] = next;
+        g_free[cls] = hdr(block)->next;
     } else {
         if (g_slab_cur + total > g_slab_end) {
             const uint32_t slab = vm_alloc(0, kSlab, true);
@@ -100,7 +100,7 @@ void heap_free(uint32_t p) {
         return;
     }
     std::lock_guard lk(g_mu);
-    std::memcpy(host_ptr(p), &g_free[h->cls], 4);
+    h->next = g_free[h->cls];
     g_free[h->cls] = block;
 }
 

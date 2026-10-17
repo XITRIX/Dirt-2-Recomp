@@ -453,10 +453,60 @@ index f9d1e98d..2d90be6a 100644
      }
  
 diff --git a/src/wsi/sdl3/wsi_platform_sdl3.cpp b/src/wsi/sdl3/wsi_platform_sdl3.cpp
-index 9975cdac..cab1d7ee 100644
+index 9975cdac..983a6908 100644
 --- a/src/wsi/sdl3/wsi_platform_sdl3.cpp
 +++ b/src/wsi/sdl3/wsi_platform_sdl3.cpp
-@@ -19,6 +19,14 @@ namespace dxvk::wsi {
+@@ -9,6 +9,49 @@
+ 
+ namespace dxvk::wsi {
+ 
++#if defined(__APPLE__)
++  // Cocoa/UIKit only allow window changes (and Metal view creation) on the
++  // main thread, while DXVK runs on the application's render thread. These
++  // wrappers marshal those calls with SDL_RunOnMainThread.
++  namespace {
++    using RunOnMainFn = bool (SDLCALL *)(void (SDLCALL *)(void*), void*, bool);
++    using IsMainFn    = bool (SDLCALL *)(void);
++    RunOnMainFn g_runOnMain = nullptr;
++    IsMainFn    g_isMain    = nullptr;
++
++    template<typename F>
++    void onMain(F&& f) {
++      if (!g_runOnMain || !g_isMain || g_isMain()) {
++        f();
++        return;
++      }
++      g_runOnMain([] (void* p) { (*static_cast<F*>(p))(); }, &f, true);
++    }
++
++    bool (SDLCALL *rawSetWindowSize)(SDL_Window*, int, int);
++    bool (SDLCALL *rawSetWindowPosition)(SDL_Window*, int, int);
++    bool (SDLCALL *rawSetWindowFullscreen)(SDL_Window*, bool);
++    bool (SDLCALL *rawSetWindowFullscreenMode)(SDL_Window*, const SDL_DisplayMode*);
++    bool (SDLCALL *rawCreateSurface)(SDL_Window*, VkInstance, const VkAllocationCallbacks*, VkSurfaceKHR*);
++
++    bool SDLCALL mainSetWindowSize(SDL_Window* w, int x, int y) {
++      bool r = false; onMain([&] { r = rawSetWindowSize(w, x, y); }); return r;
++    }
++    bool SDLCALL mainSetWindowPosition(SDL_Window* w, int x, int y) {
++      bool r = false; onMain([&] { r = rawSetWindowPosition(w, x, y); }); return r;
++    }
++    bool SDLCALL mainSetWindowFullscreen(SDL_Window* w, bool f) {
++      bool r = false; onMain([&] { r = rawSetWindowFullscreen(w, f); }); return r;
++    }
++    bool SDLCALL mainSetWindowFullscreenMode(SDL_Window* w, const SDL_DisplayMode* m) {
++      bool r = false; onMain([&] { r = rawSetWindowFullscreenMode(w, m); }); return r;
++    }
++    bool SDLCALL mainCreateSurface(SDL_Window* w, VkInstance i, const VkAllocationCallbacks* a, VkSurfaceKHR* s) {
++      bool r = false; onMain([&] { r = rawCreateSurface(w, i, a, s); }); return r;
++    }
++  }
++#endif
++
+   Sdl3WsiDriver::Sdl3WsiDriver() {
+     libsdl = LoadLibraryA( // FIXME: Get soname as string from meson
+ #if defined(_WIN32)
+@@ -19,6 +62,14 @@ namespace dxvk::wsi {
          "libSDL3.so.0"
  #endif
        );
@@ -471,3 +521,21 @@ index 9975cdac..cab1d7ee 100644
      if (libsdl == nullptr)
        throw DxvkError("SDL3 WSI: Failed to load SDL3 DLL.");
  
+@@ -31,6 +82,17 @@ namespace dxvk::wsi {
+       }
+     #include "wsi_platform_sdl3_funcs.h"
+ 
++#if defined(__APPLE__)
++    g_runOnMain = reinterpret_cast<RunOnMainFn>(GetProcAddress(libsdl, "SDL_RunOnMainThread"));
++    g_isMain = reinterpret_cast<IsMainFn>(GetProcAddress(libsdl, "SDL_IsMainThread"));
++    rawSetWindowSize = SDL_SetWindowSize;               SDL_SetWindowSize = &mainSetWindowSize;
++    rawSetWindowPosition = SDL_SetWindowPosition;       SDL_SetWindowPosition = &mainSetWindowPosition;
++    rawSetWindowFullscreen = SDL_SetWindowFullscreen;   SDL_SetWindowFullscreen = &mainSetWindowFullscreen;
++    rawSetWindowFullscreenMode = SDL_SetWindowFullscreenMode;
++    SDL_SetWindowFullscreenMode = &mainSetWindowFullscreenMode;
++    rawCreateSurface = SDL_Vulkan_CreateSurface;        SDL_Vulkan_CreateSurface = &mainCreateSurface;
++#endif
++
+     if (!SDL_InitSubSystem(SDL_INIT_VIDEO))
+       throw DxvkError("SDL3 WSI: Failed to initialize video subsystem."); \
+   }
