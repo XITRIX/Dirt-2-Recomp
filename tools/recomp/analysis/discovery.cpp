@@ -48,18 +48,29 @@ bool Discovery::resolve_jump_table(const Insn& in, JumpTable& jt) const {
     if (o.type != ZYDIS_OPERAND_TYPE_MEMORY || o.mem.base != ZYDIS_REGISTER_NONE ||
         o.mem.index == ZYDIS_REGISTER_NONE || o.mem.scale != 4)
         return false;
-    const uint32_t table = uint32_t(o.mem.disp.value);
-    if (!img_.in_image(table, 4)) return false;
-    jt.jump_addr = in.addr;
-    jt.table = table;
-    for (uint32_t k = 0; k < 4096; ++k) {
-        const uint32_t slot = table + k * 4;
-        if (!img_.has_reloc(slot)) break;
-        const uint32_t t = img_.read32(slot);
-        if (!img_.is_code(t)) break;
-        jt.targets.push_back(t);
+    const uint32_t disp = uint32_t(o.mem.disp.value);
+    auto entry = [&](int64_t k) -> bool {
+        const uint32_t slot = uint32_t(disp + k * 4);
+        return img_.in_image(slot, 4) && img_.has_reloc(slot) && img_.is_code(img_.read32(slot));
+    };
+    // Hand-written CRT code indexes some tables with a displaced base (index
+    // 1..3, or negative), so find the run of relocated code pointers nearest
+    // to the displacement.
+    int64_t k0 = 0;
+    bool found = entry(0);
+    for (int64_t d = 1; !found && d <= 8; ++d) {
+        if (entry(d)) { k0 = d; found = true; }
+        else if (entry(-d)) { k0 = -d; found = true; }
     }
-    return !jt.targets.empty();
+    if (!found) return false;
+    int64_t lo = k0, hi = k0;
+    while (lo > k0 - 4096 && entry(lo - 1)) --lo;
+    while (hi < k0 + 4096 && entry(hi + 1)) ++hi;
+    jt.jump_addr = in.addr;
+    jt.table = uint32_t(disp + lo * 4);
+    jt.displaced = lo != 0;
+    for (int64_t k = lo; k <= hi; ++k) jt.targets.push_back(img_.read32(uint32_t(disp + k * 4)));
+    return true;
 }
 
 Function Discovery::build(uint32_t start) {
@@ -70,6 +81,7 @@ Function Discovery::build(uint32_t start) {
     std::unordered_map<uint32_t, Node> nodes;
     std::set<uint32_t> leaders{start};
     std::deque<uint32_t> work{start};
+    std::set<uint32_t> forced;  // jump-table targets: decode here even if also an entry point
 
     while (!work.empty()) {
         uint32_t a = work.front();
@@ -83,7 +95,7 @@ Function Discovery::build(uint32_t start) {
                 break;
             }
             Node n;
-            if (a != start && known_starts_.count(a)) {
+            if (a != start && known_starts_.count(a) && !forced.count(a)) {
                 // Fell through into another function: model as a tail call.
                 leaders.insert(a);
                 break;
@@ -181,7 +193,7 @@ Function Discovery::build(uint32_t start) {
                                 }
                                 bound = maxidx + 1;
                             }
-                            if (bound && bound < jt.targets.size()) jt.targets.resize(bound);
+                            if (!jt.displaced && bound && bound < jt.targets.size()) jt.targets.resize(bound);
                             for (uint32_t k = 0; k < jt.targets.size(); ++k) {
                                 const uint32_t slot = jt.table + k * 4;
                                 if (img_.is_code(slot))
@@ -191,6 +203,7 @@ Function Discovery::build(uint32_t start) {
                             for (uint32_t t : jt.targets) {
                                 n.succ.push_back(t);
                                 leaders.insert(t);
+                                forced.insert(t);
                                 work.push_back(t);
                             }
                             tables_[in.addr] = std::move(jt);
@@ -414,6 +427,17 @@ void Discovery::run() {
         seeds_gaps_ += g;
         if (!g) break;
     }
+    // Table data that was decoded as code before its table was found.
+    for (auto it = funcs_.begin(); it != funcs_.end();) {
+        const uint32_t a = it->first;
+        if (a >= text_lo_ && a < text_hi_ && cover_[a - text_lo_] == kTable) {
+            known_starts_.erase(a);
+            it = funcs_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (auto& [a, f] : funcs_) f = build(a);
     compute_noreturn();
     mark_coverage();
 }

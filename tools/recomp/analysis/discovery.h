@@ -38,7 +38,8 @@ struct Block {
 
 struct JumpTable {
     uint32_t jump_addr = 0;   // the jmp instruction
-    uint32_t table = 0;       // dword table address
+    uint32_t table = 0;       // address of the first entry
+    bool displaced = false;   // first entry is not at the instruction's displacement
     std::vector<uint32_t> targets;
 };
 

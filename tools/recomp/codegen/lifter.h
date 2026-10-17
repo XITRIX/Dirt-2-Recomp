@@ -19,6 +19,7 @@ struct LiftStats {
     size_t functions = 0, instructions = 0, files = 0;
     size_t unimplemented = 0;      // instruction sites emitted as recomp_unimpl
     size_t live_in_flags = 0;      // functions reading flags they never set
+    size_t resumable = 0;          // functions with SEH landing pads
     std::map<std::string, size_t> unimpl_by_mnemonic;
 };
 

@@ -26,6 +26,7 @@ if(DIRT2_BUILD_TOOLS)
 endif()
 
 add_subdirectory(runtime)
+add_subdirectory(shims)
 
 # Recompiled game: built from the lifter output when it exists.
 set(DIRT2_GENERATED_DIR "${CMAKE_SOURCE_DIR}/generated" CACHE PATH "Lifter output directory")
@@ -40,7 +41,7 @@ if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
   target_compile_options(dirt2_gen PRIVATE -w -O2 -fno-strict-aliasing)
 
   add_executable(dirt2 runtime/src/main.cpp)
-  target_link_libraries(dirt2 PRIVATE dirt2_gen recomp_runtime)
+  target_link_libraries(dirt2 PRIVATE dirt2_shims dirt2_gen recomp_runtime)
 else()
   message(STATUS "generated/sources.txt not found: run 'recomp lift' to enable the dirt2 target")
 endif()

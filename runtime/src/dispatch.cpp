@@ -7,6 +7,7 @@
 #include <unordered_map>
 
 #include "recomp/host.h"
+#include "recomp/seh.h"
 
 namespace rt {
 
@@ -64,6 +65,8 @@ extern "C" void recomp_call(X86* c, uint32_t target) {
         fn(c);
         return;
     }
+    // A jump into the middle of an active function (catch continuation, __except block).
+    recomp_resume_at(target);
     rt::record_unknown(target);
     rt::fatal("call to unknown target 0x%08X (return address 0x%08X)", target, rd32(c->esp));
 }

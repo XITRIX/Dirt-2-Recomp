@@ -20,6 +20,7 @@ void set_game_dir(const std::string& d) { g_game_dir = d; }
 namespace {
 
 void* game_main(void*) {
+    rt::install_crash_handler();  // per-thread alternate signal stack
     X86* c = rt::create_main_thread();
     rt::log("entering guest at 0x%08X", recomp_image_info.entry);
     const uint32_t r = rt::invoke(c, recomp_image_info.entry, {}, true);
@@ -39,6 +40,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     rt::set_game_dir(dir);
+    rt::install_crash_handler();
     if (!rt::mem_init()) return 1;
     std::string err;
     if (!rt::load_image(dir + "/dirt2_game.exe", err)) {

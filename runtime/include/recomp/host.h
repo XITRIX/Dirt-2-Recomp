@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 #include "recomp/runtime.h"
@@ -42,8 +43,14 @@ X86* current_cpu();
 Thread* current_thread();
 uint32_t current_thread_id();
 X86* create_main_thread();
-// Starts a guest thread at entry(param). Returns the host thread id.
-uint32_t start_thread(uint32_t entry, uint32_t param, uint32_t stack_size, bool suspended, uint32_t* handle_out);
+uint32_t current_teb();
+// Starts a guest thread at entry(param) (stdcall). Returns the thread id.
+// on_exit runs on the thread after the entry returns or ExitThread is called.
+uint32_t start_thread(uint32_t entry, uint32_t param, uint32_t stack_size, bool suspended,
+                      std::function<void(uint32_t)> on_exit);
+// Decrements the suspend count; returns the previous count or -1.
+int resume_thread(uint32_t id);
+[[noreturn]] void exit_current_thread(uint32_t code);
 
 // ---- dispatch (dispatch.cpp) ----
 recomp_fn lookup(uint32_t addr);
@@ -52,8 +59,14 @@ recomp_fn lookup(uint32_t addr);
 uint32_t invoke(X86* c, uint32_t addr, std::initializer_list<uint32_t> args, bool callee_pops);
 void register_thunk(uint32_t addr, recomp_fn fn);
 
+// ---- SEH (seh.cpp) ----
+// Called with esp at the RaiseException/RtlUnwind return address.
+void raise_exception(X86* c, uint32_t code, uint32_t flags, uint32_t nparams, uint32_t params);
+void rtl_unwind(X86* c, uint32_t target_frame, uint32_t record, uint32_t retval);
+
 // ---- misc ----
 [[noreturn]] void fatal(const char* fmt, ...);
+void install_crash_handler();  // signal handler with a guest-aware report
 void log(const char* fmt, ...);
 std::string game_dir();
 void set_game_dir(const std::string& d);

@@ -43,7 +43,7 @@ int cc_of(ZydisMnemonic m);  // -1 if not a conditional mnemonic
 class FnLifter {
 public:
     FnLifter(const PeImage& img, const Disasm& dis, const Discovery& disc, const Function& f,
-             const std::set<uint32_t>& lifted, LiftStats& stats);
+             const std::set<uint32_t>& lifted, LiftStats& stats, bool resumable = false);
     std::string emit();
 
     // ---- helpers shared by the lift_* files ----
@@ -91,6 +91,7 @@ public:
     const Function& f_;
     const std::set<uint32_t>& lifted_;
     LiftStats& stats_;
+    bool resumable_ = false;  // has SEH continuation landing pad
     std::vector<LBlock> blocks_;
     std::unordered_map<uint32_t, size_t> block_index_;
     std::string out_, indent_ = "    ";
@@ -98,6 +99,7 @@ public:
     LBlock* cur_block_ = nullptr;
     size_t cur_index_ = 0;
     bool mem_cached_[3] = {};
+    int cur_width_ = 32;  // operand width of the instruction being lifted (sign-extended immediates)
 
 private:
     void decode_blocks();

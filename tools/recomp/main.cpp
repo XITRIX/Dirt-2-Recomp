@@ -1,7 +1,7 @@
 // recomp: static recompiler for dirt2_game.exe.
 //
 //   recomp analyze <exe> [--out <dir>]
-//   recomp lift <exe> [--out <dir>] [--include-dead]
+//   recomp lift <exe> [--out <dir>] [--include-dead] [--entries <file>]
 //   recomp disasm <exe> <hex addr> [count]
 #include <chrono>
 #include <cstdio>
@@ -27,8 +27,10 @@ int main(int argc, char** argv) {
     const std::string cmd = argv[1], exe = argv[2];
     std::string out = "generated";
     bool include_dead = false;
+    std::vector<std::string> entry_files;
     for (int i = 3; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--out") && i + 1 < argc) out = argv[++i];
+        else if (!std::strcmp(argv[i], "--entries") && i + 1 < argc) entry_files.push_back(argv[++i]);
         else if (!std::strcmp(argv[i], "--include-dead")) include_dead = true;
     }
 
@@ -66,7 +68,18 @@ int main(int argc, char** argv) {
                 img->sections().size(), img->imports().size(), img->relocations().size());
 
     Disasm dis(*img);
-    Discovery disc(*img, dis, DiscoveryConfig{});
+    // Extra entry points: one hex address per line (from recomp_discovered.txt).
+    DiscoveryConfig dcfg;
+    for (const std::string& path : entry_files) {
+        if (FILE* f = std::fopen(path.c_str(), "r")) {
+            char buf[64];
+            while (std::fgets(buf, sizeof buf, f))
+                if (buf[0] != '#' && std::strlen(buf) > 1) dcfg.extra_entries.push_back(uint32_t(std::strtoul(buf, nullptr, 16)));
+            std::fclose(f);
+        }
+    }
+    if (!dcfg.extra_entries.empty()) std::printf("%zu extra entry points\n", dcfg.extra_entries.size());
+    Discovery disc(*img, dis, dcfg);
     disc.run();
     const auto cov = disc.coverage();
     std::printf("functions: %zu, jump tables: %zu, code coverage %.2f%% (unclaimed %llu bytes)\n",
@@ -106,7 +119,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         std::printf("lifted %zu functions, %zu instructions into %zu files\n", ls.functions, ls.instructions, ls.files);
-        std::printf("unimplemented sites: %zu, functions with live-in flags: %zu\n", ls.unimplemented, ls.live_in_flags);
+        std::printf("unimplemented sites: %zu, functions with live-in flags: %zu, SEH landing pads: %zu\n", ls.unimplemented, ls.live_in_flags, ls.resumable);
         std::vector<std::pair<std::string, size_t>> v(ls.unimpl_by_mnemonic.begin(), ls.unimpl_by_mnemonic.end());
         std::sort(v.begin(), v.end(), [](auto& a, auto& b) { return a.second > b.second; });
         for (size_t i = 0; i < v.size() && i < 40; ++i) std::printf("  %-12s %zu\n", v[i].first.c_str(), v[i].second);

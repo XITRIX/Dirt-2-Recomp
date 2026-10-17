@@ -19,7 +19,7 @@ namespace {
 
 constexpr uint64_t kSpace = 1ull << 32;
 constexpr uint32_t kAllocLo = 0x02000000;   // above the image (0x400000-0x1B38000)
-constexpr uint32_t kAllocHi = 0xFFE00000;   // below thunks and sentinels
+constexpr uint32_t kAllocHi = 0x7FFE0000;   // the exe is not large-address-aware
 
 struct Region {
     uint32_t size = 0;

@@ -1,8 +1,10 @@
 // Guest threads: each host thread owns an X86 context, a guest stack, a TEB
 // and a copy of the image's static TLS block.
 #include <pthread.h>
+#include <setjmp.h>
 
 #include <atomic>
+#include <condition_variable>
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
@@ -17,12 +19,19 @@ struct Thread {
     uint32_t teb = 0, stack_base = 0, stack_size = 0;
     uint32_t entry = 0, param = 0;
     pthread_t host{};
+    std::function<void(uint32_t)> on_exit;
+    // CREATE_SUSPENDED gate.
+    std::mutex gate_mu;
+    std::condition_variable gate_cv;
+    int suspend_count = 0;
+    jmp_buf exit_jmp;
+    uint32_t exit_code = 0;
 };
 
 namespace {
 
 constexpr uint32_t kTebSize = 0x1000;
-constexpr uint32_t kHostStack = 64u << 20;  // guest call depth maps onto the host stack
+constexpr size_t kHostStack = 64u << 20;  // guest call depth maps onto the host stack
 
 thread_local Thread* t_cur = nullptr;
 std::atomic<uint32_t> g_next_id{0x100};
@@ -41,6 +50,7 @@ Thread* make_thread(uint32_t stack_size) {
     auto* t = new Thread;
     t->id = g_next_id += 4;
     t->stack_size = stack_size ? (stack_size + 0xFFFF) & ~0xFFFFu : 1u << 20;
+    if (t->stack_size < (256u << 10)) t->stack_size = 256u << 10;
     t->stack_base = vm_alloc(0, t->stack_size, true);
     t->teb = vm_alloc(0, kTebSize, true);
     if (!t->stack_base || !t->teb) fatal("cannot allocate thread stack/TEB");
@@ -80,8 +90,12 @@ Thread* make_thread(uint32_t stack_size) {
 void* thread_main(void* arg) {
     auto* t = static_cast<Thread*>(arg);
     t_cur = t;
-    const uint32_t r = invoke(&t->cpu, t->entry, {t->param}, true);
-    log("thread %u exited with %u", t->id, r);
+    {
+        std::unique_lock lk(t->gate_mu);
+        t->gate_cv.wait(lk, [&] { return t->suspend_count <= 0; });
+    }
+    if (setjmp(t->exit_jmp) == 0) t->exit_code = invoke(&t->cpu, t->entry, {t->param}, true);
+    if (t->on_exit) t->on_exit(t->exit_code);
     return nullptr;
 }
 
@@ -90,25 +104,51 @@ void* thread_main(void* arg) {
 X86* current_cpu() { return t_cur ? &t_cur->cpu : nullptr; }
 Thread* current_thread() { return t_cur; }
 uint32_t current_thread_id() { return t_cur ? t_cur->id : 0; }
+uint32_t current_teb() { return t_cur ? t_cur->teb : 0; }
 
 X86* create_main_thread() {
-    Thread* t = make_thread(2u << 20);
+    Thread* t = make_thread(recomp_image_info.image_size ? (2u << 20) : (1u << 20));
     t_cur = t;
     return &t->cpu;
 }
 
-uint32_t start_thread(uint32_t entry, uint32_t param, uint32_t stack_size, bool suspended, uint32_t* handle_out) {
+uint32_t start_thread(uint32_t entry, uint32_t param, uint32_t stack_size, bool suspended,
+                      std::function<void(uint32_t)> on_exit) {
     Thread* t = make_thread(stack_size);
     t->entry = entry;
     t->param = param;
-    (void)suspended;  // TODO: honour CREATE_SUSPENDED via a start gate
+    t->on_exit = std::move(on_exit);
+    t->suspend_count = suspended ? 1 : 0;
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setstacksize(&attr, kHostStack);
     if (pthread_create(&t->host, &attr, thread_main, t) != 0) fatal("pthread_create failed");
     pthread_attr_destroy(&attr);
-    if (handle_out) *handle_out = t->id;
     return t->id;
+}
+
+int resume_thread(uint32_t id) {
+    Thread* t;
+    {
+        std::lock_guard lk(g_mu);
+        auto it = g_threads.find(id);
+        if (it == g_threads.end()) return -1;
+        t = it->second;
+    }
+    std::lock_guard lk(t->gate_mu);
+    const int prev = t->suspend_count;
+    if (t->suspend_count > 0 && --t->suspend_count == 0) t->gate_cv.notify_all();
+    return prev;
+}
+
+void exit_current_thread(uint32_t code) {
+    Thread* t = t_cur;
+    if (!t || !t->entry) {
+        log("ExitThread on main thread: exiting process with %u", code);
+        std::exit(int(code));
+    }
+    t->exit_code = code;
+    longjmp(t->exit_jmp, 1);
 }
 
 }  // namespace rt

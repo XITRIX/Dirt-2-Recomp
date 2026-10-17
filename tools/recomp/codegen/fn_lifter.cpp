@@ -72,8 +72,8 @@ bool is_high8(ZydisRegister r) {
 }  // namespace
 
 FnLifter::FnLifter(const PeImage& img, const Disasm& dis, const Discovery& disc, const Function& f,
-                   const std::set<uint32_t>& lifted, LiftStats& stats)
-    : img_(img), dis_(dis), disc_(disc), f_(f), lifted_(lifted), stats_(stats) {}
+                   const std::set<uint32_t>& lifted, LiftStats& stats, bool resumable)
+    : img_(img), dis_(dis), disc_(disc), f_(f), lifted_(lifted), stats_(stats), resumable_(resumable) {}
 
 std::string FnLifter::ty(int b) {
     switch (b) {
@@ -144,6 +144,7 @@ std::string FnLifter::ea(const ZydisDecodedOperand& op) const {
 }
 
 void FnLifter::begin_mem(const Insn& in) {
+    cur_width_ = in.ins.operand_width ? in.ins.operand_width : 32;
     for (int i = 0; i < 3; ++i) mem_cached_[i] = false;
     for (int i = 0; i < in.nops() && i < 3; ++i) {
         const ZydisDecodedOperand& o = in.op(i);
@@ -169,7 +170,9 @@ std::string FnLifter::rd(const ZydisDecodedOperand& op) {
                 default: return std::format("rd32({})", ea(op));
             }
         case ZYDIS_OPERAND_TYPE_IMMEDIATE: {
-            const uint64_t mask = op.size >= 64 ? ~0ull : ((1ull << op.size) - 1);
+            // Immediates are sign-extended to the operation width (push imm8, add r32, imm8).
+            const int w = std::max<int>(op.size, cur_width_);
+            const uint64_t mask = w >= 64 ? ~0ull : ((1ull << w) - 1);
             return hex(op.imm.value.u & mask);
         }
         default: return "0 /*operand*/";
@@ -572,6 +575,21 @@ std::string FnLifter::emit() {
         line("/* flags live on entry: {:#x} */", in);
         line("cf = c->eflags & 1; pf = (c->eflags >> 2) & 1; af = (c->eflags >> 4) & 1;");
         line("zf = (c->eflags >> 6) & 1; sf = (c->eflags >> 7) & 1; of = (c->eflags >> 11) & 1;");
+    }
+    if (resumable_) {
+        // Landing pad for exception continuations into this function's labels.
+        std::string tab;
+        for (size_t i = 0; i < blocks_.size(); ++i) tab += std::format("{}0x{:08X}u", i ? ", " : "", blocks_[i].b->start);
+        line("static const uint32_t labels_[] = {{ {} }};", tab);
+        line("RecompFrame fr_ __attribute__((cleanup(recomp_frame_leave)));");
+        line("recomp_frame_enter(&fr_, labels_, {});", blocks_.size());
+        line("if (RECOMP_SETJMP(fr_.jb)) {{");
+        line("    switch (fr_.target) {{");
+        for (const LBlock& lb : blocks_) line("    case 0x{0:08X}u: goto L_{0:08X};", lb.b->start);
+        line("    }}");
+        line("    recomp_trap(c, fr_.target, \"bad resume target\"); return;");
+        line("}}");
+        ++stats_.resumable;
     }
     if (entry != 0) line("goto L_{:08X};", f_.start);
     for (size_t bi = 0; bi < blocks_.size(); ++bi) emit_block(bi);

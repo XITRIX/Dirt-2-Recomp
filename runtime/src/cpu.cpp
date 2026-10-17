@@ -5,6 +5,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <execinfo.h>
+#include <signal.h>
+#include <unistd.h>
 
 #include "recomp/host.h"
 
@@ -29,8 +32,42 @@ void fatal(const char* fmt, ...) {
     if (X86* c = current_cpu())
         std::fprintf(stderr, "  eax=%08X ecx=%08X edx=%08X ebx=%08X esp=%08X ebp=%08X esi=%08X edi=%08X [esp]=%08X\n",
                      c->eax, c->ecx, c->edx, c->ebx, c->esp, c->ebp, c->esi, c->edi, c->esp ? rd32(c->esp) : 0);
+    void* frames[32];
+    const int n = backtrace(frames, 32);
+    backtrace_symbols_fd(frames, n, 2);
     std::fflush(stderr);
     std::abort();
+}
+
+namespace {
+
+void crash_handler(int sig, siginfo_t* info, void*) {
+    const uintptr_t fault = reinterpret_cast<uintptr_t>(info->si_addr);
+    const uintptr_t base = reinterpret_cast<uintptr_t>(recomp_mem);
+    std::fprintf(stderr, "[rt] CRASH: signal %d at host %p", sig, info->si_addr);
+    if (fault >= base && fault - base < (1ull << 32)) std::fprintf(stderr, " (guest 0x%08X)", uint32_t(fault - base));
+    std::fprintf(stderr, "\n");
+    if (X86* c = current_cpu())
+        std::fprintf(stderr, "  eax=%08X ecx=%08X edx=%08X ebx=%08X esp=%08X ebp=%08X esi=%08X edi=%08X\n", c->eax,
+                     c->ecx, c->edx, c->ebx, c->esp, c->ebp, c->esi, c->edi);
+    void* frames[48];
+    const int n = backtrace(frames, 48);
+    backtrace_symbols_fd(frames, n, 2);
+    _exit(128 + sig);
+}
+
+}  // namespace
+
+void install_crash_handler() {
+    static char altstack[1 << 16];
+    stack_t ss{};
+    ss.ss_sp = altstack;
+    ss.ss_size = sizeof altstack;
+    sigaltstack(&ss, nullptr);
+    struct sigaction sa{};
+    sa.sa_sigaction = crash_handler;
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    for (int s : {SIGSEGV, SIGBUS, SIGILL, SIGFPE}) sigaction(s, &sa, nullptr);
 }
 
 }  // namespace rt
