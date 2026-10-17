@@ -1,6 +1,8 @@
 // Runs a dumped D3D9 pixel shader (the game's Bink YUV->RGB shader) on three
 // constant L8 textures with the game's constants and reads back the result.
 // Usage: dxvk_video_shader <ps.dxso> <Y> <V> <U> [vs.dxso]
+// PLANES=<prefix> fills the textures from <prefix>_{y,cr,cb}.raw (real decoded
+// frames, see tests/video) instead of constants; OUT=<file.ppm> dumps the frame.
 // With a vertex shader, draws like the game: vertex declaration with
 // position / texcoord / colour in three streams.
 #include <SDL3/SDL.h>
@@ -8,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include <d3d9.h>
@@ -21,20 +24,32 @@ int main(int argc, char** argv) {
     std::fclose(f);
     const int val[3] = {std::atoi(argv[2]), std::atoi(argv[3]), std::atoi(argv[4])};
 
+    const UINT sizes[3][2] = {{2048, 1024}, {1024, 512}, {1024, 512}};
+    std::vector<uint8_t> planes[3];
+    if (const char* prefix = std::getenv("PLANES")) {
+        const char* names[3] = {"y", "cr", "cb"};
+        for (int i = 0; i < 3; ++i) {
+            planes[i].resize(size_t(sizes[i][0]) * sizes[i][1]);
+            FILE* pf = std::fopen((std::string(prefix) + "_" + names[i] + ".raw").c_str(), "rb");
+            if (!pf || std::fread(planes[i].data(), 1, planes[i].size(), pf) != planes[i].size()) return 2;
+            std::fclose(pf);
+        }
+    }
+    const UINT bw = planes[0].empty() ? 256 : 1280, bh = planes[0].empty() ? 256 : 720;
+
     SDL_Init(SDL_INIT_VIDEO);
-    SDL_Window* win = SDL_CreateWindow("video shader test", 256, 256, SDL_WINDOW_VULKAN);
+    SDL_Window* win = SDL_CreateWindow("video shader test", int(bw), int(bh), SDL_WINDOW_VULKAN);
     IDirect3D9* d3d = Direct3DCreate9(D3D_SDK_VERSION);
     D3DPRESENT_PARAMETERS pp{};
     pp.Windowed = TRUE;
     pp.SwapEffect = D3DSWAPEFFECT_DISCARD;
     pp.BackBufferFormat = D3DFMT_X8R8G8B8;
-    pp.BackBufferWidth = 256;
-    pp.BackBufferHeight = 256;
+    pp.BackBufferWidth = bw;
+    pp.BackBufferHeight = bh;
     pp.hDeviceWindow = reinterpret_cast<HWND>(win);
     IDirect3DDevice9* dev = nullptr;
     if (FAILED(d3d->CreateDevice(0, D3DDEVTYPE_HAL, pp.hDeviceWindow, (std::getenv("DEVFLAGS") ? DWORD(std::strtoul(std::getenv("DEVFLAGS"), nullptr, 16)) : DWORD(D3DCREATE_HARDWARE_VERTEXPROCESSING)), &pp, &dev))) return 1;
 
-    const UINT sizes[3][2] = {{2048, 1024}, {1024, 512}, {1024, 512}};
     IDirect3DPixelShader9* ps = nullptr;
     if (FAILED(dev->CreatePixelShader(code.data(), &ps))) {
         std::printf("CreatePixelShader failed\n");
@@ -44,17 +59,24 @@ int main(int argc, char** argv) {
     IDirect3DTexture9* tex[2][3];
     for (int set = 0; set < 2; ++set)
         for (int i = 0; i < 3; ++i)
-            dev->CreateTexture(sizes[i][0], sizes[i][1], 1, D3DUSAGE_DYNAMIC, D3DFMT_L8, D3DPOOL_DEFAULT, &tex[set][i], nullptr);
+            dev->CreateTexture(sizes[i][0], sizes[i][1], 1, D3DUSAGE_DYNAMIC, std::getenv("FMT") ? D3DFORMAT(std::atoi(std::getenv("FMT"))) : D3DFMT_L8, D3DPOOL_DEFAULT, &tex[set][i], nullptr);
     const int frames = std::getenv("FRAMES") ? std::atoi(std::getenv("FRAMES")) : 60;
     struct V { float x, y, z, rhw; DWORD color; float u, v; };
-    const V quad[4] = {{-0.5f, -0.5f, 0, 1, 0xFFFFFFFF, 0, 0}, {255.5f, -0.5f, 0, 1, 0xFFFFFFFF, 0.625f, 0},
-                       {-0.5f, 255.5f, 0, 1, 0xFFFFFFFF, 0, 0.703125f}, {255.5f, 255.5f, 0, 1, 0xFFFFFFFF, 0.625f, 0.703125f}};
+    const float qx = float(bw) - 0.5f, qy = float(bh) - 0.5f;
+    const V quad[4] = {{-0.5f, -0.5f, 0, 1, 0xFFFFFFFF, 0, 0}, {qx, -0.5f, 0, 1, 0xFFFFFFFF, 0.625f, 0},
+                       {-0.5f, qy, 0, 1, 0xFFFFFFFF, 0, 0.703125f}, {qx, qy, 0, 1, 0xFFFFFFFF, 0.625f, 0.703125f}};
     for (int frame = 0; frame < frames; ++frame) {
         const int set = frame & 1;
         for (int i = 0; i < 3; ++i) {
             D3DLOCKED_RECT lr{};
             tex[set][i]->LockRect(0, &lr, nullptr, D3DLOCK_DISCARD | D3DLOCK_NOSYSLOCK);
-            for (UINT y = 0; y < sizes[i][1]; ++y) std::memset(static_cast<uint8_t*>(lr.pBits) + y * lr.Pitch, val[i], sizes[i][0]);
+            for (UINT y = 0; y < sizes[i][1]; ++y) {
+                uint8_t* row = static_cast<uint8_t*>(lr.pBits) + y * lr.Pitch;
+                if (planes[i].empty())
+                    std::memset(row, val[i], sizes[i][0]);
+                else
+                    std::memcpy(row, planes[i].data() + size_t(y) * sizes[i][0], sizes[i][0]);
+            }
             tex[set][i]->UnlockRect(0);
             dev->SetTexture(i, tex[set][i]);
             dev->SetSamplerState(i, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
@@ -128,11 +150,22 @@ int main(int argc, char** argv) {
 
     IDirect3DSurface9 *bb = nullptr, *sys = nullptr;
     dev->GetRenderTarget(0, &bb);
-    dev->CreateOffscreenPlainSurface(256, 256, D3DFMT_X8R8G8B8, D3DPOOL_SYSTEMMEM, &sys, nullptr);
+    dev->CreateOffscreenPlainSurface(bw, bh, D3DFMT_X8R8G8B8, D3DPOOL_SYSTEMMEM, &sys, nullptr);
     dev->GetRenderTargetData(bb, sys);
     D3DLOCKED_RECT out{};
     sys->LockRect(&out, nullptr, D3DLOCK_READONLY);
-    const unsigned px = static_cast<unsigned*>(out.pBits)[128 * out.Pitch / 4 + 64] & 0xFFFFFF;
+    const unsigned px = static_cast<unsigned*>(out.pBits)[(bh / 2) * out.Pitch / 4 + bw / 4] & 0xFFFFFF;
+    if (const char* path = std::getenv("OUT")) {
+        FILE* of = std::fopen(path, "wb");
+        std::fprintf(of, "P6\n%u %u\n255\n", bw, bh);
+        for (UINT y = 0; y < bh; ++y)
+            for (UINT x = 0; x < bw; ++x) {
+                const unsigned c = static_cast<unsigned*>(out.pBits)[y * out.Pitch / 4 + x];
+                const uint8_t rgb[3] = {uint8_t(c >> 16), uint8_t(c >> 8), uint8_t(c)};
+                std::fwrite(rgb, 1, 3, of);
+            }
+        std::fclose(of);
+    }
     sys->UnlockRect();
     std::printf("Y=%d V=%d U=%d -> pixel %06X\n", val[0], val[1], val[2], px);
     return 0;

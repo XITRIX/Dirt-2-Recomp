@@ -5,7 +5,16 @@ set -e
 cd "$(dirname "$0")/../.."
 tools/scripts/apply_patches.sh
 if [ ! -f third_party/MoltenVK/Package/Release/MoltenVK/dylib/macOS/libMoltenVK.dylib ]; then
-    (cd third_party/MoltenVK && ./fetchDependencies --macos && make macos)
+    # Fetch MoltenVK's dependencies first so the SPIRV-Cross patch lands before
+    # they are built, then build them the way fetchDependencies would.
+    (cd third_party/MoltenVK && ./fetchDependencies --none)
+    tools/scripts/apply_patches.sh
+    (cd third_party/MoltenVK &&
+        xcodebuild -project ExternalDependencies.xcodeproj -scheme ExternalDependencies-macOS \
+            -destination "generic/platform=macOS" -configuration Release \
+            -derivedDataPath External/build/Intermediates/macOS -quiet build &&
+        PROJECT_DIR=. CONFIGURATION=Release sh -c '. ./Scripts/create_ext_lib_xcframeworks.sh && . ./Scripts/package_ext_libs_finish.sh' &&
+        make macos)
 fi
 if [ ! -d build/dxvk-macos ]; then
     (cd third_party/dxvk && meson setup ../../build/dxvk-macos --buildtype=release \

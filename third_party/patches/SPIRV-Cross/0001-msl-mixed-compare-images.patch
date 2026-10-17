@@ -1,0 +1,260 @@
+diff --git a/spirv_cross.cpp b/spirv_cross.cpp
+index c99febe9..cba0c070 100644
+--- a/spirv_cross.cpp
++++ b/spirv_cross.cpp
+@@ -4721,6 +4721,7 @@ void Compiler::analyze_image_and_sampler_usage()
+ 	traverse_all_reachable_opcodes(get<SPIRFunction>(ir.default_entry_point), dref_handler);
+ 
+ 	CombinedImageSamplerUsageHandler handler(*this, dref_handler.dref_combined_samplers);
++	handler.color_combined_samplers = &dref_handler.color_combined_samplers;
+ 	traverse_all_reachable_opcodes(get<SPIRFunction>(ir.default_entry_point), handler);
+ 
+ 	// Need to run this traversal twice. First time, we propagate any comparison sampler usage from leaf functions
+@@ -4730,6 +4731,22 @@ void Compiler::analyze_image_and_sampler_usage()
+ 	traverse_all_reachable_opcodes(get<SPIRFunction>(ir.default_entry_point), handler);
+ 
+ 	comparison_ids = std::move(handler.comparison_ids);
++	mixed_compare_ids.clear();
++	if (keep_mixed_compare_images_color)
++	{
++		for (uint32_t id : handler.color_ids)
++		{
++			if (!comparison_ids.count(id))
++				continue;
++			auto *var = maybe_get<SPIRVariable>(id);
++			if (!var)
++				continue;
++			auto &type = get_variable_data_type(*var);
++			if (type.basetype == SPIRType::Image || type.basetype == SPIRType::SampledImage)
++				if (!type.image.depth)
++					mixed_compare_ids.insert(id);
++		}
++	}
+ 	need_subpass_input = handler.need_subpass_input;
+ 	need_subpass_input_ms = handler.need_subpass_input_ms;
+ 
+@@ -4757,6 +4774,17 @@ bool Compiler::CombinedImageSamplerDrefHandler::handle(Op opcode, const uint32_t
+ 		dref_combined_samplers.insert(args[2]);
+ 		return true;
+ 
++	case OpImageSampleImplicitLod:
++	case OpImageSampleExplicitLod:
++	case OpImageSampleProjImplicitLod:
++	case OpImageSampleProjExplicitLod:
++	case OpImageGather:
++	case OpImageSparseSampleImplicitLod:
++	case OpImageSparseSampleExplicitLod:
++	case OpImageSparseGather:
++		color_combined_samplers.insert(args[2]);
++		return true;
++
+ 	default:
+ 		break;
+ 	}
+@@ -4894,6 +4922,15 @@ bool Compiler::CombinedImageSamplerUsageHandler::begin_function_scope(const uint
+ 	return true;
+ }
+ 
++void Compiler::CombinedImageSamplerUsageHandler::add_hierarchy_to_color_ids(uint32_t id)
++{
++	// Traverse the variable dependency hierarchy and tag everything in its path with colour usage.
++	if (!color_ids.insert(id).second)
++		return;
++	for (auto &dep_id : dependency_hierarchy[id])
++		add_hierarchy_to_color_ids(dep_id);
++}
++
+ void Compiler::CombinedImageSamplerUsageHandler::add_hierarchy_to_comparison_ids(uint32_t id)
+ {
+ 	// Traverse the variable dependency hierarchy and tag everything in its path with comparison ids.
+@@ -4930,6 +4967,8 @@ bool Compiler::CombinedImageSamplerUsageHandler::handle(Op opcode, const uint32_
+ 		// If we load a SampledImage and it will be used with Dref, propagate the state up.
+ 		if (dref_combined_samplers.count(args[1]) != 0)
+ 			add_hierarchy_to_comparison_ids(args[1]);
++		if (color_combined_samplers && color_combined_samplers->count(args[1]) != 0)
++			add_hierarchy_to_color_ids(args[1]);
+ 		break;
+ 	}
+ 
+@@ -4954,6 +4993,8 @@ bool Compiler::CombinedImageSamplerUsageHandler::handle(Op opcode, const uint32_
+ 			// Mark the OpSampledImage itself as being comparison state.
+ 			comparison_ids.insert(result_id);
+ 		}
++		if (color_combined_samplers && color_combined_samplers->count(result_id) != 0)
++			add_hierarchy_to_color_ids(image);
+ 		return true;
+ 	}
+ 
+@@ -5187,6 +5228,8 @@ bool Compiler::is_desktop_only_format(ImageFormat format)
+ // explicitly marked with a color format, or if there are any sample/gather compare operations on it.
+ bool Compiler::is_depth_image(const SPIRType &type, uint32_t id) const
+ {
++	if (mixed_compare_ids.count(id))
++		return false;
+ 	return (type.image.depth && type.image.format == ImageFormatUnknown) || comparison_ids.count(id);
+ }
+ 
+diff --git a/spirv_cross.hpp b/spirv_cross.hpp
+index 601ca269..d9792540 100644
+--- a/spirv_cross.hpp
++++ b/spirv_cross.hpp
+@@ -965,6 +965,11 @@ protected:
+ 	// This set should only be queried for the existence of samplers which are already known to be variables or parameter IDs.
+ 	// Similar is implemented for images, as well as if subpass inputs are needed.
+ 	std::unordered_set<uint32_t> comparison_ids;
++	// Images declared as colour images (Depth != 1) that are sampled both with and without
++	// depth comparison, as DXVK's D3D9 shaders do. Backends that cannot express one resource
++	// both ways (MSL) keep them as colour images and emulate the comparisons.
++	std::unordered_set<uint32_t> mixed_compare_ids;
++	bool keep_mixed_compare_images_color = false;
+ 	bool need_subpass_input = false;
+ 	bool need_subpass_input_ms = false;
+ 
+@@ -984,6 +989,8 @@ protected:
+ 		bool handle(Op opcode, const uint32_t *args, uint32_t length) override;
+ 
+ 		std::unordered_set<uint32_t> dref_combined_samplers;
++		// Sampled images used with non-compare sample or gather operations.
++		std::unordered_set<uint32_t> color_combined_samplers;
+ 	};
+ 
+ 	struct CombinedImageSamplerUsageHandler : OpcodeHandler
+@@ -1001,8 +1008,11 @@ protected:
+ 
+ 		std::unordered_map<uint32_t, std::unordered_set<uint32_t>> dependency_hierarchy;
+ 		std::unordered_set<uint32_t> comparison_ids;
++		const std::unordered_set<uint32_t> *color_combined_samplers = nullptr;
++		std::unordered_set<uint32_t> color_ids;
+ 
+ 		void add_hierarchy_to_comparison_ids(uint32_t ids);
++		void add_hierarchy_to_color_ids(uint32_t id);
+ 		bool need_subpass_input = false;
+ 		bool need_subpass_input_ms = false;
+ 		void add_dependency(uint32_t dst, uint32_t src);
+diff --git a/spirv_msl.cpp b/spirv_msl.cpp
+index db40c443..95f17120 100644
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -39,21 +39,25 @@ static const char *force_inline = "static inline __attribute__((always_inline))"
+ CompilerMSL::CompilerMSL(std::vector<uint32_t> spirv_)
+     : CompilerGLSL(std::move(spirv_))
+ {
++	keep_mixed_compare_images_color = true;
+ }
+ 
+ CompilerMSL::CompilerMSL(const uint32_t *ir_, size_t word_count)
+     : CompilerGLSL(ir_, word_count)
+ {
++	keep_mixed_compare_images_color = true;
+ }
+ 
+ CompilerMSL::CompilerMSL(const ParsedIR &ir_)
+     : CompilerGLSL(ir_)
+ {
++	keep_mixed_compare_images_color = true;
+ }
+ 
+ CompilerMSL::CompilerMSL(ParsedIR &&ir_)
+     : CompilerGLSL(std::move(ir_))
+ {
++	keep_mixed_compare_images_color = true;
+ }
+ 
+ void CompilerMSL::add_msl_shader_input(const MSLShaderInterfaceVariable &si)
+@@ -6608,6 +6612,37 @@ void CompilerMSL::emit_custom_functions()
+ 			statement("");
+ 			break;
+ 
++		case SPVFuncImplCompareEmulation:
++			statement("// Depth comparison on a colour texture (an image also sampled without comparison,");
++			statement("// which Metal cannot type as both): LESS_EQUAL with bilinear PCF from a gather.");
++			statement("template<typename T>");
++			statement("inline float4 spvGatherCompareEmul(texture2d<T> t, sampler s, float2 uv, float ref)");
++			begin_scope();
++			statement("return select(float4(0.0), float4(1.0), float4(ref) <= float4(t.gather(s, uv)));");
++			end_scope();
++			statement("");
++			statement("template<typename T>");
++			statement("inline float spvSampleCompareEmul(texture2d<T> t, sampler s, float2 uv, float ref)");
++			begin_scope();
++			statement("float2 f = fract(uv * float2(t.get_width(), t.get_height()) - 0.5);");
++			statement("float4 r = spvGatherCompareEmul(t, s, uv, ref);");
++			statement("return mix(mix(r.w, r.z, f.x), mix(r.x, r.y, f.x), f.y);");
++			end_scope();
++			statement("");
++			statement("template<typename T>");
++			statement("inline float spvSampleCompareEmul(texturecube<T> t, sampler s, float3 dir, float ref)");
++			begin_scope();
++			statement("return ref <= float(t.sample(s, dir).x) ? 1.0 : 0.0;");
++			end_scope();
++			statement("");
++			statement("template<typename T>");
++			statement("inline float spvSampleCompareEmul(texture3d<T> t, sampler s, float3 uvw, float ref)");
++			begin_scope();
++			statement("return ref <= float(t.sample(s, uvw).x) ? 1.0 : 0.0;");
++			end_scope();
++			statement("");
++			break;
++
+ 		case SPVFuncImplGatherSwizzle:
+ 			statement("// Wrapper function that swizzles texture gathers.");
+ 			statement("template<typename Tex, typename... Ts>");
+@@ -12696,6 +12731,46 @@ string CompilerMSL::to_texture_op(const Instruction &i, bool sparse, bool *forwa
+ 		is_dynamic_img_sampler = has_extended_decoration(var->self, SPIRVCrossDecorationDynamicImageSampler);
+ 	}
+ 
++	// Comparisons on an image kept as a colour texture (see mixed_compare_ids) are emulated.
++	const bool is_dref = op == OpImageSampleDrefImplicitLod || op == OpImageSampleDrefExplicitLod ||
++	                     op == OpImageSampleProjDrefImplicitLod || op == OpImageSampleProjDrefExplicitLod ||
++	                     op == OpImageDrefGather;
++	if (is_dref && !sparse && !imgtype.image.arrayed &&
++	    (imgtype.image.dim == Dim2D || ((imgtype.image.dim == DimCube || imgtype.image.dim == Dim3D) && !is_gather)))
++	{
++		auto *combined = maybe_get<SPIRCombinedImageSampler>(img);
++		uint32_t image_var = 0;
++		if (combined)
++		{
++			if (const auto *v = maybe_get_backing_variable(combined->image))
++				image_var = v->self;
++		}
++		else if (const auto *v = maybe_get_backing_variable(img))
++		{
++			image_var = v->self;
++		}
++		if (image_var && mixed_compare_ids.count(image_var))
++		{
++			const uint32_t coord_id = ops[3], dref_id = ops[4];
++			const bool proj = op == OpImageSampleProjDrefImplicitLod || op == OpImageSampleProjDrefExplicitLod;
++			const string coord = to_enclosed_expression(coord_id);
++			string uv = coord + (imgtype.image.dim == Dim2D ? ".xy" : ".xyz"), ref = to_enclosed_expression(dref_id);
++			if (proj)
++			{
++				const string q = coord + (expression_type(coord_id).vecsize >= 4 ? ".w" : ".z");
++				uv = join("(", uv, " / ", q, ")");
++				ref = join("(", ref, " / ", q, ")");
++			}
++			add_spv_func_and_recompile(SPVFuncImplCompareEmulation);
++			*forward = should_forward(coord_id) && should_forward(dref_id);
++			inherited_expressions.push_back(coord_id);
++			inherited_expressions.push_back(dref_id);
++			return join(is_gather ? "spvGatherCompareEmul(" : "spvSampleCompareEmul(",
++			            to_expression(combined ? uint32_t(combined->image) : img), ", ", to_sampler_expression(img), ", ", uv,
++			            ", ", ref, ")");
++		}
++	}
++
+ 	string expr;
+ 	if (constexpr_sampler && constexpr_sampler->ycbcr_conversion_enable && !is_dynamic_img_sampler)
+ 	{
+diff --git a/spirv_msl.hpp b/spirv_msl.hpp
+index 75d3aa72..91aaa9bd 100644
+--- a/spirv_msl.hpp
++++ b/spirv_msl.hpp
+@@ -816,6 +816,7 @@ protected:
+ 		SPVFuncImplGatherCompareReturn,
+ 		SPVFuncImplGatherSwizzle,
+ 		SPVFuncImplGatherCompareSwizzle,
++		SPVFuncImplCompareEmulation,
+ 		SPVFuncImplGatherConstOffsets,
+ 		SPVFuncImplGatherCompareConstOffsets,
+ 		SPVFuncImplSubgroupBroadcast,

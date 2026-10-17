@@ -18,6 +18,7 @@ add_library(dirt2_shims OBJECT
   input/xinput.cpp
   d3dx9/d3dx9.cpp
   video/bink.cpp
+  video/bink_decoder.cpp
   audio/openal.cpp
   audio/vorbisfile.cpp)
 find_package(PkgConfig REQUIRED)

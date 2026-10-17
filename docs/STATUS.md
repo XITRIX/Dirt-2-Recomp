@@ -9,7 +9,7 @@ Target executable: `dirt2_game.exe`, SHA-256 `49b1e00ea1d4bd02e633ceed63390b5cae
 | 1 | Skeleton, PE loader, analysis report | Done |
 | 2 | Full lift to C, links on macOS arm64 with stub imports | Done, with Unicorn differential tests |
 | 3 | Headless boot on macOS to the main loop | In progress: boots through CRT, GFWL and engine init to `Direct3DCreate9` |
-| 4 | Frontend renders (DXVK d3d9 + MoltenVK), audio, input, Bink | In progress: 3D frontend renders with audio; open: video green, device lost after ~40 s, flicker |
+| 4 | Frontend renders (DXVK d3d9 + MoltenVK), audio, input, Bink | In progress: 3D frontend and Bink videos render in correct colour with audio; open: flicker, ~15 fps in 3D scenes |
 | 5 | Playable race on macOS | |
 | 6 | Playable race on iOS | |
 | 7 | tvOS, visionOS, performance | |
@@ -88,7 +88,7 @@ After editing `cases.txt`, run `tests/lifter/assemble.py` to regenerate `cases.b
 | d3dx9 | Constant tables from CTAB, built-in run-time shaders, input semantics, mip filter/fill |
 | dinput8 / xinput1_3 | Keyboard and mouse via SDL3; XInput on SDL3 gamepads, keyboard fallback pad |
 | dsound | `GetDeviceID`, `DllGetClassObject` (hardware detection only) |
-| binkw32 | Stubs: videos are skipped until the FFmpeg decoder lands |
+| binkw32 | Bink player on FFmpeg (`shims/video`); intros skipped unless `DIRT2_PLAY_VIDEOS=1` |
 | OpenAL, ddraw, d3dcompiler | Not yet |
 
 Notable fixes found by booting:
@@ -142,23 +142,26 @@ Debugging aids:
 
 - With intros skipped, the game now reaches the 3D frontend: the magazine loading scene, then the first-race introduction in the X Games paddock with Travis Pastrana.
 - **Audio:** OpenAL Soft passthrough. Streamed music and speech use the native libvorbisfile bridge.
-- **Video:** `shims/video/bink.cpp` is a real Bink player on FFmpeg (`binkvideo` + `binkaudio`), with frame-buffer mode, frame-rate timing, seek, pause, volume and SDL audio. Audio plays with correct timing. Video is skipped by default: in-game the frames render green (see below). `DIRT2_PLAY_VIDEOS=1` enables playback.
+- **Video:** `shims/video/bink.cpp` is a real Bink player on FFmpeg (`binkvideo` + `binkaudio`), with frame-buffer mode, frame-rate timing, seek, pause, volume and SDL audio. Audio plays with correct timing. Decoding lives in the host-only `bink::Decoder` (`shims/video/bink_decoder.*`), which the tests use too. Intros are skipped by default to reach the game faster; `DIRT2_PLAY_VIDEOS=1` plays them.
 - **Sync:** each waiter has its own condition variable, critical-section lookup is lock-free, and the handle table is reader/writer. The old shared `notify_all` caused lock convoys with the game's ~40 threads.
 - **Bridge:** SYSTEMMEM resources keep persistent guest shadows. The locked pointer stays valid after unlock, as on Windows, and is flushed at unlock and before `UpdateTexture`/`UpdateSurface`.
 
 ### Open issues
 
-1. **Video renders green, and the 3D scene is desaturated and overexposed (sepia tint, blown-out bloom).** These are probably the same bug.
-   - **Pinned down so far:** the game's dynamic L8 video textures hold the frame in DXVK's CPU mapping, and DXVK flushes them on every unlock (`BACKED` mode, full dirty box). Yet a GPU-side probe at the draw (`StretchRect` into a render target, then readback) reads zeros.
-   - **Ruled out:**
-     - device creation flags;
-     - render, sampler and texture state (replayed exactly in `tests/dxvk_smoke`, where everything renders correctly);
-     - holding DXVK's lock across the game's lock span (DISCARD locks now commit in one step at unlock);
-     - mapped-texture eviction;
-     - the DXVK options `floatEmulation`, `forceSamplerTypeSpecConstants`, `allowDiscard`, `useFP16`, `forceDrawTimeBufferUpload`, `deferSurfaceCreation`, `textureMemory`, `enableMemoryDefrag`, `enableUnifiedImageLayouts`, `enableDescriptorUpdateTemplates`, `zeroMappedMemory`.
-   - **Control:** a texture created and filled at the same draw, inside the game, does upload correctly. So the fault is specific to long-lived textures the game binds every frame.
-   - The HDR luminance readback (1×1 A16B16G16R16F, SYSTEMMEM) mostly reads 4.0. If exposure or grading inputs suffer the same lost uploads, that explains the look.
-   - **Next step:** a Metal GPU capture (`MVK_CONFIG_AUTO_GPU_CAPTURE_SCOPE`) of one frame, to see the copy and the sampled image directly.
+1. ~~Video renders green, 3D scene sepia and overexposed~~: fixed in SPIRV-Cross (MoltenVK's shader translator).
+   - **Isolated layer by layer** (frame 120 of `AMD_sting.bik`):
+
+     | Layer | Harness | Result |
+     |---|---|---|
+     | FFmpeg | `ffmpeg -vf select` | reference |
+     | Our decoder | `tests/video/bink_decode_test.cpp` | 46 dB vs reference |
+     | Raw Vulkan on MoltenVK | `tests/video/mvk_yuv_test.cpp` | bit-exact upload, correct image |
+     | DXVK on MoltenVK, game shaders | `tests/dxvk_smoke/video_shader.cpp` (`PLANES=`) | correct with L8, **green with A8** |
+
+   - The game's video planes are `D3DFMT_A8`, not L8. DXVK maps A8 to R8 with a (0,0,0,R) view swizzle, and MoltenVK creates that swizzled Metal view correctly.
+   - **Root cause:** DXVK 3.x emits one image variable per D3D9 sampler and uses it both for plain sampling and, behind a runtime branch, for depth comparison. SPIRV-Cross saw the comparison use and declared the texture `depth2d<float>`. Sampling a `depth2d` returns only the red channel splatted to all four, so alpha was red on every texture: A8 read 0 (green video), L8 and X8R8G8B8 lost their forced alpha of 1, and A8R8G8B8 alpha came from red. That broke the 3D scene's blending and grading.
+   - **Fix** (`third_party/patches/SPIRV-Cross/0001-msl-mixed-compare-images.patch`): an image declared non-depth that is sampled both ways stays `texture2d`, and its comparisons are emulated (gather plus bilinear PCF, LESS_EQUAL as in D3D9; point compare for cube and 3D). All other shaders translate exactly as before.
+   - Pitfall found on the way: `/usr/bin/perl` (SIP) strips `DYLD_LIBRARY_PATH`, so a test started through `perl -e alarm` loads Homebrew's MoltenVK 1.2.11 and DXVK finds no Vulkan 1.3 adapter. Set the variable inside perl (`$ENV{DYLD_LIBRARY_PATH}=...`).
 2. ~~Device lost after about 40 s~~: fixed by forcing `D3DCREATE_MULTITHREADED`.
 3. **Flicker in the 3D frontend**, reported on screen and not yet investigated. It may share a cause with 2.
 
@@ -174,7 +177,7 @@ Debug switches:
 | `DIRT2_WATCH_PS_CONST=<name>` | Full state dump for draws with the pixel shader whose CTAB names `<name>` |
 | `DIRT2_SCREENSHOT_DIR` | Back-buffer capture |
 
-`tests/dxvk_smoke/` holds standalone DXVK checks: clear, texture sampling, and the game's video shader.
+`tests/dxvk_smoke/` holds standalone DXVK checks: clear, texture sampling, and the game's video shader (`FMT=` texture format, `PLANES=` real decoded frames, `OUT=` frame dump). `tests/video/` holds the decoder and raw-MoltenVK harnesses.
 
 ## Run
 
