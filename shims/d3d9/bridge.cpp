@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <functional>
 #include <map>
@@ -388,6 +389,7 @@ void QI(X86* c) {
 // Hand-written bridges (defined below the generated vtables).
 void d3d_create_device(X86* c);
 void dev_reset(X86* c);
+void dev_create_texture(X86* c);
 void dev_set_vertex_shader(X86* c);
 void dev_draw_indexed_primitive(X86* c);
 void dev_draw_primitive_up(X86* c);
@@ -421,6 +423,7 @@ OVERRIDE(IDirect3D9, CreateDevice, d3d_create_device)
 OVERRIDE(IDirect3D9, GetAdapterMonitor, d3d_get_adapter_monitor)
 OVERRIDE(IDirect3DDevice9, Present, dev_present)
 OVERRIDE(IDirect3DDevice9, Reset, dev_reset)
+OVERRIDE(IDirect3DDevice9, CreateTexture, dev_create_texture)
 OVERRIDE(IDirect3DDevice9, SetVertexShader, dev_set_vertex_shader)
 OVERRIDE(IDirect3DDevice9, DrawIndexedPrimitive, dev_draw_indexed_primitive)
 OVERRIDE(IDirect3DDevice9, DrawPrimitiveUP, dev_draw_primitive_up)
@@ -658,6 +661,35 @@ void dev_draw_primitive(X86* c) {  // (type, start vertex, count)
         float pc[8];
         self->GetPixelShaderConstantF(0, pc, 2);
         rt::log("  ps consts: c0(%g %g %g %g) c1(%g %g %g %g)", pc[0], pc[1], pc[2], pc[3], pc[4], pc[5], pc[6], pc[7]);
+        {
+            std::string rs;
+            char b2[48];
+            for (DWORD k = 7; k <= 209; ++k) {
+                DWORD v = 0;
+                if (SUCCEEDED(self->GetRenderState(D3DRENDERSTATETYPE(k), &v))) {
+                    std::snprintf(b2, sizeof b2, " %lu=%lX", (unsigned long)k, (unsigned long)v);
+                    rs += b2;
+                }
+            }
+            rt::log("  render states:%s", rs.c_str());
+            for (DWORD st = 0; st < 3; ++st) {
+                std::string ss;
+                for (DWORD k = 1; k <= 13; ++k) {
+                    DWORD v = 0;
+                    self->GetSamplerState(st, D3DSAMPLERSTATETYPE(k), &v);
+                    std::snprintf(b2, sizeof b2, " %lu=%lX", (unsigned long)k, (unsigned long)v);
+                    ss += b2;
+                }
+                rt::log("  sampler %lu states:%s", (unsigned long)st, ss.c_str());
+            }
+            IDirect3DSurface9* rt0 = nullptr;
+            if (SUCCEEDED(self->GetRenderTarget(0, &rt0)) && rt0) {
+                D3DSURFACE_DESC d{};
+                rt0->GetDesc(&d);
+                rt::log("  rt0 %ux%u fmt %u ms %u", d.Width, d.Height, d.Format, d.MultiSampleType);
+                rt0->Release();
+            }
+        }
         for (DWORD st = 0; st < 3; ++st) {
             IDirect3DBaseTexture9* bt = nullptr;
             self->GetTexture(st, &bt);
@@ -687,6 +719,55 @@ void dev_draw_primitive(X86* c) {  // (type, start vertex, count)
             }
             rt::log("  stage %u: tex %08X sum %llu addr %u/%u filt %u/%u/%u srgb %u", st, tp, (unsigned long long)sum, au, av, mn,
                     mg, mp, srgb);
+            if (bt && bt->GetType() == D3DRTYPE_TEXTURE && st == 0) {
+                // GPU-side content: StretchRect the level into a render target and read that back.
+                auto* t2 = static_cast<IDirect3DTexture9*>(bt);
+                D3DSURFACE_DESC d{};
+                t2->GetLevelDesc(0, &d);
+                IDirect3DSurface9 *src = nullptr, *rtgt = nullptr, *sys = nullptr;
+                t2->GetSurfaceLevel(0, &src);
+                HRESULT h1 = self->CreateRenderTarget(256, 256, D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE, &rtgt, nullptr);
+                RECT sr{0, 0, LONG(d.Width / 2), LONG(d.Height / 2)};
+                HRESULT h2 = src && rtgt ? self->StretchRect(src, &sr, rtgt, nullptr, D3DTEXF_POINT) : E_FAIL;
+                HRESULT h3 = self->CreateOffscreenPlainSurface(256, 256, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM, &sys, nullptr);
+                HRESULT h4 = rtgt && sys ? self->GetRenderTargetData(rtgt, sys) : E_FAIL;
+                uint64_t gsum = 0;
+                D3DLOCKED_RECT lr{};
+                if (SUCCEEDED(h4) && SUCCEEDED(sys->LockRect(&lr, nullptr, D3DLOCK_READONLY))) {
+                    for (int x = 0; x < 256; ++x) gsum += static_cast<const uint8_t*>(lr.pBits)[128 * lr.Pitch + x * 4 + 2];
+                    sys->UnlockRect();
+                }
+                rt::log("  stage 0 GPU copy: hr %08X %08X %08X %08X red-row sum %llu", uint32_t(h1), uint32_t(h2), uint32_t(h3),
+                        uint32_t(h4), (unsigned long long)gsum);
+                // Control: a fresh texture created and filled right here, probed the same way.
+                IDirect3DTexture9* fresh = nullptr;
+                if (SUCCEEDED(self->CreateTexture(2048, 1024, 1, D3DUSAGE_DYNAMIC, D3DFMT_L8, D3DPOOL_DEFAULT, &fresh, nullptr))) {
+                    D3DLOCKED_RECT fl{};
+                    fresh->LockRect(0, &fl, nullptr, D3DLOCK_DISCARD);
+                    for (int y = 0; y < 1024; ++y) std::memset(static_cast<uint8_t*>(fl.pBits) + y * fl.Pitch, 200, 2048);
+                    fresh->UnlockRect(0);
+                    IDirect3DSurface9 *fs = nullptr, *frt = nullptr, *fsys = nullptr;
+                    fresh->GetSurfaceLevel(0, &fs);
+                    self->CreateRenderTarget(256, 256, D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE, &frt, nullptr);
+                    self->StretchRect(fs, &sr, frt, nullptr, D3DTEXF_POINT);
+                    self->CreateOffscreenPlainSurface(256, 256, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM, &fsys, nullptr);
+                    self->GetRenderTargetData(frt, fsys);
+                    D3DLOCKED_RECT fr{};
+                    uint32_t px = 0;
+                    if (SUCCEEDED(fsys->LockRect(&fr, nullptr, D3DLOCK_READONLY))) {
+                        px = static_cast<const uint32_t*>(fr.pBits)[128 * fr.Pitch / 4 + 128];
+                        fsys->UnlockRect();
+                    }
+                    rt::log("  control texture GPU copy pixel %08X (expect FFC8C8C8)", px);
+                    fs->Release();
+                    frt->Release();
+                    fsys->Release();
+                    fresh->Release();
+                }
+                if (src) src->Release();
+                if (rtgt) rtgt->Release();
+                if (sys) sys->Release();
+            }
             if (bt) bt->Release();
         }
         IDirect3DVertexDeclaration9* decl = nullptr;
@@ -742,6 +823,24 @@ void dev_draw_indexed_primitive(X86* c) {  // (type, base vertex, min index, num
     c->eax = self ? uint32_t(self->DrawIndexedPrimitive(D3DPRIMITIVETYPE(a[1]), INT(a[2]), a[3], a[4], a[5], a[6]))
                   : uint32_t(D3DERR_INVALIDCALL);
     c->esp += 4 * 8;
+}
+
+// CreateTexture(w, h, levels, usage, format, pool, **tex, *shared): logged for dynamic textures when DIRT2_LOG_LOCKS.
+void dev_create_texture(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<IDirect3DDevice9*>(to_host(a[0]));
+    IDirect3DTexture9* t = nullptr;
+    const HRESULT hr = self ? self->CreateTexture(a[1], a[2], a[3], a[4], D3DFORMAT(a[5]), D3DPOOL(a[6]), &t, nullptr)
+                            : D3DERR_INVALIDCALL;
+    const uint32_t proxy = SUCCEEDED(hr) ? wrap(t) : 0;
+    if (a[7]) wr32(a[7], proxy);
+    if (a[8]) wr32(a[8], 0);
+    static const bool log = std::getenv("DIRT2_LOG_LOCKS") != nullptr;
+    if (log && (a[4] & D3DUSAGE_DYNAMIC))
+        rt::log("d3d9: CreateTexture %ux%u levels %u usage %X fmt %u pool %u shared %08X -> %08X hr %08X (thread %u)", a[1], a[2],
+                a[3], a[4], a[5], a[6], a[8], proxy, uint32_t(hr), rt::current_thread_id());
+    c->eax = uint32_t(hr);
+    c->esp += 4 * 10;
 }
 
 void d3d_get_adapter_monitor(X86* c) {
@@ -868,6 +967,9 @@ struct Staging {
     uint32_t rows = 0, slices = 1, row_bytes = 0;
     bool readonly = false;
     bool persistent = false;  // guest buffer outlives the lock (SYSTEMMEM)
+    // DISCARD locks: the host resource is not kept locked while the game
+    // writes; commit() locks it (DISCARD), copies the staging in and unlocks.
+    std::function<HRESULT(const Staging&)> commit;
 };
 
 std::map<std::pair<uint32_t, uint32_t>, Staging> g_locks;  // (proxy, subresource) -> staging
@@ -951,6 +1053,27 @@ HRESULT lock_rect(uint32_t proxy, uint32_t sub, uint32_t guest_lr, const D3DSURF
     if (FAILED(hr)) return hr;
     Staging s;
     shape_rect(s, desc, rect, uint32_t(lr.Pitch));
+    if ((flags & D3DLOCK_DISCARD) && desc.Pool != D3DPOOL_SYSTEMMEM) {
+        // Release the host lock straight away and upload in one step at unlock:
+        // DXVK renames the mapping on every DISCARD lock, so a pointer held across
+        // the game's lock span (while other threads use the device) can go stale.
+        unlock();
+        s.guest = rt::heap_alloc((s.slices - 1) * s.slice_pitch + (s.rows - 1) * s.row_pitch + s.row_bytes);
+        s.commit = [lock, unlock](const Staging& st) mutable {
+            D3DLOCKED_RECT l{};
+            HRESULT h = lock(&l, D3DLOCK_DISCARD | D3DLOCK_NOSYSLOCK);
+            if (FAILED(h)) return h;
+            for (uint32_t y = 0; y < st.rows; ++y)
+                std::memcpy(static_cast<uint8_t*>(l.pBits) + size_t(y) * l.Pitch, rt::host_ptr(st.guest + y * st.row_pitch),
+                            std::min<uint32_t>(st.row_bytes, uint32_t(l.Pitch)));
+            return unlock();
+        };
+        wr32(guest_lr, uint32_t(lr.Pitch));
+        wr32(guest_lr + 4, s.guest);
+        std::lock_guard lk(g_mu);
+        g_locks[{proxy, sub}] = std::move(s);
+        return hr;
+    }
     if (desc.Pool == D3DPOOL_SYSTEMMEM && !rect) {
         // Whole-level lock of a SYSTEMMEM resource: persistent shadow.
         std::lock_guard lk(g_mu);
@@ -975,6 +1098,16 @@ HRESULT lock_rect(uint32_t proxy, uint32_t sub, uint32_t guest_lr, const D3DSURF
         s.persistent = true;
     }
     const uint32_t g = begin_staging(s, lr.pBits, flags);
+    if (std::getenv("DIRT2_LOG_LUM") && desc.Format == D3DFMT_A16B16G16R16F && desc.Width == 1 && desc.Height == 1) {
+        uint16_t h[4];
+        std::memcpy(h, rt::host_ptr(g), 8);
+        auto f16 = [](uint16_t v) {
+            const uint32_t sgn = v >> 15, e = (v >> 10) & 31, m = v & 1023;
+            float r = e == 0 ? std::ldexp(float(m), -24) : e == 31 ? INFINITY : std::ldexp(float(m | 1024), int(e) - 25);
+            return sgn ? -r : r;
+        };
+        rt::log("d3d9: luminance readback %08X: %g %g %g %g", proxy, f16(h[0]), f16(h[1]), f16(h[2]), f16(h[3]));
+    }
     static const bool log_locks = std::getenv("DIRT2_LOG_LOCKS") != nullptr;
     if (log_locks)
         rt::log("d3d9: lock %08X/%X %ux%u fmt %u pool %u usage %X flags %X -> %08X pitch %u%s", proxy, sub, desc.Width,
@@ -989,8 +1122,16 @@ HRESULT lock_rect(uint32_t proxy, uint32_t sub, uint32_t guest_lr, const D3DSURF
 template <typename UnlockFn>
 HRESULT unlock_sub(uint32_t proxy, uint32_t sub, UnlockFn&& unlock) {
     {
-        std::lock_guard lk(g_mu);
+        std::unique_lock lk(g_mu);
         auto it = g_locks.find({proxy, sub});
+        if (it != g_locks.end() && it->second.commit) {
+            Staging st = std::move(it->second);
+            g_locks.erase(it);
+            lk.unlock();
+            const HRESULT h = st.commit(st);
+            rt::heap_free(st.guest);
+            return h;
+        }
         if (it != g_locks.end()) {
             if (std::getenv("DIRT2_LOG_LOCKS") && it->second.row_pitch >= 1024) {
                 const Staging& st = it->second;

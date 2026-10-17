@@ -4,6 +4,7 @@
 #include <SDL3/SDL.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include <d3d9.h>
@@ -23,7 +24,7 @@ int main(int argc, char** argv) {
     pp.BackBufferHeight = 256;
     pp.hDeviceWindow = reinterpret_cast<HWND>(win);
     IDirect3DDevice9* dev = nullptr;
-    if (FAILED(d3d->CreateDevice(0, D3DDEVTYPE_HAL, pp.hDeviceWindow, D3DCREATE_HARDWARE_VERTEXPROCESSING, &pp, &dev))) return 1;
+    if (FAILED(d3d->CreateDevice(0, D3DDEVTYPE_HAL, pp.hDeviceWindow, (std::getenv("DEVFLAGS") ? DWORD(std::strtoul(std::getenv("DEVFLAGS"), nullptr, 16)) : DWORD(D3DCREATE_HARDWARE_VERTEXPROCESSING)), &pp, &dev))) return 1;
 
     IDirect3DTexture9* tex = nullptr;
     const D3DFORMAT fmt = l8 ? D3DFMT_L8 : D3DFMT_A8R8G8B8;
@@ -55,6 +56,19 @@ int main(int argc, char** argv) {
         tex->UnlockRect(0);
     }
 
+    if (std::getenv("PROBE_STRETCH")) {  // same GPU-side probe as the bridge's debug draw dump
+        IDirect3DSurface9 *src = nullptr, *rtgt = nullptr, *sys2 = nullptr;
+        tex->GetSurfaceLevel(0, &src);
+        dev->CreateRenderTarget(256, 256, D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE, &rtgt, nullptr);
+        RECT sr{0, 0, 1024, 512};
+        const HRESULT h = dev->StretchRect(src, &sr, rtgt, nullptr, D3DTEXF_POINT);
+        dev->CreateOffscreenPlainSurface(256, 256, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM, &sys2, nullptr);
+        dev->GetRenderTargetData(rtgt, sys2);
+        D3DLOCKED_RECT l2{};
+        sys2->LockRect(&l2, nullptr, D3DLOCK_READONLY);
+        std::printf("StretchRect hr %08X -> pixel %08X\n", unsigned(h), static_cast<unsigned*>(l2.pBits)[128 * l2.Pitch / 4 + 128]);
+        sys2->UnlockRect();
+    }
     struct V { float x, y, z, rhw, u, v; };
     const V quad[4] = {{-0.5f, -0.5f, 0, 1, 0, 0}, {255.5f, -0.5f, 0, 1, 1, 0}, {-0.5f, 255.5f, 0, 1, 0, 1}, {255.5f, 255.5f, 0, 1, 1, 1}};
     dev->Clear(0, nullptr, D3DCLEAR_TARGET, D3DCOLOR_XRGB(0, 0, 255), 1.0f, 0);

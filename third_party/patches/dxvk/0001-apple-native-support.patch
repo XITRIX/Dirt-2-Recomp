@@ -1,3 +1,20 @@
+diff --git a/src/d3d9/d3d9_device.cpp b/src/d3d9/d3d9_device.cpp
+index 9b72bb2e..932daae1 100644
+--- a/src/d3d9/d3d9_device.cpp
++++ b/src/d3d9/d3d9_device.cpp
+@@ -5234,6 +5234,12 @@ namespace dxvk {
+          shouldFlush &= box.Left < box.Right && box.Top < box.Bottom && box.Front < box.Back;
+          shouldFlush &= !pResource->IsManaged();
+ 
++    if (env::getEnvVar("DXVK_DEBUG_DYNAMIC_TEX") == "1" && pResource->IsDynamic()) {
++      Logger::warn(str::format("UnlockImage dynamic ", pResource->Desc()->Width, "x", pResource->Desc()->Height,
++        " fmt ", uint32_t(pResource->Desc()->Format), " sub ", Subresource, " mapMode ", uint32_t(pResource->GetMapMode()),
++        " box ", box.Left, "-", box.Right, " ", box.Top, "-", box.Bottom, " ", box.Front, "-", box.Back,
++        " managed ", pResource->IsManaged(), " flush ", shouldFlush));
++    }
+     if (shouldFlush) {
+         this->FlushImage(pResource, Subresource);
+         if (!pResource->IsAnySubresourceLocked())
 diff --git a/src/d3d9/meson.build b/src/d3d9/meson.build
 index 53d23a64..387ff4c6 100644
 --- a/src/d3d9/meson.build

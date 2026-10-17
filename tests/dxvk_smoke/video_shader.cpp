@@ -1,6 +1,8 @@
 // Runs a dumped D3D9 pixel shader (the game's Bink YUV->RGB shader) on three
 // constant L8 textures with the game's constants and reads back the result.
-// Usage: dxvk_video_shader <ps.dxso> <Y> <V> <U>
+// Usage: dxvk_video_shader <ps.dxso> <Y> <V> <U> [vs.dxso]
+// With a vertex shader, draws like the game: vertex declaration with
+// position / texcoord / colour in three streams.
 #include <SDL3/SDL.h>
 
 #include <cstdio>
@@ -30,7 +32,7 @@ int main(int argc, char** argv) {
     pp.BackBufferHeight = 256;
     pp.hDeviceWindow = reinterpret_cast<HWND>(win);
     IDirect3DDevice9* dev = nullptr;
-    if (FAILED(d3d->CreateDevice(0, D3DDEVTYPE_HAL, pp.hDeviceWindow, D3DCREATE_HARDWARE_VERTEXPROCESSING, &pp, &dev))) return 1;
+    if (FAILED(d3d->CreateDevice(0, D3DDEVTYPE_HAL, pp.hDeviceWindow, (std::getenv("DEVFLAGS") ? DWORD(std::strtoul(std::getenv("DEVFLAGS"), nullptr, 16)) : DWORD(D3DCREATE_HARDWARE_VERTEXPROCESSING)), &pp, &dev))) return 1;
 
     const UINT sizes[3][2] = {{2048, 1024}, {1024, 512}, {1024, 512}};
     IDirect3DPixelShader9* ps = nullptr;
@@ -64,9 +66,62 @@ int main(int argc, char** argv) {
         dev->SetPixelShaderConstantF(0, consts, 2);
         dev->Clear(0, nullptr, D3DCLEAR_TARGET, D3DCOLOR_XRGB(0, 0, 255), 1.0f, 0);
         dev->BeginScene();
-        dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1);
         dev->SetPixelShader(ps);
-        dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(V));
+        if (argc > 5) {
+            static IDirect3DVertexShader9* vs = nullptr;
+            static IDirect3DVertexDeclaration9* decl = nullptr;
+            static IDirect3DVertexBuffer9* vb[3] = {};
+            if (!vs) {
+                FILE* vf = std::fopen(argv[5], "rb");
+                std::vector<DWORD> vcode(65536);
+                vcode.resize(std::fread(vcode.data(), 4, vcode.size(), vf));
+                std::fclose(vf);
+                dev->CreateVertexShader(vcode.data(), &vs);
+                const D3DVERTEXELEMENT9 el[] = {{0, 0, D3DDECLTYPE_FLOAT3, 0, D3DDECLUSAGE_POSITION, 0},
+                                                {1, 0, D3DDECLTYPE_FLOAT2, 0, D3DDECLUSAGE_TEXCOORD, 0},
+                                                {2, 0, D3DDECLTYPE_FLOAT4, 0, D3DDECLUSAGE_COLOR, 0}, D3DDECL_END()};
+                dev->CreateVertexDeclaration(el, &decl);
+                const float pos[] = {1, -0.75f, 1, -1, -0.75f, 1, 1, 0.75f, 1, -1, 0.75f, 1};
+                const float uv[] = {0.625f, 0.703125f, 0, 0.703125f, 0.625f, 0, 0, 0};
+                const float col[] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+                const void* data[3] = {pos, uv, col};
+                const UINT size[3] = {sizeof pos, sizeof uv, sizeof col};
+                for (int i = 0; i < 3; ++i) {
+                    dev->CreateVertexBuffer(size[i], D3DUSAGE_WRITEONLY, 0, D3DPOOL_MANAGED, &vb[i], nullptr);
+                    void* p = nullptr;
+                    vb[i]->Lock(0, 0, &p, 0);
+                    std::memcpy(p, data[i], size[i]);
+                    vb[i]->Unlock();
+                }
+            }
+            const UINT strides[3] = {12, 8, 16};
+            for (int i = 0; i < 3; ++i) dev->SetStreamSource(i, vb[i], 0, strides[i]);
+            dev->SetVertexDeclaration(decl);
+            dev->SetVertexShader(vs);
+            dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+            dev->SetRenderState(D3DRS_ZENABLE, FALSE);
+            // RS="k=v k=v ..." (hex values) / SS="k=v ..." replay the game's state.
+            auto apply = [](const char* env, auto&& set) {
+                if (const char* e = std::getenv(env)) {
+                    const char* p = e;
+                    while (*p) {
+                        char* end = nullptr;
+                        const unsigned long k = std::strtoul(p, &end, 10);
+                        if (*end != '=') break;
+                        const unsigned long v = std::strtoul(end + 1, &end, 16);
+                        set(DWORD(k), DWORD(v));
+                        p = end;
+                        while (*p == ' ') ++p;
+                    }
+                }
+            };
+            apply("RS", [&](DWORD k, DWORD v) { dev->SetRenderState(D3DRENDERSTATETYPE(k), v); });
+            for (DWORD st = 0; st < 3; ++st) apply("SS", [&](DWORD k, DWORD v) { dev->SetSamplerState(st, D3DSAMPLERSTATETYPE(k), v); });
+            dev->DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
+        } else {
+            dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1);
+            dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(V));
+        }
         dev->EndScene();
         if (frame + 1 < frames) dev->Present(nullptr, nullptr, nullptr, nullptr);
     }

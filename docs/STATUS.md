@@ -148,16 +148,18 @@ Debugging aids:
 
 ### Open issues
 
-1. **Video renders green.**
-   - Verified correct at the API level, at the moment of the draw:
-     - decoded YUV reaches the game's planes and the L8 dynamic textures (readback);
-     - the textures are bound to stages 0–2, with clamp and linear sampling;
-     - pixel-shader constants are correct (`vidSize` 1280×720, `bufferSize` 2048×1024);
-     - vertex streams are correct (UV up to 0.625×0.703, white colour);
-     - the vertex shader is a pass-through.
-   - The same dumped shader, textures, constants and per-frame DISCARD pattern render correctly in `tests/dxvk_smoke/video_shader.cpp`.
-   - Next step: compare the DXVK state (spec constants, sampler and descriptor bindings) for the in-game draw against the test, for example with `MVK_CONFIG_DEBUG` and a Metal frame capture.
-2. **Device lost after about 40 s** (`kIOGPUCommandBufferCallbackErrorInvalidResource`): a resource is used after being freed. Suspects are the DXVK null-descriptor patch and the bridge's resource lifetimes.
+1. **Video renders green, and the 3D scene is desaturated and overexposed (sepia tint, blown-out bloom).** These are probably the same bug.
+   - **Pinned down so far:** the game's dynamic L8 video textures hold the frame in DXVK's CPU mapping, and DXVK flushes them on every unlock (`BACKED` mode, full dirty box). Yet a GPU-side probe at the draw (`StretchRect` into a render target, then readback) reads zeros.
+   - **Ruled out:**
+     - device creation flags;
+     - render, sampler and texture state (replayed exactly in `tests/dxvk_smoke`, where everything renders correctly);
+     - holding DXVK's lock across the game's lock span (DISCARD locks now commit in one step at unlock);
+     - mapped-texture eviction;
+     - the DXVK options `floatEmulation`, `forceSamplerTypeSpecConstants`, `allowDiscard`, `useFP16`, `forceDrawTimeBufferUpload`, `deferSurfaceCreation`, `textureMemory`, `enableMemoryDefrag`, `enableUnifiedImageLayouts`, `enableDescriptorUpdateTemplates`, `zeroMappedMemory`.
+   - **Control:** a texture created and filled at the same draw, inside the game, does upload correctly. So the fault is specific to long-lived textures the game binds every frame.
+   - The HDR luminance readback (1×1 A16B16G16R16F, SYSTEMMEM) mostly reads 4.0. If exposure or grading inputs suffer the same lost uploads, that explains the look.
+   - **Next step:** a Metal GPU capture (`MVK_CONFIG_AUTO_GPU_CAPTURE_SCOPE`) of one frame, to see the copy and the sampled image directly.
+2. ~~Device lost after about 40 s~~: fixed by forcing `D3DCREATE_MULTITHREADED`.
 3. **Flicker in the 3D frontend**, reported on screen and not yet investigated. It may share a cause with 2.
 
 Debug switches:
