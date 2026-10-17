@@ -4,6 +4,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <mutex>
 
 #include "../shim.h"
@@ -31,6 +32,22 @@ std::mutex g_mu;
 SDL_Gamepad* g_pads[4] = {};
 PadState g_last[4];
 uint32_t g_packet[4] = {};
+
+// DIRT2_INPUT_TRACE=1 logs the first call per (function, index, result) and
+// every gamepad state change, to diagnose pads the game ignores.
+bool trace_on() {
+    static const bool on = std::getenv("DIRT2_INPUT_TRACE") != nullptr;
+    return on;
+}
+
+void trace_call(int fn, uint32_t idx, uint32_t result) {
+    if (!trace_on() || idx > 3) return;
+    static bool seen[5][4][2];
+    bool& s = seen[fn][idx][result == 0];
+    if (s) return;
+    s = true;
+    rt::log("xinput: ord%d(%u) -> %u", fn, idx, result);
+}
 
 // Opens newly connected gamepads into free player slots.
 void refresh_pads() {
@@ -114,11 +131,17 @@ STDCALL_ORD(xinput1_3, 2, 2) {  // XInputGetState(index, XINPUT_STATE*)
     PadState s;
     if (g_pads[idx]) s = read_pad(g_pads[idx]);
     else if (idx == 0) s = read_keyboard();
-    else return ERROR_DEVICE_NOT_CONNECTED;
+    else {
+        trace_call(2, idx, ERROR_DEVICE_NOT_CONNECTED);
+        return ERROR_DEVICE_NOT_CONNECTED;
+    }
     if (!(s == g_last[idx])) {
         g_last[idx] = s;
         ++g_packet[idx];
+        if (trace_on())
+            rt::log("xinput: pad%u buttons=%04X lt=%u rt=%u lx=%d ly=%d", idx, s.buttons, s.lt, s.rt, s.lx, s.ly);
     }
+    trace_call(2, idx, 0);
     const uint32_t d = a[1];
     wr32(d + 0, g_packet[idx]);
     wr16(d + 4, s.buttons);
@@ -145,7 +168,11 @@ STDCALL_ORD(xinput1_3, 4, 3) {  // XInputGetCapabilities(index, flags, XINPUT_CA
     if (idx > 3 || !a[2]) return ERROR_DEVICE_NOT_CONNECTED;
     std::lock_guard lk(g_mu);
     refresh_pads();
-    if (!g_pads[idx] && idx != 0) return ERROR_DEVICE_NOT_CONNECTED;
+    if (!g_pads[idx] && idx != 0) {
+        trace_call(4, idx, ERROR_DEVICE_NOT_CONNECTED);
+        return ERROR_DEVICE_NOT_CONNECTED;
+    }
+    trace_call(4, idx, 0);
     const uint32_t d = a[2];
     std::memset(rt::host_ptr(d), 0, 20);
     wr8(d + 0, 1);         // XINPUT_DEVTYPE_GAMEPAD

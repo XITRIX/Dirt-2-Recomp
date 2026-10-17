@@ -76,6 +76,10 @@ if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
   target_link_libraries(dirt2 PRIVATE dirt2_shims dirt2_gen recomp_runtime dxvk_d3d9 SDL3::SDL3)
   # Find DXVK and MoltenVK next to the build without installing them.
   set_target_properties(dirt2 PROPERTIES BUILD_RPATH "${DIRT2_DXVK_BUILD_DIR}/src/d3d9;${DIRT2_MOLTENVK_LIB_DIR}")
+  # Community gamepad mappings, loaded from next to the executable at startup.
+  add_custom_command(TARGET dirt2 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      ${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL_GameControllerDB/gamecontrollerdb.txt $<TARGET_FILE_DIR:dirt2>)
 else()
   message(STATUS "generated/sources.txt not found: run 'recomp lift' to enable the dirt2 target")
 endif()

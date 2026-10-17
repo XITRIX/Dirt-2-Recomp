@@ -19,16 +19,13 @@ Run Colin McRae DiRT 2 (Steam v1.1, `dirt2_game.exe`) natively on Apple platform
 Latest fixes:
 
 - `a300843`: green video and wrong alpha everywhere. SPIRV-Cross typed DXVK's textures as `depth2d` because DXVK samples each D3D9 sampler both plainly and with depth compare; patched in `third_party/patches/SPIRV-Cross/`. Full write-up in STATUS.md, open issue 1.
+- GPU device lost (`kIOGPUCommandBufferCallbackErrorInvalidResource`): MoltenVK removed freed allocations from its queue-wide `MTLResidencySet` while unretained command buffers still used them. Removal is now deferred until every queue drains: `third_party/patches/MoltenVK/0002-defer-residency-removal.patch`, STATUS.md open issue 4.
+- Gamepad (Backbone One) silent: SDL's MFi driver delivered no input. It is now disabled, and pads use HIDAPI/IOKit with the bundled `gamecontrollerdb.txt`. STATUS.md open issue 5.
 - `f93c43c`: `tools/scripts/package_macos.sh` builds a self-contained, playable `build/package/DiRT2-macOS.zip` (no game data).
 
 ## Open issues, in priority order
 
-1. **GPU device lost again, reported from the packaged build.** `Lost VkDevice ... Invalid Resource (kIOGPUCommandBufferCallbackErrorInvalidResource)`, then `VK_ERROR_DEVICE_LOST` on every submit.
-   - The user's run: fresh data folder (no save game, so the first-time player flow), swapchain recreated from 3600×2260 to 1600×1200 on a Retina display, loss after about 3 minutes. Log: `~/Library/Application Support/Dirt2Recomp/dirt2_d3d9.log`.
-   - The same error was fixed once by forcing `D3DCREATE_MULTITHREADED` (`e4e3376`); this is a new trigger.
-   - Repro attempt with a copy of that data folder: the game called `ExitProcess(0)` after 54 s with no device loss, so inconclusive. Needs a longer run with input, ideally driven into the first-race flow.
-   - Suspects: the new compare emulation (a gather through a comparison sampler on a depth texture bound as `texture2d`), and swapchain or render-target recreation on resize.
-   - Next step: run with `MTL_DEBUG_LAYER=1` (Metal API validation) and `MVK_CONFIG_LOG_LEVEL=3` to name the invalid resource, or take a GPU capture of the failing frame.
+1. **Fullscreen not retested** since the device-lost fix below; it previously crashed all of macOS. Test it windowed first, then fullscreen.
 2. **Flicker in the 3D frontend** (alternate black frames on some launches). Not rechecked since the alpha fix, which may have cured it.
 3. **Performance:** about 15 fps in 3D scenes. Not profiled yet.
 4. Then: drive the game into a race, fix what breaks, then the iOS preset (entitlements, data import, touch overlay, memory budget).
@@ -55,7 +52,7 @@ tools/scripts/package_macos.sh             # playable zip in build/package/
 | `runtime/` | 4 GB guest address space, threads/TEB/TLS, dispatch, SEH, `RECOMP_TSO` |
 | `shims/` | One folder per DLL. Key files: `d3d9/bridge.cpp` (guest COM proxies to DXVK), `d3dx9/`, `kernel32/sync.cpp`, `video/bink*.cpp` (FFmpeg) |
 | `platform/sdl` | SDL3 host: window and events on the main thread |
-| `third_party/` | DXVK 3.1.1, MoltenVK 1.4.1 (+ SPIRV-Cross) with patches in `third_party/patches/` |
+| `third_party/` | DXVK 3.1.1, MoltenVK 1.4.1 (+ SPIRV-Cross) with patches in `third_party/patches/`; SDL_GameControllerDB mappings |
 | `tests/lifter` | Unicorn differential tests |
 | `tests/dxvk_smoke`, `tests/video` | Standalone graphics and video harnesses, built by hand with clang++ |
 
@@ -75,6 +72,8 @@ tools/scripts/package_macos.sh             # playable zip in build/package/
 
 - `/usr/bin/perl` and `/bin/sh` are SIP-protected and strip `DYLD_*` variables. A test started through `perl -e 'alarm ...'` silently loads Homebrew's MoltenVK 1.2.11 from `/opt/homebrew/lib`, and DXVK then reports no Vulkan 1.3 adapter. Set `$ENV{DYLD_LIBRARY_PATH}` inside perl before `exec`.
 - `MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0` hangs DXVK.
+- Rebuilding MoltenVK after a patch: `make macos` in `third_party/MoltenVK`; do not rerun `fetchDependencies`.
+- Game data paths with brackets break lldb's `run`. Symlink the game folder to a plain path, and use Xcode's lldb, not a toolchain one.
 - xlive ordinals are stdcall: a wrong argument count corrupts the guest stack far from the call site (that is how `XUserCheckPrivilege` cost a day).
 - The game's video planes are `D3DFMT_A8`, not L8.
 

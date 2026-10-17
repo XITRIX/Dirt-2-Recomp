@@ -2,6 +2,7 @@
 # Packages the macOS build into a self-contained folder and zip:
 #   DiRT2-macOS/dirt2        the recompiled game
 #   DiRT2-macOS/lib/         every non-system dylib it needs (DXVK, MoltenVK, SDL3, FFmpeg, ...)
+#   DiRT2-macOS/gamecontrollerdb.txt  SDL gamepad mappings (third_party/SDL_GameControllerDB)
 #   DiRT2-macOS/run.sh       launcher; takes the game folder (the one with dirt2_game.exe)
 # Game data is not included. Usage: package_macos.sh [out_dir]
 set -euo pipefail
@@ -15,6 +16,7 @@ SEARCH=("$ROOT/build/dxvk-macos/src/d3d9" "$MVK_DIR" /opt/homebrew/lib)
 rm -rf "$PKG"
 mkdir -p "$PKG/lib"
 cp "$ROOT/build/macos-arm64/dirt2" "$PKG/dirt2"
+cp "$ROOT/third_party/SDL_GameControllerDB/gamecontrollerdb.txt" "$PKG/"
 cp "$MVK_DIR/libMoltenVK.dylib" "$PKG/lib/"   # dlopened by DXVK and SDL, not linked
 
 # Resolves a load command to a real file: absolute paths as they are,

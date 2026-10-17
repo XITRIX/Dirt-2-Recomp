@@ -140,8 +140,8 @@ int main(int argc, char** argv) {
     // discovery log, go to the data directory: the process chdirs into the game
     // folder, which must stay untouched.
     setenv("DXVK_WSI_DRIVER", "SDL3", 0);
+    std::string data;
     {
-        std::string data;
         if (const char* e = std::getenv("DIRT2_DATA_DIR")) data = e;
         else if (const char* h = std::getenv("HOME")) data = std::string(h) + "/Library/Application Support/Dirt2Recomp";
         else data = ".";
@@ -151,10 +151,25 @@ int main(int argc, char** argv) {
         setenv("DXVK_STATE_CACHE_PATH", data.c_str(), 0);
         rt::set_discovery_log(data + "/recomp_discovered.txt");
     }
+    // SDL's GameController (MFi) driver reports some pads (Backbone One) as
+    // connected but never delivers their input. Without it, Xbox/PlayStation/
+    // Switch pads still use SDL's HIDAPI drivers and others use IOKit HID with
+    // the gamecontrollerdb.txt mappings below. DIRT2_JOYSTICK_MFI=1 restores it.
+    SDL_SetHint(SDL_HINT_JOYSTICK_MFI, std::getenv("DIRT2_JOYSTICK_MFI") ? "1" : "0");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS)) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
+    // Community mappings shipped next to the executable, then optional user
+    // additions in the data directory (later entries override earlier ones).
+    if (const char* base = SDL_GetBasePath()) {
+        const std::string db = std::string(base) + "gamecontrollerdb.txt";
+        const int n = SDL_AddGamepadMappingsFromFile(db.c_str());
+        if (n < 0) rt::log("gamepad mappings: cannot load %s: %s", db.c_str(), SDL_GetError());
+        else rt::log("gamepad mappings: %d from %s", n, db.c_str());
+    }
+    if (std::filesystem::exists(data + "/gamecontrollerdb.txt"))
+        SDL_AddGamepadMappingsFromFile((data + "/gamecontrollerdb.txt").c_str());
 
     if (!rt::mem_init()) return 1;
     std::string err;

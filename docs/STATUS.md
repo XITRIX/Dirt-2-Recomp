@@ -86,7 +86,7 @@ After editing `cases.txt`, run `tests/lifter/assemble.py` to regenerate `cases.b
 | ws2_32 | Network reported as down (online services are gone) |
 | d3d9 | Bridge to DXVK 3.1.1 native on MoltenVK 1.4.1 (see Graphics below) |
 | d3dx9 | Constant tables from CTAB, built-in run-time shaders, input semantics, mip filter/fill |
-| dinput8 / xinput1_3 | Keyboard and mouse via SDL3; XInput on SDL3 gamepads, keyboard fallback pad |
+| dinput8 / xinput1_3 | Keyboard and mouse via SDL3; XInput on SDL3 gamepads (HID + `gamecontrollerdb.txt`, MFi driver off), keyboard fallback pad |
 | dsound | `GetDeviceID`, `DllGetClassObject` (hardware detection only) |
 | binkw32 | Bink player on FFmpeg (`shims/video`); intros skipped unless `DIRT2_PLAY_VIDEOS=1` |
 | OpenAL, ddraw, d3dcompiler | Not yet |
@@ -164,6 +164,16 @@ Debugging aids:
    - Pitfall found on the way: `/usr/bin/perl` (SIP) strips `DYLD_LIBRARY_PATH`, so a test started through `perl -e alarm` loads Homebrew's MoltenVK 1.2.11 and DXVK finds no Vulkan 1.3 adapter. Set the variable inside perl (`$ENV{DYLD_LIBRARY_PATH}=...`).
 2. ~~Device lost after about 40 s~~: fixed by forcing `D3DCREATE_MULTITHREADED`.
 3. **Flicker in the 3D frontend**, reported on screen and not yet investigated. It may share a cause with 2.
+4. ~~Device lost again (`kIOGPUCommandBufferCallbackErrorInvalidResource`), and fullscreen launches that could take down macOS~~: fixed in MoltenVK.
+   - `MTL_DEBUG_LAYER=1` asserted `notifyExternalReferencesNonZeroOnDealloc` within about 4 s: a Metal buffer or texture was freed while a submitted command buffer still used it. Under lldb, the backtrace was `DxvkSubmissionQueue::finishCmdLists` → `~DxvkBuffer` → `freeEmptyChunksInPool` → `vkDestroyBuffer` → `MVKBuffer::destroy`.
+   - **Root cause:** on macOS 15+, MoltenVK keeps resources resident through one `MTLResidencySet` attached to the queue, and submits command buffers with unretained references (`needsRetain` is false when a residency set exists). `MVKDevice::removeResidency` removed the allocation and committed the set immediately, and the caller released the Metal object straight away. DXVK frees memory once *its* command list completes, while other command buffers still in flight rely on the residency set. Once the GPU touches a non-resident or freed allocation, `InvalidResource` follows, then device lost.
+   - **Fix** (`third_party/patches/MoltenVK/0002-defer-residency-removal.patch`): `removeResidency` retains the allocation and commits an empty command buffer on every queue. The allocation leaves the set, and is released, only after all of those complete, which is after all earlier work on every queue.
+   - Verified: 222 s windowed under Metal validation with no errors and up to about 84 fps, where it previously failed at about 4 s. Fullscreen has not been retested here, because it previously crashed the whole system.
+   - The same run then hit a lifter miss at `0x00A4D820`, now in `tools/recomp/config/entries.txt`.
+5. ~~Gamepad not responding~~ (Backbone One PlayStation Edition, VID `358a`, PID `0203`).
+   - The shim worked: the game polls `XInputGetState(0)` and the pad opened. But SDL's GameController (MFi) driver never delivered any button or axis input for it, even inside a signed `.app` bundle with background events allowed. The same pad over IOKit HID works.
+   - **Fix:** set `SDL_HINT_JOYSTICK_MFI=0`. Xbox, PlayStation and Switch pads still use SDL's HIDAPI drivers. Other pads use IOKit HID with the community mappings in `third_party/SDL_GameControllerDB/gamecontrollerdb.txt`, which is copied next to the executable and loaded at startup. That file maps this pad, and the mapping matches a manual calibration.
+   - Optional user mappings go in `<data dir>/gamecontrollerdb.txt`. `DIRT2_JOYSTICK_MFI=1` restores the MFi driver.
 
 Debug switches:
 
@@ -176,6 +186,8 @@ Debug switches:
 | `DIRT2_DUMP_SHADERS=<dir>` | Shader bytecode |
 | `DIRT2_WATCH_PS_CONST=<name>` | Full state dump for draws with the pixel shader whose CTAB names `<name>` |
 | `DIRT2_SCREENSHOT_DIR` | Back-buffer capture |
+| `DIRT2_INPUT_TRACE` | First XInput call per pad/result and every pad state change |
+| `DIRT2_JOYSTICK_MFI=1` | Re-enable SDL's GameController (MFi) joystick driver |
 
 `tests/dxvk_smoke/` holds standalone DXVK checks: clear, texture sampling, and the game's video shader (`FMT=` texture format, `PLANES=` real decoded frames, `OUT=` frame dump). `tests/video/` holds the decoder and raw-MoltenVK harnesses.
 
