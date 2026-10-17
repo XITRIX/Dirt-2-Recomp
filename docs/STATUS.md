@@ -44,7 +44,7 @@ Target executable: `dirt2_game.exe`, SHA-256 `49b1e00ea1d4bd02e633ceed63390b5cae
 
 ## Lift results (milestone 2)
 
-- 68,910 live functions, 3.36M instructions, 230 C files (417 MB). Dead code is excluded by default (`--include-dead` to add it).
+- 68,910 live functions, 3.36M instructions, 230 C files (417 MB). Dead code is excluded by default (`--include-dead` to add it). The game build uses `--include-dead`: every run-time `unknown target` miss so far (`00A4D820`, `009A6490`, ...) was a gap-scan function reached through a computed pointer. With it, 160,840 functions and 5.4M instructions go into 537 files, and the build takes about 5 min.
 - 35 unimplemented instruction sites, all garbage opcodes (`in`, `arpl`, `das`, ...) or rare FPU state saves (`fnsave`, `frstor`, `fnstenv`, `fldenv`): a handful of false functions still to prune.
 - 28 functions read flags on entry; they load them from the spilled `eflags`. (13 before shifts by CL were treated as passing flags through when the count is 0.)
 - `cmp`/`test`/`sub`/logic ops are fused with their `jcc`/`setcc`/`cmovcc` into direct C comparisons; other flags are computed only when live.

@@ -39,7 +39,7 @@ cmake --preset macos-arm64 && cmake --build build/macos-arm64
 tools/scripts/package_macos.sh             # playable zip in build/package/
 ```
 
-- Re-lift after lifter changes: `tools/scripts/relift.sh`.
+- Re-lift after lifter changes: `tools/scripts/relift.sh`. It lifts with `--include-dead`; without it, races crash with `unknown target` on gap-scan functions.
 - Patches: `tools/scripts/apply_patches.sh` applies `third_party/patches/<name>/` to `third_party/<name>` or MoltenVK's `External/<name>`. It is idempotent.
 - Rebuilding SPIRV-Cross alone: MoltenVK links a prebuilt `External/build/Release/SPIRVCross.xcframework`. A plain `make macos` does **not** pick up SPIRV-Cross edits. Rebuild it with the `xcodebuild ... ExternalDependencies-macOS` and `create_ext_lib_xcframeworks.sh` steps in `build_graphics.sh`, then `make macos`. Do not rerun `fetchDependencies`: it resets the External checkouts and drops the patch.
 - Game data (11.5 GB) is never committed. Saves, config and DXVK logs go to `~/Library/Application Support/Dirt2Recomp` (override with `DIRT2_DATA_DIR`).
