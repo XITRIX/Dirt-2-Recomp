@@ -1,0 +1,91 @@
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.h b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.h
+index c9ce14a7..58d94a9e 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.h
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.h
+@@ -976,12 +976,14 @@ public:
+ #if !MVK_XCODE_16
+ 	void removeResidency(id allocation) {}
+ #else
+-	void removeResidency(id<MTLAllocation> allocation) {
+-		@synchronized(_residencySet) {
+-			[_residencySet removeAllocation:allocation];
+-			[_residencySet commit];
+-		}
+-	}
++	/**
++	 * Removes the allocation from the residency set once every MTLCommandBuffer already
++	 * committed or enqueued on this device's queues has completed, and keeps it alive until then.
++	 * The residency set is attached to the queues, so every in-flight command buffer
++	 * references every allocation in it; releasing one earlier makes Metal fail those command
++	 * buffers with kIOGPUCommandBufferCallbackErrorInvalidResource (VK_ERROR_DEVICE_LOST).
++	 */
++	void removeResidency(id<MTLAllocation> allocation);
+ #endif
+ 
+ 	void addResidencySet(id<MTLCommandQueue> queue) {
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
+index e1f3c04e..410a758e 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm
+@@ -37,6 +37,7 @@
+ #import "CAMetalLayer+MoltenVK.h"
+ 
+ #include <sys/stat.h>
++#include <atomic>
+ #include <cmath>
+ 
+ using namespace std;
+@@ -3791,6 +3792,53 @@ MVKQueue* MVKDevice::getQueue(const VkDeviceQueueInfo2* queueInfo) {
+ 	return _queuesByQueueFamilyIndex[queueInfo->queueFamilyIndex][queueInfo->queueIndex];
+ }
+ 
++#if MVK_XCODE_16
++void MVKDevice::removeResidency(id<MTLAllocation> allocation) {
++	if ( !_residencySet || !allocation ) { return; }
++
++	// Command buffers on a queue complete in order, so an empty marker command buffer
++	// completing on every queue means nothing submitted before it still uses the allocation.
++	MVKSmallVector<id<MTLCommandQueue>, kMVKQueueCountPerQueueFamily> mtlQueues;
++	for (auto& queues : _queuesByQueueFamilyIndex) {
++		for (MVKQueue* q : queues) {
++			if (q && q->getMTLCommandQueue()) { mtlQueues.push_back(q->getMTLCommandQueue()); }
++		}
++	}
++
++	id<MTLResidencySet> residencySet = [_residencySet retain];
++	[allocation retain];
++	if (mtlQueues.empty()) {
++		@synchronized(residencySet) {
++			[residencySet removeAllocation: allocation];
++			[residencySet commit];
++		}
++		[allocation release];
++		[residencySet release];
++		return;
++	}
++
++	auto* pending = new std::atomic<size_t>(mtlQueues.size());
++	for (id<MTLCommandQueue> mtlQueue : mtlQueues) {
++		@autoreleasepool {
++			auto release = ^{
++				if (pending->fetch_sub(1) != 1) { return; }
++				delete pending;
++				@synchronized(residencySet) {
++					[residencySet removeAllocation: allocation];
++					[residencySet commit];
++				}
++				[allocation release];
++				[residencySet release];
++			};
++			id<MTLCommandBuffer> mtlCmdBuff = [mtlQueue commandBufferWithUnretainedReferences];
++			if ( !mtlCmdBuff ) { release(); continue; }
++			[mtlCmdBuff addCompletedHandler: ^(id<MTLCommandBuffer> mcb) { release(); }];
++			[mtlCmdBuff commit];
++		}
++	}
++}
++#endif
++
+ MVKQueue* MVKDevice::getAnyQueue() {
+ 	for (auto& queues : _queuesByQueueFamilyIndex) {
+ 		for (MVKQueue* q : queues) {
