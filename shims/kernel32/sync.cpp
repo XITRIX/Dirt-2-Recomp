@@ -1,11 +1,16 @@
 // kernel32: waitable objects, threads, critical sections, interlocked, TLS.
 //
-// All waitable state is guarded by one mutex with one condition variable.
-// That keeps WaitForMultipleObjects (any/all, timeouts, waitable timers)
-// simple and race-free; contention is low with the game's handful of threads.
+// Waitable state is guarded by one mutex (held only for a few instructions),
+// but each waiting thread sleeps on its own condition variable registered
+// with the objects it waits for, so a signal wakes only that object's
+// waiters. The game runs ~40 threads; a shared notify_all turned every
+// SetEvent into a lock convoy that stalled loading.
 #include <unistd.h>
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -19,10 +24,17 @@ using Clock = std::chrono::steady_clock;
 namespace {
 
 std::mutex g_wmu;
-std::condition_variable g_wcv;
+
+struct Waiter {
+    std::condition_variable cv;
+};
 
 struct Waitable : KObject {
     using KObject::KObject;
+    std::vector<Waiter*> waiters;  // guarded by g_wmu
+    void wake() {
+        for (Waiter* w : waiters) w->cv.notify_one();
+    }
     virtual bool signaled(uint32_t tid) const = 0;
     virtual void acquire(uint32_t tid) {}
     virtual Clock::time_point deadline() const { return Clock::time_point::max(); }
@@ -90,7 +102,18 @@ uint32_t wait_handles(const std::vector<uint32_t>& hs, bool all, uint32_t timeou
     }
     const uint32_t tid = rt::current_thread_id();
     const auto end = timeout_ms == INFINITE ? Clock::time_point::max() : Clock::now() + std::chrono::milliseconds(timeout_ms);
+    Waiter self;
     std::unique_lock lk(g_wmu);
+    bool registered = false;
+    struct Unregister {
+        std::vector<std::shared_ptr<Waitable>>& objs;
+        Waiter* w;
+        bool& on;
+        ~Unregister() {
+            if (!on) return;
+            for (auto& o : objs) std::erase(o->waiters, w);
+        }
+    } unregister{objs, &self, registered};
     for (;;) {
         if (all) {
             bool ok = true;
@@ -108,9 +131,13 @@ uint32_t wait_handles(const std::vector<uint32_t>& hs, bool all, uint32_t timeou
         }
         auto wake = end;
         for (auto& o : objs) wake = std::min(wake, o->deadline());
-        if (Clock::now() >= end) return WAIT_TIMEOUT;
-        if (wake == Clock::time_point::max()) g_wcv.wait(lk);
-        else g_wcv.wait_until(lk, wake);
+        if (timeout_ms == 0 || Clock::now() >= end) return WAIT_TIMEOUT;
+        if (!registered) {
+            for (auto& o : objs) o->waiters.push_back(&self);
+            registered = true;
+        }
+        if (wake == Clock::time_point::max()) self.cv.wait(lk);
+        else self.cv.wait_until(lk, wake);
     }
 }
 
@@ -123,30 +150,33 @@ uint32_t modify(uint32_t h, F&& f) {
     }
     std::lock_guard lk(g_wmu);
     const uint32_t r = f(*o);
-    g_wcv.notify_all();
+    o->wake();
     return r;
 }
 
 // ---- critical sections: host mutex index stored in LockSemaphore (+16) ----
+// Lookup is lock-free (fixed table of atomic pointers); only creation locks.
 struct HostCS {
     std::recursive_mutex m;
 };
+constexpr uint32_t kMaxCS = 1u << 16;
 std::mutex g_cs_mu;
-std::vector<std::unique_ptr<HostCS>> g_cs;
+std::atomic<HostCS*> g_cs[kMaxCS];
+std::atomic<uint32_t> g_cs_count{0};
 
 HostCS& cs_for(uint32_t p) {
-    uint32_t slot = rd32(p + 16);
-    if (!slot || slot > g_cs.size()) {
-        std::lock_guard lk(g_cs_mu);
-        slot = rd32(p + 16);
-        if (!slot || slot > g_cs.size()) {
-            g_cs.push_back(std::make_unique<HostCS>());
-            slot = uint32_t(g_cs.size());
-            wr32(p + 16, slot);
-        }
-    }
+    uint32_t slot = __atomic_load_n(reinterpret_cast<uint32_t*>(rt::host_ptr(p + 16)), __ATOMIC_ACQUIRE);
+    if (slot && slot <= g_cs_count.load(std::memory_order_acquire))
+        if (HostCS* cs = g_cs[slot - 1].load(std::memory_order_acquire)) return *cs;
     std::lock_guard lk(g_cs_mu);
-    return *g_cs[slot - 1];
+    slot = rd32(p + 16);
+    if (slot && slot <= g_cs_count.load()) return *g_cs[slot - 1].load();
+    const uint32_t n = g_cs_count.load();
+    if (n >= kMaxCS) rt::fatal("too many critical sections");
+    g_cs[n].store(new HostCS, std::memory_order_release);
+    g_cs_count.store(n + 1, std::memory_order_release);
+    __atomic_store_n(reinterpret_cast<uint32_t*>(rt::host_ptr(p + 16)), n + 1, __ATOMIC_RELEASE);
+    return *g_cs[n].load();
 }
 
 // ---- TLS slots: TEB + 0xE10 ----
@@ -156,15 +186,39 @@ uint64_t g_tls_used = 0;
 }  // namespace
 
 // ---- waits ----
-STDCALL(kernel32, WaitForSingleObject, 2) { return wait_handles({a[0]}, false, a[1]); }
+bool log_waits() {
+    static const bool on = std::getenv("DIRT2_LOG_WAITS") != nullptr;
+    return on;
+}
+
+STDCALL(kernel32, WaitForSingleObject, 2) {
+    const auto t0 = Clock::now();
+    const uint32_t r = wait_handles({a[0]}, false, a[1]);
+    if (log_waits()) {
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
+        if (ms >= 50)
+            rt::log("t%u WaitForSingleObject(%X, %d) = %X after %lld ms [from %08X]", rt::current_thread_id(), a[0],
+                    int32_t(a[1]), r, (long long)ms, rd32(c->esp));
+    }
+    return r;
+}
 STDCALL(kernel32, WaitForMultipleObjects, 4) {
     std::vector<uint32_t> hs;
     for (uint32_t i = 0; i < a[0] && i < 64; ++i) hs.push_back(rd32(a[1] + 4 * i));
-    return wait_handles(hs, a[2] != 0, a[3]);
+    const auto t0 = Clock::now();
+    const uint32_t r = wait_handles(hs, a[2] != 0, a[3]);
+    if (log_waits()) {
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
+        if (ms >= 50)
+            rt::log("t%u WaitForMultipleObjects(%u, all=%u, %d) = %X after %lld ms [from %08X]", rt::current_thread_id(),
+                    a[0], a[2], int32_t(a[3]), r, (long long)ms, rd32(c->esp));
+    }
+    return r;
 }
 STDCALL(kernel32, Sleep, 1) {
     if (a[0] == 0) std::this_thread::yield();
     else std::this_thread::sleep_for(std::chrono::milliseconds(a[0]));
+    if (log_waits() && a[0] >= 50) rt::log("t%u Sleep(%u) [from %08X]", rt::current_thread_id(), a[0], rd32(c->esp));
     return 0;
 }
 
@@ -225,7 +279,7 @@ STDCALL(kernel32, CreateThread, 6) {
                 std::lock_guard lk2(g_wmu);
                 o->done = true;
                 o->exit_code = code;
-                g_wcv.notify_all();
+                o->wake();
             }
         });
     }

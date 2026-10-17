@@ -14,9 +14,11 @@
 #include <d3d9.h>
 
 #include <cstdlib>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <tuple>
@@ -59,6 +61,16 @@ std::recursive_mutex g_mu;
 std::unordered_map<uint32_t, Entry> g_by_guest;
 std::unordered_map<IUnknown*, uint32_t> g_by_host;
 std::unordered_map<const VTableDesc*, uint32_t> g_vtables;
+std::atomic<uint32_t> g_marked_ps{0};  // debug: pixel shader whose CTAB names DIRT2_WATCH_PS_CONST
+
+// Vertex and index buffers keep a persistent guest shadow (they are locked
+// every frame); the shadow mirrors the buffer, so only READONLY locks copy in.
+struct BufferShadow {
+    uint32_t guest = 0, size = 0;
+    struct Lock { uint32_t offset, size; uint8_t* host; bool readonly; };
+    std::vector<Lock> locks;
+};
+std::unordered_map<uint32_t, BufferShadow> g_shadows;
 
 uint32_t guest_vtable(const VTableDesc& d) {
     auto it = g_vtables.find(&d);
@@ -334,6 +346,9 @@ struct Select {
 
 // ---- IUnknown ----
 
+void flush_shadows(uint32_t proxy);  // SYSTEMMEM shadows (defined with the lock code)
+void drop_shadows(uint32_t proxy);
+
 template <typename I>
 void QI(X86* c);
 template <typename I>
@@ -347,7 +362,10 @@ void ReleaseB(X86* c) {
     const uint32_t g = rd32(c->esp + 4);
     IUnknown* self = to_host(g);
     const ULONG r = self ? self->Release() : 0;
-    if (self && r == 0) forget(g);
+    if (self && r == 0) {
+        forget(g);
+        drop_shadows(g);
+    }
     c->eax = r;
     c->esp += 8;
 }
@@ -370,6 +388,16 @@ void QI(X86* c) {
 // Hand-written bridges (defined below the generated vtables).
 void d3d_create_device(X86* c);
 void dev_reset(X86* c);
+void dev_set_vertex_shader(X86* c);
+void dev_draw_indexed_primitive(X86* c);
+void dev_draw_primitive_up(X86* c);
+void dev_draw_primitive(X86* c);
+void dev_create_pixel_shader(X86* c);
+void dev_create_vertex_shader(X86* c);
+void dev_set_pixel_shader(X86* c);
+void dev_set_texture(X86* c);
+void dev_update_texture(X86* c);
+void dev_update_surface(X86* c);
 void d3d_get_adapter_monitor(X86* c);
 void dev_present(X86* c);
 void swap_present(X86* c);
@@ -393,6 +421,16 @@ OVERRIDE(IDirect3D9, CreateDevice, d3d_create_device)
 OVERRIDE(IDirect3D9, GetAdapterMonitor, d3d_get_adapter_monitor)
 OVERRIDE(IDirect3DDevice9, Present, dev_present)
 OVERRIDE(IDirect3DDevice9, Reset, dev_reset)
+OVERRIDE(IDirect3DDevice9, SetVertexShader, dev_set_vertex_shader)
+OVERRIDE(IDirect3DDevice9, DrawIndexedPrimitive, dev_draw_indexed_primitive)
+OVERRIDE(IDirect3DDevice9, DrawPrimitiveUP, dev_draw_primitive_up)
+OVERRIDE(IDirect3DDevice9, DrawPrimitive, dev_draw_primitive)
+OVERRIDE(IDirect3DDevice9, CreatePixelShader, dev_create_pixel_shader)
+OVERRIDE(IDirect3DDevice9, CreateVertexShader, dev_create_vertex_shader)
+OVERRIDE(IDirect3DDevice9, SetPixelShader, dev_set_pixel_shader)
+OVERRIDE(IDirect3DDevice9, SetTexture, dev_set_texture)
+OVERRIDE(IDirect3DDevice9, UpdateTexture, dev_update_texture)
+OVERRIDE(IDirect3DDevice9, UpdateSurface, dev_update_surface)
 OVERRIDE(IDirect3DSwapChain9, Present, swap_present)
 OVERRIDE(IDirect3DSurface9, LockRect, surf_lock)
 OVERRIDE(IDirect3DSurface9, UnlockRect, surf_unlock)
@@ -449,6 +487,256 @@ void dev_reset(X86* c) {
     rt::log("d3d9: Reset %ux%u -> 0x%08X", p ? p->BackBufferWidth : 0, p ? p->BackBufferHeight : 0, uint32_t(hr));
     c->eax = uint32_t(hr);
     c->esp += 4 * 3;
+}
+
+// UpdateTexture(src, dst) / UpdateSurface(src, rect, dst, point): the source
+// is usually SYSTEMMEM; push its persistent shadows into it first.
+void dev_update_texture(X86* c) {
+    const Args a{c};
+    if (std::getenv("DIRT2_LOG_LOCKS")) rt::log("d3d9: UpdateTexture %08X -> %08X", a[1], a[2]);
+    auto* self = static_cast<IDirect3DDevice9*>(to_host(a[0]));
+    flush_shadows(a[1]);
+    c->eax = self ? uint32_t(self->UpdateTexture(static_cast<IDirect3DBaseTexture9*>(to_host(a[1])),
+                                                 static_cast<IDirect3DBaseTexture9*>(to_host(a[2]))))
+                  : uint32_t(D3DERR_INVALIDCALL);
+    c->esp += 4 * 4;
+}
+void dev_update_surface(X86* c) {
+    const Args a{c};
+    if (std::getenv("DIRT2_LOG_LOCKS")) rt::log("d3d9: UpdateSurface %08X -> %08X", a[1], a[3]);
+    auto* self = static_cast<IDirect3DDevice9*>(to_host(a[0]));
+    flush_shadows(a[1]);
+    c->eax = self ? uint32_t(self->UpdateSurface(static_cast<IDirect3DSurface9*>(to_host(a[1])), a.ptr<const RECT>(2),
+                                                 static_cast<IDirect3DSurface9*>(to_host(a[3])), a.ptr<const POINT>(4)))
+                  : uint32_t(D3DERR_INVALIDCALL);
+    c->esp += 4 * 6;
+}
+
+// SetTexture(stage, texture): debug logging of dynamic texture bindings (DIRT2_LOG_LOCKS).
+void dev_set_texture(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<IDirect3DDevice9*>(to_host(a[0]));
+    auto* tex = static_cast<IDirect3DBaseTexture9*>(to_host(a[2]));
+    static const bool log = std::getenv("DIRT2_LOG_LOCKS") != nullptr;
+    if (log && tex && tex->GetType() == D3DRTYPE_TEXTURE) {
+        D3DSURFACE_DESC d{};
+        static_cast<IDirect3DTexture9*>(tex)->GetLevelDesc(0, &d);
+        if (d.Usage & D3DUSAGE_DYNAMIC) rt::log("d3d9: SetTexture(%u, %08X) %ux%u fmt %u", a[1], a[2], d.Width, d.Height, d.Format);
+    }
+    c->eax = self ? uint32_t(self->SetTexture(a[1], tex)) : uint32_t(D3DERR_INVALIDCALL);
+    c->esp += 4 * 4;
+}
+
+// Debug: DIRT2_DUMP_SHADERS=<dir> writes every pixel/vertex shader's bytecode
+// as <dir>/<ps|vs>_<proxy>.dxso.
+uint32_t shader_length(const uint32_t* w) {
+    uint32_t n = 1;
+    while (w[n] != 0x0000FFFF) {
+        const uint32_t tok = w[n];
+        if ((tok & 0xFFFF) == 0xFFFE) n += 1 + (tok >> 16);
+        else n += 1 + ((tok >> 24) & 0xF);
+    }
+    return n + 1;
+}
+template <bool Pixel>
+void dev_create_shader(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<IDirect3DDevice9*>(to_host(a[0]));
+    const DWORD* code = a.ptr<const DWORD>(1);
+    HRESULT hr = D3DERR_INVALIDCALL;
+    uint32_t proxy = 0;
+    if (self && code) {
+        if constexpr (Pixel) {
+            IDirect3DPixelShader9* sh = nullptr;
+            hr = self->CreatePixelShader(code, &sh);
+            proxy = SUCCEEDED(hr) ? wrap(sh) : 0;
+        } else {
+            IDirect3DVertexShader9* sh = nullptr;
+            hr = self->CreateVertexShader(code, &sh);
+            proxy = SUCCEEDED(hr) ? wrap(sh) : 0;
+        }
+        if constexpr (Pixel) {
+            static const char* mark = std::getenv("DIRT2_WATCH_PS_CONST");
+            if (mark && proxy) {
+                const uint32_t len = shader_length(reinterpret_cast<const uint32_t*>(code)) * 4;
+                const char* b = reinterpret_cast<const char*>(code);
+                if (std::search(b, b + len, mark, mark + std::strlen(mark)) != b + len) {
+                    g_marked_ps = proxy;
+                    rt::log("d3d9: watching pixel shader %08X (CTAB names %s)", proxy, mark);
+                }
+            }
+        }
+        static const char* dir = std::getenv("DIRT2_DUMP_SHADERS");
+        if (dir && proxy) {
+            char path[512];
+            std::snprintf(path, sizeof path, "%s/%s_%08X.dxso", dir, Pixel ? "ps" : "vs", proxy);
+            if (FILE* f = std::fopen(path, "wb")) {
+                std::fwrite(code, 4, shader_length(reinterpret_cast<const uint32_t*>(code)), f);
+                std::fclose(f);
+            }
+        }
+    }
+    if (a[2]) wr32(a[2], proxy);
+    c->eax = uint32_t(hr);
+    c->esp += 4 * 4;
+}
+std::atomic<uint32_t> g_cur_vs{0};
+void dev_set_vertex_shader(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<IDirect3DDevice9*>(to_host(a[0]));
+    g_cur_vs = a[1];
+    c->eax = self ? uint32_t(self->SetVertexShader(static_cast<IDirect3DVertexShader9*>(to_host(a[1])))) : uint32_t(D3DERR_INVALIDCALL);
+    c->esp += 4 * 3;
+}
+void dev_create_pixel_shader(X86* c) { dev_create_shader<true>(c); }
+void dev_create_vertex_shader(X86* c) { dev_create_shader<false>(c); }
+std::atomic<uint32_t> g_cur_ps{0};
+void dev_set_pixel_shader(X86* c) {
+    const Args a{c};
+    g_cur_ps = a[1];
+    auto* self = static_cast<IDirect3DDevice9*>(to_host(a[0]));
+    static const bool log = std::getenv("DIRT2_LOG_LOCKS") != nullptr;
+    if (log) rt::log("d3d9: SetPixelShader(%08X)", a[1]);
+    c->eax = self ? uint32_t(self->SetPixelShader(static_cast<IDirect3DPixelShader9*>(to_host(a[1])))) : uint32_t(D3DERR_INVALIDCALL);
+    c->esp += 4 * 3;
+}
+
+// Debug: DIRT2_WATCH_PS=<proxy hex> logs draws made with that pixel shader,
+// with the stream-0 vertex data (first 3 vertices as floats).
+uint32_t watch_ps() { return g_marked_ps; }
+void log_vertices(const char* what, const uint8_t* data, uint32_t stride) {
+    std::string line;
+    char buf[64];
+    for (uint32_t v = 0; v < 3; ++v) {
+        line += " |";
+        for (uint32_t k = 0; k < stride / 4 && k < 10; ++k) {
+            float f;
+            std::memcpy(&f, data + v * stride + 4 * k, 4);
+            std::snprintf(buf, sizeof buf, " %g", f);
+            line += buf;
+        }
+    }
+    rt::log("d3d9: %s stride %u:%s", what, stride, line.c_str());
+}
+void dev_draw_primitive_up(X86* c) {  // (type, count, data, stride)
+    const Args a{c};
+    auto* self = static_cast<IDirect3DDevice9*>(to_host(a[0]));
+    if (watch_ps() && g_cur_ps == watch_ps()) log_vertices("DrawPrimitiveUP", rt::host_ptr(a[3]), a[4]);
+    c->eax = self ? uint32_t(self->DrawPrimitiveUP(D3DPRIMITIVETYPE(a[1]), a[2], rt::host_ptr(a[3]), a[4]))
+                  : uint32_t(D3DERR_INVALIDCALL);
+    c->esp += 4 * 6;
+}
+void dev_draw_primitive(X86* c) {  // (type, start vertex, count)
+    const Args a{c};
+    auto* self = static_cast<IDirect3DDevice9*>(to_host(a[0]));
+    if (self && watch_ps() && g_cur_ps == watch_ps()) {
+        IDirect3DVertexBuffer9* vb = nullptr;
+        UINT off = 0, stride = 0;
+        self->GetStreamSource(0, &vb, &off, &stride);
+        uint32_t proxy = 0;
+        {
+            std::lock_guard lk(g_mu);
+            if (auto it = g_by_host.find(vb); it != g_by_host.end()) proxy = it->second;
+        }
+        auto sh = g_shadows.find(proxy);
+        rt::log("d3d9: DrawPrimitive type %u start %u count %u vb %08X off %u stride %u vs %08X", a[1], a[2], a[3], proxy, off,
+                stride, uint32_t(g_cur_vs));
+        float vc[4 * 16];
+        self->GetVertexShaderConstantF(0, vc, 16);
+        std::string cs;
+        char cb[64];
+        for (int r = 0; r < 16; ++r) {
+            std::snprintf(cb, sizeof cb, " c%d(%g %g %g %g)", r, vc[4 * r], vc[4 * r + 1], vc[4 * r + 2], vc[4 * r + 3]);
+            cs += cb;
+        }
+        rt::log("  vs consts:%s", cs.c_str());
+        float pc[8];
+        self->GetPixelShaderConstantF(0, pc, 2);
+        rt::log("  ps consts: c0(%g %g %g %g) c1(%g %g %g %g)", pc[0], pc[1], pc[2], pc[3], pc[4], pc[5], pc[6], pc[7]);
+        for (DWORD st = 0; st < 3; ++st) {
+            IDirect3DBaseTexture9* bt = nullptr;
+            self->GetTexture(st, &bt);
+            uint32_t tp = 0;
+            {
+                std::lock_guard lk(g_mu);
+                if (auto it = g_by_host.find(bt); it != g_by_host.end()) tp = it->second;
+            }
+            DWORD au = 0, av = 0, mn = 0, mg = 0, mp = 0, srgb = 0;
+            self->GetSamplerState(st, D3DSAMP_ADDRESSU, &au);
+            self->GetSamplerState(st, D3DSAMP_ADDRESSV, &av);
+            self->GetSamplerState(st, D3DSAMP_MINFILTER, &mn);
+            self->GetSamplerState(st, D3DSAMP_MAGFILTER, &mg);
+            self->GetSamplerState(st, D3DSAMP_MIPFILTER, &mp);
+            self->GetSamplerState(st, D3DSAMP_SRGBTEXTURE, &srgb);
+            uint64_t sum = 0;
+            if (bt && bt->GetType() == D3DRTYPE_TEXTURE) {
+                auto* t2 = static_cast<IDirect3DTexture9*>(bt);
+                D3DSURFACE_DESC d{};
+                t2->GetLevelDesc(0, &d);
+                D3DLOCKED_RECT lr{};
+                if (SUCCEEDED(t2->LockRect(0, &lr, nullptr, D3DLOCK_READONLY))) {
+                    const uint8_t* row = static_cast<const uint8_t*>(lr.pBits) + (d.Height / 4) * lr.Pitch;
+                    for (UINT x = 0; x < d.Width / 2; ++x) sum += row[x];
+                    t2->UnlockRect(0);
+                }
+            }
+            rt::log("  stage %u: tex %08X sum %llu addr %u/%u filt %u/%u/%u srgb %u", st, tp, (unsigned long long)sum, au, av, mn,
+                    mg, mp, srgb);
+            if (bt) bt->Release();
+        }
+        IDirect3DVertexDeclaration9* decl = nullptr;
+        if (SUCCEEDED(self->GetVertexDeclaration(&decl)) && decl) {
+            D3DVERTEXELEMENT9 el[MAXD3DDECLLENGTH + 1];
+            UINT n = MAXD3DDECLLENGTH + 1;
+            decl->GetDeclaration(el, &n);
+            for (UINT i = 0; i + 1 < n; ++i) {
+                rt::log("  decl stream %u off %u type %u usage %u/%u", el[i].Stream, el[i].Offset, el[i].Type, el[i].Usage,
+                        el[i].UsageIndex);
+                IDirect3DVertexBuffer9* sb = nullptr;
+                UINT so = 0, ss = 0;
+                self->GetStreamSource(el[i].Stream, &sb, &so, &ss);
+                uint32_t sp = 0;
+                {
+                    std::lock_guard lk(g_mu);
+                    if (auto it = g_by_host.find(sb); it != g_by_host.end()) sp = it->second;
+                }
+                if (auto sh2 = g_shadows.find(sp); sh2 != g_shadows.end())
+                    log_vertices("    stream data", rt::host_ptr(sh2->second.guest + so + el[i].Offset), ss);
+                else
+                    rt::log("    stream %u: vb %08X off %u stride %u (no shadow)", el[i].Stream, sp, so, ss);
+                if (sb) sb->Release();
+            }
+            decl->Release();
+        }
+        if (sh != g_shadows.end()) log_vertices("  vb shadow", rt::host_ptr(sh->second.guest + off + a[2] * stride), stride);
+        if (vb) vb->Release();
+    }
+    c->eax = self ? uint32_t(self->DrawPrimitive(D3DPRIMITIVETYPE(a[1]), a[2], a[3])) : uint32_t(D3DERR_INVALIDCALL);
+    c->esp += 4 * 5;
+}
+
+void dev_draw_indexed_primitive(X86* c) {  // (type, base vertex, min index, num vertices, start index, prim count)
+    const Args a{c};
+    auto* self = static_cast<IDirect3DDevice9*>(to_host(a[0]));
+    if (self && watch_ps() && g_cur_ps == watch_ps()) {
+        IDirect3DVertexBuffer9* vb = nullptr;
+        UINT off = 0, stride = 0;
+        self->GetStreamSource(0, &vb, &off, &stride);
+        uint32_t proxy = 0;
+        {
+            std::lock_guard lk(g_mu);
+            if (auto it = g_by_host.find(vb); it != g_by_host.end()) proxy = it->second;
+        }
+        rt::log("d3d9: DrawIndexedPrimitive type %u base %d min %u n %u start %u count %u vb %08X off %u stride %u", a[1],
+                int32_t(a[2]), a[3], a[4], a[5], a[6], proxy, off, stride);
+        auto sh = g_shadows.find(proxy);
+        if (sh != g_shadows.end())
+            log_vertices("  vb shadow", rt::host_ptr(sh->second.guest + off + (int32_t(a[2]) + a[3]) * stride), stride);
+        if (vb) vb->Release();
+    }
+    c->eax = self ? uint32_t(self->DrawIndexedPrimitive(D3DPRIMITIVETYPE(a[1]), INT(a[2]), a[3], a[4], a[5], a[6]))
+                  : uint32_t(D3DERR_INVALIDCALL);
+    c->esp += 4 * 8;
 }
 
 void d3d_get_adapter_monitor(X86* c) {
@@ -557,9 +845,46 @@ struct Staging {
     uint32_t row_pitch = 0, slice_pitch = 0;
     uint32_t rows = 0, slices = 1, row_bytes = 0;
     bool readonly = false;
+    bool persistent = false;  // guest buffer outlives the lock (SYSTEMMEM)
 };
 
 std::map<std::pair<uint32_t, uint32_t>, Staging> g_locks;  // (proxy, subresource) -> staging
+
+// SYSTEMMEM resources: Windows keeps their memory mapped, and games rely on
+// the locked pointer staying valid after UnlockRect (DiRT 2 hands it to Bink
+// as a video plane and writes into it every frame). Each subresource gets a
+// persistent guest shadow returned by every lock; the shadow is copied into
+// the host resource at unlock and before UpdateTexture/UpdateSurface reads it.
+struct Shadow {
+    uint32_t guest = 0, size = 0;
+    uint32_t row_pitch = 0, rows = 0, row_bytes = 0;
+    std::function<void(const Shadow&)> flush;  // locks the host subresource and copies the shadow in
+};
+std::map<std::pair<uint32_t, uint32_t>, Shadow> g_shadows_sys;
+
+void flush_shadows(uint32_t proxy) {
+    std::vector<Shadow> todo;
+    {
+        std::lock_guard lk(g_mu);
+        for (auto it = g_shadows_sys.lower_bound({proxy, 0}); it != g_shadows_sys.end() && it->first.first == proxy; ++it)
+            if (!g_locks.count(it->first)) todo.push_back(it->second);  // a locked one is flushed at its unlock
+    }
+    for (const Shadow& sh : todo) sh.flush(sh);
+}
+
+void drop_shadows(uint32_t proxy) {
+    std::lock_guard lk(g_mu);
+    for (auto it = g_shadows_sys.lower_bound({proxy, 0}); it != g_shadows_sys.end() && it->first.first == proxy;) {
+        rt::heap_free(it->second.guest);
+        it = g_shadows_sys.erase(it);
+    }
+}
+
+void copy_shadow_in(const Shadow& sh, void* host_bits, uint32_t host_pitch) {
+    for (uint32_t y = 0; y < sh.rows; ++y)
+        std::memcpy(static_cast<uint8_t*>(host_bits) + size_t(y) * host_pitch, rt::host_ptr(sh.guest + y * sh.row_pitch),
+                    std::min(sh.row_bytes, host_pitch));
+}
 
 void copy_rows(uint8_t* dst, const uint8_t* src, const Staging& s) {
     for (uint32_t z = 0; z < s.slices; ++z)
@@ -573,14 +898,14 @@ uint32_t begin_staging(Staging& s, void* host_bits, DWORD flags) {
     s.host = static_cast<uint8_t*>(host_bits);
     s.readonly = (flags & D3DLOCK_READONLY) != 0;
     const uint32_t size = (s.slices - 1) * s.slice_pitch + (s.rows - 1) * s.row_pitch + s.row_bytes;
-    s.guest = rt::heap_alloc(size);
+    if (!s.persistent) s.guest = rt::heap_alloc(size);
     if (!(flags & D3DLOCK_DISCARD)) copy_rows(rt::host_ptr(s.guest), s.host, s);
     return s.guest;
 }
 
 void end_staging(const Staging& s) {
     if (!s.readonly) copy_rows(s.host, rt::host_ptr(s.guest), s);
-    rt::heap_free(s.guest);
+    if (!s.persistent) rt::heap_free(s.guest);
 }
 
 // Shape of a locked rectangle on a level with the given description.
@@ -596,15 +921,42 @@ void shape_rect(Staging& s, const D3DSURFACE_DESC& d, const RECT* r, uint32_t pi
     if (!s.rows) s.rows = 1;
 }
 
-template <typename LockFn>
+template <typename LockFn, typename UnlockFn>
 HRESULT lock_rect(uint32_t proxy, uint32_t sub, uint32_t guest_lr, const D3DSURFACE_DESC& desc, const RECT* rect,
-                  DWORD flags, LockFn&& lock) {
+                  DWORD flags, LockFn&& lock, UnlockFn&& unlock) {
     D3DLOCKED_RECT lr{};
-    const HRESULT hr = lock(&lr);
+    const HRESULT hr = lock(&lr, flags);
     if (FAILED(hr)) return hr;
     Staging s;
     shape_rect(s, desc, rect, uint32_t(lr.Pitch));
+    if (desc.Pool == D3DPOOL_SYSTEMMEM && !rect) {
+        // Whole-level lock of a SYSTEMMEM resource: persistent shadow.
+        std::lock_guard lk(g_mu);
+        Shadow& sh = g_shadows_sys[{proxy, sub}];
+        const uint32_t size = (s.rows - 1) * s.row_pitch + s.row_bytes;
+        if (!sh.guest || sh.size < size) {
+            if (sh.guest) rt::heap_free(sh.guest);
+            sh.guest = rt::heap_alloc(size, true);
+            sh.size = size;
+        }
+        sh.row_pitch = s.row_pitch;
+        sh.rows = s.rows;
+        sh.row_bytes = s.row_bytes;
+        sh.flush = [lock, unlock](const Shadow& me) mutable {
+            D3DLOCKED_RECT l{};
+            if (SUCCEEDED(lock(&l, 0))) {
+                copy_shadow_in(me, l.pBits, uint32_t(l.Pitch));
+                unlock();
+            }
+        };
+        s.guest = sh.guest;
+        s.persistent = true;
+    }
     const uint32_t g = begin_staging(s, lr.pBits, flags);
+    static const bool log_locks = std::getenv("DIRT2_LOG_LOCKS") != nullptr;
+    if (log_locks)
+        rt::log("d3d9: lock %08X/%X %ux%u fmt %u pool %u usage %X flags %X -> %08X pitch %u%s", proxy, sub, desc.Width,
+                desc.Height, desc.Format, desc.Pool, desc.Usage, flags, g, s.row_pitch, s.persistent ? " (persistent)" : "");
     wr32(guest_lr, uint32_t(lr.Pitch));
     wr32(guest_lr + 4, g);
     std::lock_guard lk(g_mu);
@@ -618,6 +970,12 @@ HRESULT unlock_sub(uint32_t proxy, uint32_t sub, UnlockFn&& unlock) {
         std::lock_guard lk(g_mu);
         auto it = g_locks.find({proxy, sub});
         if (it != g_locks.end()) {
+            if (std::getenv("DIRT2_LOG_LOCKS") && it->second.row_pitch >= 1024) {
+                const Staging& st = it->second;
+                uint64_t sum = 0;
+                for (uint32_t x = 0; x < st.row_bytes; ++x) sum += rd8(st.guest + (st.rows / 4) * st.row_pitch + x);
+                rt::log("d3d9: unlock %08X/%X staging row sum %llu", proxy, sub, (unsigned long long)sum);
+            }
             end_staging(it->second);
             g_locks.erase(it);
         }
@@ -634,7 +992,9 @@ void surf_lock(X86* c) {
         D3DSURFACE_DESC d{};
         self->GetDesc(&d);
         const RECT* r = a.ptr<const RECT>(2);
-        hr = lock_rect(a[0], 0, a[1], d, r, a[3], [&](D3DLOCKED_RECT* lr) { return self->LockRect(lr, r, a[3]); });
+        hr = lock_rect(a[0], 0, a[1], d, r, a[3],
+                       [self, r](D3DLOCKED_RECT* lr, DWORD fl) { return self->LockRect(lr, r, fl); },
+                       [self] { return self->UnlockRect(); });
     }
     c->eax = uint32_t(hr);
     c->esp += 4 * 5;
@@ -655,7 +1015,10 @@ void tex_lock(X86* c) {
         D3DSURFACE_DESC d{};
         self->GetLevelDesc(a[1], &d);
         const RECT* r = a.ptr<const RECT>(3);
-        hr = lock_rect(a[0], a[1], a[2], d, r, a[4], [&](D3DLOCKED_RECT* lr) { return self->LockRect(a[1], lr, r, a[4]); });
+        const UINT level = a[1];
+        hr = lock_rect(a[0], level, a[2], d, r, a[4],
+                       [self, level, r](D3DLOCKED_RECT* lr, DWORD fl) { return self->LockRect(level, lr, r, fl); },
+                       [self, level] { return self->UnlockRect(level); });
     }
     c->eax = uint32_t(hr);
     c->esp += 4 * 6;
@@ -664,6 +1027,23 @@ void tex_unlock(X86* c) {
     const Args a{c};
     auto* self = static_cast<IDirect3DTexture9*>(to_host(a[0]));
     c->eax = self ? uint32_t(unlock_sub(a[0], a[1], [&] { return self->UnlockRect(a[1]); })) : uint32_t(D3DERR_INVALIDCALL);
+    static int dbg = 0;
+    if (self && std::getenv("DIRT2_LOG_LOCKS") && dbg < 12) {
+        D3DSURFACE_DESC d{};
+        self->GetLevelDesc(a[1], &d);
+        if (d.Format == D3DFMT_L8 && d.Width >= 1024) {
+            ++dbg;
+            D3DLOCKED_RECT lr{};
+            const HRESULT hr = self->LockRect(a[1], &lr, nullptr, D3DLOCK_READONLY);
+            uint64_t sum = 0;
+            if (SUCCEEDED(hr)) {
+                const uint8_t* row = static_cast<const uint8_t*>(lr.pBits) + (d.Height / 4) * lr.Pitch;
+                for (uint32_t x = 0; x < std::min<uint32_t>(lr.Pitch, d.Width); ++x) sum += row[x];
+                self->UnlockRect(a[1]);
+            }
+            rt::log("d3d9: readback %08X hr %08X row sum %llu levels %u usage %X pool %u", a[0], uint32_t(hr), (unsigned long long)sum, self->GetLevelCount(), d.Usage, d.Pool);
+        }
+    }
     c->esp += 4 * 3;
 }
 
@@ -676,8 +1056,11 @@ void cube_lock(X86* c) {
         D3DSURFACE_DESC d{};
         self->GetLevelDesc(a[2], &d);
         const RECT* r = a.ptr<const RECT>(4);
+        const D3DCUBEMAP_FACES face = D3DCUBEMAP_FACES(a[1]);
+        const UINT level = a[2];
         hr = lock_rect(a[0], (a[1] << 16) | a[2], a[3], d, r, a[5],
-                       [&](D3DLOCKED_RECT* lr) { return self->LockRect(D3DCUBEMAP_FACES(a[1]), a[2], lr, r, a[5]); });
+                       [self, face, level, r](D3DLOCKED_RECT* lr, DWORD fl) { return self->LockRect(face, level, lr, r, fl); },
+                       [self, face, level] { return self->UnlockRect(face, level); });
     }
     c->eax = uint32_t(hr);
     c->esp += 4 * 7;
@@ -755,14 +1138,6 @@ void voltex_unlock(X86* c) {
     c->esp += 4 * 3;
 }
 
-// Vertex and index buffers keep a persistent guest shadow (they are locked
-// every frame); the shadow mirrors the buffer, so only READONLY locks copy in.
-struct BufferShadow {
-    uint32_t guest = 0, size = 0;
-    struct Lock { uint32_t offset, size; uint8_t* host; bool readonly; };
-    std::vector<Lock> locks;
-};
-std::unordered_map<uint32_t, BufferShadow> g_shadows;
 
 template <typename B, typename Desc>
 void buf_lock(X86* c) {  // Lock(offset, size, void** ppbData, flags)

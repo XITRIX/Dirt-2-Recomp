@@ -1,4 +1,5 @@
 // CPU services called from generated code, plus logging.
+#include <chrono>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -16,12 +17,16 @@
 namespace rt {
 
 void log(const char* fmt, ...) {
+    // One fprintf per line, with a millisecond timestamp since start, so lines
+    // from different threads do not interleave.
+    static const auto t0 = std::chrono::steady_clock::now();
+    const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    char buf[2048];
     va_list ap;
     va_start(ap, fmt);
-    std::fprintf(stderr, "[rt] ");
-    std::vfprintf(stderr, fmt, ap);
-    std::fprintf(stderr, "\n");
+    std::vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
+    std::fprintf(stderr, "[rt %6lld.%03lld] %s\n", ms / 1000, ms % 1000, buf);
 }
 
 void fatal(const char* fmt, ...) {

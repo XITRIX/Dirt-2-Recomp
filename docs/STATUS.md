@@ -9,7 +9,7 @@ Target executable: `dirt2_game.exe`, SHA-256 `49b1e00ea1d4bd02e633ceed63390b5cae
 | 1 | Skeleton, PE loader, analysis report | Done |
 | 2 | Full lift to C, links on macOS arm64 with stub imports | Done, with Unicorn differential tests |
 | 3 | Headless boot on macOS to the main loop | In progress: boots through CRT, GFWL and engine init to `Direct3DCreate9` |
-| 4 | Frontend renders (DXVK d3d9 + MoltenVK), audio, input, Bink | In progress: DXVK device created by the game; blocked on an update-thread crash before the first frame |
+| 4 | Frontend renders (DXVK d3d9 + MoltenVK), audio, input, Bink | In progress: 3D frontend renders with audio; open: video green, device lost after ~40 s, flicker |
 | 5 | Playable race on macOS | |
 | 6 | Playable race on iOS | |
 | 7 | tvOS, visionOS, performance | |
@@ -137,6 +137,42 @@ Debugging aids:
 - It is timing-dependent: it disappears with `RECOMP_TRACE=1`.
 - It is not fixed by TSO emulation, atomic `xchg`, header-stored heap free lists, or Windows-style pending overlapped I/O.
 - Next step: a guest write-watch on that member to find the writer.
+
+## Frontend (milestone 4, continued)
+
+- With intros skipped, the game now reaches the 3D frontend: the magazine loading scene, then the first-race introduction in the X Games paddock with Travis Pastrana.
+- **Audio:** OpenAL Soft passthrough. Streamed music and speech use the native libvorbisfile bridge.
+- **Video:** `shims/video/bink.cpp` is a real Bink player on FFmpeg (`binkvideo` + `binkaudio`), with frame-buffer mode, frame-rate timing, seek, pause, volume and SDL audio. Audio plays with correct timing. Video is skipped by default: in-game the frames render green (see below). `DIRT2_PLAY_VIDEOS=1` enables playback.
+- **Sync:** each waiter has its own condition variable, critical-section lookup is lock-free, and the handle table is reader/writer. The old shared `notify_all` caused lock convoys with the game's ~40 threads.
+- **Bridge:** SYSTEMMEM resources keep persistent guest shadows. The locked pointer stays valid after unlock, as on Windows, and is flushed at unlock and before `UpdateTexture`/`UpdateSurface`.
+
+### Open issues
+
+1. **Video renders green.**
+   - Verified correct at the API level, at the moment of the draw:
+     - decoded YUV reaches the game's planes and the L8 dynamic textures (readback);
+     - the textures are bound to stages 0–2, with clamp and linear sampling;
+     - pixel-shader constants are correct (`vidSize` 1280×720, `bufferSize` 2048×1024);
+     - vertex streams are correct (UV up to 0.625×0.703, white colour);
+     - the vertex shader is a pass-through.
+   - The same dumped shader, textures, constants and per-frame DISCARD pattern render correctly in `tests/dxvk_smoke/video_shader.cpp`.
+   - Next step: compare the DXVK state (spec constants, sampler and descriptor bindings) for the in-game draw against the test, for example with `MVK_CONFIG_DEBUG` and a Metal frame capture.
+2. **Device lost after about 40 s** (`kIOGPUCommandBufferCallbackErrorInvalidResource`): a resource is used after being freed. Suspects are the DXVK null-descriptor patch and the bridge's resource lifetimes.
+3. **Flicker in the 3D frontend**, reported on screen and not yet investigated. It may share a cause with 2.
+
+Debug switches:
+
+| Switch | Effect |
+|---|---|
+| `DIRT2_LOG_FILES` | File opens and overlapped reads |
+| `DIRT2_LOG_WAITS` | Waits ≥ 50 ms and sleeps |
+| `DIRT2_LOG_LOCKS` | Resource locks, updates, texture bindings, pixel shader changes |
+| `DIRT2_LOG_CTAB` | D3DX constant table lookups and uploads |
+| `DIRT2_DUMP_SHADERS=<dir>` | Shader bytecode |
+| `DIRT2_WATCH_PS_CONST=<name>` | Full state dump for draws with the pixel shader whose CTAB names `<name>` |
+| `DIRT2_SCREENSHOT_DIR` | Back-buffer capture |
+
+`tests/dxvk_smoke/` holds standalone DXVK checks: clear, texture sampling, and the game's video shader.
 
 ## Run
 

@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <map>
 #include <mutex>
+#include <shared_mutex>
 #include <unordered_map>
 
 #include "shim.h"
@@ -37,7 +38,7 @@ std::string lower(std::string s) {
     return s;
 }
 
-std::mutex g_handle_mu;
+std::shared_mutex g_handle_mu;
 std::unordered_map<uint32_t, std::shared_ptr<KObject>> g_handles;
 uint32_t g_next_handle = 0x1000;
 
@@ -76,7 +77,7 @@ uint32_t handle_new(std::shared_ptr<KObject> obj) {
 }
 
 std::shared_ptr<KObject> handle_get(uint32_t h) {
-    std::lock_guard lk(g_handle_mu);
+    std::shared_lock lk(g_handle_mu);
     auto it = g_handles.find(h);
     return it == g_handles.end() ? nullptr : it->second;
 }

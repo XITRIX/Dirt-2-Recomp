@@ -22,5 +22,6 @@ add_library(dirt2_shims OBJECT
   audio/vorbisfile.cpp)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(VORBISFILE REQUIRED IMPORTED_TARGET vorbisfile)
-target_link_libraries(dirt2_shims PUBLIC recomp_runtime dxvk_d3d9 SDL3::SDL3 OpenAL::OpenAL PkgConfig::VORBISFILE)
+pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil)
+target_link_libraries(dirt2_shims PUBLIC recomp_runtime dxvk_d3d9 SDL3::SDL3 OpenAL::OpenAL PkgConfig::VORBISFILE PkgConfig::FFMPEG)
 target_compile_options(dirt2_shims PRIVATE -Wall -Wno-unused-parameter -Wno-unused-function)

@@ -168,6 +168,11 @@ Table* table_of(uint32_t obj) {
 void upload(const Table& t, uint32_t device, const Constant& c, uint32_t first_reg_offset,
             const std::vector<float>& regs /* 4 floats per register */) {
     auto* dev = static_cast<IDirect3DDevice9*>(d3d9_host(device));
+    static const bool log = std::getenv("DIRT2_LOG_CTAB") != nullptr;
+    if (log)
+        rt::log("ctab upload %s set %u reg %u+%u n %zu dev %p: %g %g %g %g", c.name.c_str(), c.set, c.reg, first_reg_offset,
+                regs.size() / 4, static_cast<void*>(dev), regs.size() > 0 ? regs[0] : 0.0, regs.size() > 1 ? regs[1] : 0.0,
+                regs.size() > 2 ? regs[2] : 0.0, regs.size() > 3 ? regs[3] : 0.0);
     if (!dev || regs.empty()) return;
     const uint32_t nregs = uint32_t(regs.size() / 4);
     if (first_reg_offset >= c.count) return;
@@ -301,7 +306,10 @@ uint32_t ct_get_sampler_index(X86*, const Args& a) {
     Table* t = table_of(a[0]);
     uint32_t elem = 0;
     const Constant* c = t ? resolve(*t, a[1], &elem) : nullptr;
-    return c && c->set == RS_SAMPLER ? c->reg + (elem ? elem - 1 : 0) : 0xFFFFFFFF;
+    const uint32_t r = c && c->set == RS_SAMPLER ? c->reg + (elem ? elem - 1 : 0) : 0xFFFFFFFF;
+    if (std::getenv("DIRT2_LOG_CTAB"))
+        rt::log("ctab %08X GetSamplerIndex(%08X) -> %s = %d", a[0], a[1], c ? c->name.c_str() : "?", int(r));
+    return r;
 }
 uint32_t ct_get_constant(X86*, const Args& a) {  // (parent, index)
     std::lock_guard lk(g_mu);
@@ -314,10 +322,11 @@ uint32_t ct_get_constant_by_name(X86*, const Args& a) {  // (parent, name)
     Table* t = table_of(a[0]);
     if (!t || !a[2]) return 0;
     const char* name = rt::host_str(a[2]);
-    for (uint32_t i = 0; i < t->constants.size(); ++i)
-        if (t->constants[i].name == name || (name[0] == '$' && t->constants[i].name == name + 1))
-            return make_handle(i, 0);
-    return 0;
+    uint32_t r = 0;
+    for (uint32_t i = 0; i < t->constants.size() && !r; ++i)
+        if (t->constants[i].name == name || (name[0] == '$' && t->constants[i].name == name + 1)) r = make_handle(i, 0);
+    if (std::getenv("DIRT2_LOG_CTAB")) rt::log("ctab %08X GetConstantByName(%08X, %s) -> %08X", a[0], a[1], name, r);
+    return r;
 }
 uint32_t ct_get_constant_element(X86*, const Args& a) {  // (handle, index)
     std::lock_guard lk(g_mu);

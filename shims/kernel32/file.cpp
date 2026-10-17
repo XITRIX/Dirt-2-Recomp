@@ -9,6 +9,7 @@
 
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <mutex>
 #include <vector>
 
@@ -126,6 +127,8 @@ uint32_t shim::open_file_ex(const std::string& win, uint32_t access, uint32_t di
     f->host = host;
     f->overlapped = (flags_attrs & 0x40000000) != 0;
     set_last_error((existed && (disposition == CREATE_ALWAYS || disposition == OPEN_ALWAYS)) ? ERROR_ALREADY_EXISTS : 0);
+    static const bool log_files = std::getenv("DIRT2_LOG_FILES") != nullptr;
+    if (log_files) rt::log("t%u open %s%s", rt::current_thread_id(), f->win.c_str(), f->overlapped ? " (overlapped)" : "");
     return handle_new(f);
 }
 
@@ -172,6 +175,11 @@ uint32_t do_io(uint32_t h, uint32_t buf, uint32_t n, uint32_t done_out, uint32_t
         std::lock_guard lk(f->mu);
         r = write ? ::write(f->fd, rt::host_ptr(buf), n) : ::read(f->fd, rt::host_ptr(buf), n);
     }
+    static const bool log_io = std::getenv("DIRT2_LOG_FILES") != nullptr;
+    if (log_io && ov)
+        rt::log("t%u %s %s @%llu n=%u -> %zd (ov %08X ev %08X)", rt::current_thread_id(), write ? "write" : "read",
+                f->win.c_str(), (unsigned long long)(off_t(rd32(ov + 8)) | (off_t(rd32(ov + 12)) << 32)), n, r, ov,
+                rd32(ov + 16));
     if (r < 0) {
         set_last_error(errno_to_win(errno));
         if (done_out) wr32(done_out, 0);
@@ -181,6 +189,7 @@ uint32_t do_io(uint32_t h, uint32_t buf, uint32_t n, uint32_t done_out, uint32_t
     if (ov) {
         if (!write && r == 0 && n) {
             complete_overlapped(ov, 0);
+            wr32(ov + 0, 0xC0000011);  // STATUS_END_OF_FILE
             set_last_error(ERROR_HANDLE_EOF);
             return 0;
         }
