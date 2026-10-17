@@ -7,7 +7,7 @@ Target executable: `dirt2_game.exe`, SHA-256 `49b1e00ea1d4bd02e633ceed63390b5cae
 | # | Milestone | State |
 |---|---|---|
 | 1 | Skeleton, PE loader, analysis report | Done |
-| 2 | Full lift to C, links on macOS arm64 with stub imports | Done (Unicorn differential tests still to do) |
+| 2 | Full lift to C, links on macOS arm64 with stub imports | Done, with Unicorn differential tests |
 | 3 | Headless boot on macOS to the main loop | In progress: boots through CRT, GFWL and engine init to `Direct3DCreate9` |
 | 4 | Frontend renders (DXVK d3d9 + MoltenVK), audio, input, Bink | |
 | 5 | Playable race on macOS | |
@@ -46,9 +46,34 @@ Target executable: `dirt2_game.exe`, SHA-256 `49b1e00ea1d4bd02e633ceed63390b5cae
 
 - 68,910 live functions, 3.36M instructions, 230 C files (417 MB). Dead code is excluded by default (`--include-dead` to add it).
 - 35 unimplemented instruction sites, all garbage opcodes (`in`, `arpl`, `das`, ...) or rare FPU state saves (`fnsave`, `frstor`, `fnstenv`, `fldenv`): a handful of false functions still to prune.
-- 13 functions read flags on entry; they load them from the spilled `eflags`.
+- 28 functions read flags on entry; they load them from the spilled `eflags`. (13 before shifts by CL were treated as passing flags through when the count is 0.)
 - `cmp`/`test`/`sub`/logic ops are fused with their `jcc`/`setcc`/`cmovcc` into direct C comparisons; other flags are computed only when live.
 - Full build (lift + compile + link, `-O2`) takes about 3 minutes on a 10-core M-series Mac. Binary: 61 MB.
+
+## Lifter differential tests
+
+`tests/lifter` checks the lifter's per-instruction C against Unicorn 2.1.1 (`UC_MODE_32`). Each of the 1,346 cases in `cases.txt` is lifted by the real `FnLifter` twice: once with every flag live at `ret` (the `flags_live_out` test switch spills them to `eflags`) and once with default liveness, so fused and unfused `cmp`/`jcc` paths and dead-flag elimination are both covered. Both variants and Unicorn run from the same 256 random states per case (biased towards 8/16/32-bit edge values), and the GPRs, flags, DF, 64 KB of scratch memory, XMM registers and x87 TOP are compared. Flags that Zydis reports as undefined are not compared.
+
+Coverage: the ALU, unary, shift/rotate (counts 0, 1, n, CL), `shld`/`shrd`, `mul`/`imul`/`div`/`idiv`, moves and conversions, stack ops, all 16 conditions as `setcc`/`cmovcc`/`jcc` after each fusible writer and unfused, `bt*`/`bsf`/`bsr`, string ops with and without `rep` in both directions, the SSE/SSE2 set the game uses and x87 arithmetic, compares and stores.
+
+Fixed through these tests:
+
+- Shifts with a zero count (immediate 0, or CL masked to 0 at run time) now pass the previous flags through instead of zeroing them.
+- 16-bit `shld`/`shrd` were computed as 32-bit.
+- 16-bit `bt`/`bts`/`btr`/`btc m16, r16` treated the bit offset as unsigned.
+- `fprem`/`fprem1` now set the C0/C3/C1 quotient bits.
+
+Known, accepted differences:
+
+- x87 is modelled as double, so x87 results are compared with a tolerance. Unicorn runs with the 53-bit precision control word MSVC uses.
+- Float lanes that are NaN compare equal whatever the payload: ARM's default NaN is positive, x86's is negative.
+- `fprem` is a complete reduction (C2 always clear), so it is only compared through the usual `fprem; fnstsw; sahf; jp` loop. `fprem1` is not compared, because Unicorn's (QEMU 5) result is wrong when |y|/2 < |x| < |y|.
+
+```bash
+cmake --preset macos-tests && cmake --build --preset macos-tests && ctest --preset macos-tests -j8
+```
+
+After editing `cases.txt`, run `tests/lifter/assemble.py` to regenerate `cases.bin.txt` (needs a clang that targets i386). `lifter_difftest <substring>` runs a subset.
 
 ## Shim layer (milestone 3)
 

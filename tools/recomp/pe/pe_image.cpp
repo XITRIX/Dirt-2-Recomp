@@ -165,6 +165,22 @@ std::optional<PeImage> PeImage::load(const std::string& path, std::string& error
     return img;
 }
 
+PeImage PeImage::from_code(uint32_t image_base, uint32_t code_va, const std::vector<uint8_t>& code) {
+    PeImage img;
+    img.image_base_ = image_base;
+    img.image_size_ = code_va - image_base + uint32_t(code.size());
+    img.entry_point_ = code_va;
+    img.mapped_.assign(img.image_size_, 0);
+    std::memcpy(img.mapped_.data() + (code_va - image_base), code.data(), code.size());
+    Section s;
+    s.name = ".text";
+    s.va = code_va;
+    s.vsize = s.raw_size = uint32_t(code.size());
+    s.characteristics = 0x60000020;  // code, execute, read
+    img.sections_.push_back(s);
+    return img;
+}
+
 const Section* PeImage::section_at(uint32_t addr) const {
     for (const Section& s : sections_)
         if (s.contains(addr)) return &s;

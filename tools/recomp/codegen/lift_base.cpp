@@ -221,17 +221,28 @@ bool FnLifter::lift_base(LInsn& li) {
             else line("const uint32_t n = c->ecx & 31;");
             line("if (n) {{");
             line("    const uint32_t a = {}, s = {};", rd(*o0), rd(*o1));
-            if (m == ZYDIS_MNEMONIC_SHLD) {
+            if (b == 16) {
+                // Counts above 16 are undefined; shift the a:s (or s:a) concatenation.
+                if (m == ZYDIS_MNEMONIC_SHLD) {
+                    line("    const uint32_t x = (a << 16) | s;");
+                    line("    const uint32_t r = (uint16_t)((x << n) >> 16);");
+                    if (need & F_CF) line("    cf = (x >> (32 - n)) & 1;");
+                } else {
+                    line("    const uint32_t x = (s << 16) | a;");
+                    line("    const uint32_t r = (uint16_t)(x >> n);");
+                    if (need & F_CF) line("    cf = (x >> (n - 1)) & 1;");
+                }
+            } else if (m == ZYDIS_MNEMONIC_SHLD) {
                 line("    const uint32_t r = (a << n) | (s >> (32 - n));");
                 if (need & F_CF) line("    cf = (a >> (32 - n)) & 1;");
             } else {
                 line("    const uint32_t r = (a >> n) | (s << (32 - n));");
                 if (need & F_CF) line("    cf = (a >> (n - 1)) & 1;");
             }
-            if (need & F_OF) line("    of = ((a ^ r) >> 31) & 1;");
+            if (need & F_OF) line("    of = ((a ^ r) >> {}) & 1;", b - 1);
             indent_ += "    ";
             raw(wr(*o0, "r"));
-            flags_szp("r", 32, need);
+            flags_szp("r", b, need);
             indent_.resize(indent_.size() - 4);
             line("}}");
             return true;
@@ -334,7 +345,8 @@ bool FnLifter::lift_base(LInsn& li) {
 
         case ZYDIS_MNEMONIC_BT: case ZYDIS_MNEMONIC_BTS: case ZYDIS_MNEMONIC_BTR: case ZYDIS_MNEMONIC_BTC: {
             if (o0->type == ZYDIS_OPERAND_TYPE_MEMORY && o1->type == ZYDIS_OPERAND_TYPE_REGISTER) {
-                line("const int32_t off = (int32_t){};", rd(*o1));
+                // The bit offset is a signed value of the operand size.
+                line("const int32_t off = ({}){};", sty(o1->size), rd(*o1));
                 line("const uint32_t at = {} + (uint32_t)((off >> 5) * 4); const uint32_t k = (uint32_t)off & 31;", ea(*o0));
                 line("const uint32_t a = rd32(at);");
             } else {

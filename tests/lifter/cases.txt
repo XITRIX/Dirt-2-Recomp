@@ -1,0 +1,1376 @@
+# Lifter differential test cases: name | Intel asm (; separated) | runner options
+# Options are documented in runner.cpp. After editing, run tests/lifter/assemble.py.
+
+# ---- ALU: add adc sub sbb cmp and or xor test ----
+add_r32_r32 | add eax, ebx
+add_r16_r16 | add ax, bx
+add_r8_r8 | add al, bl
+add_r8h_r8 | add ah, cl
+add_r8_r8h | add dl, bh
+add_r32_m32 | add ecx, dword ptr [ebp+0x10]
+add_r16_m16 | add cx, word ptr [ebp+0x12]
+add_r8_m8 | add cl, byte ptr [ebp-3]
+add_m32_r32 | add dword ptr [ebp+0x10], edx
+add_m16_r16 | add word ptr [ebp+6], dx
+add_m8_r8h | add byte ptr [ebp+1], dh
+add_r32_imm32 | add esi, 0x12345678
+add_eax_imm32 | add eax, 0x80
+add_r32_simm8 | add ecx, -5
+add_r32_imm8 | add ecx, 0x7f
+add_r16_simm8 | add cx, -2
+add_m32_simm8 | add dword ptr [ebp+8], -1
+add_m16_simm8 | add word ptr [ebp+8], -128
+add_r16_imm16 | add cx, 0x8001
+add_r8_imm8 | add cl, 0x80
+add_al_imm8 | add al, 0x7f
+add_m32_imm32 | add dword ptr [ebp+8], 0x11223344
+add_m8_imm8 | add byte ptr [ebp+9], 0x81
+adc_r32_r32 | adc eax, ebx
+adc_r16_r16 | adc ax, bx
+adc_r8_r8 | adc al, bl
+adc_r8h_r8 | adc ah, cl
+adc_r8_r8h | adc dl, bh
+adc_r32_m32 | adc ecx, dword ptr [ebp+0x10]
+adc_r16_m16 | adc cx, word ptr [ebp+0x12]
+adc_r8_m8 | adc cl, byte ptr [ebp-3]
+adc_m32_r32 | adc dword ptr [ebp+0x10], edx
+adc_m16_r16 | adc word ptr [ebp+6], dx
+adc_m8_r8h | adc byte ptr [ebp+1], dh
+adc_r32_imm32 | adc esi, 0x12345678
+adc_eax_imm32 | adc eax, 0x80
+adc_r32_simm8 | adc ecx, -5
+adc_r32_imm8 | adc ecx, 0x7f
+adc_r16_simm8 | adc cx, -2
+adc_m32_simm8 | adc dword ptr [ebp+8], -1
+adc_m16_simm8 | adc word ptr [ebp+8], -128
+adc_r16_imm16 | adc cx, 0x8001
+adc_r8_imm8 | adc cl, 0x80
+adc_al_imm8 | adc al, 0x7f
+adc_m32_imm32 | adc dword ptr [ebp+8], 0x11223344
+adc_m8_imm8 | adc byte ptr [ebp+9], 0x81
+sub_r32_r32 | sub eax, ebx
+sub_r16_r16 | sub ax, bx
+sub_r8_r8 | sub al, bl
+sub_r8h_r8 | sub ah, cl
+sub_r8_r8h | sub dl, bh
+sub_r32_m32 | sub ecx, dword ptr [ebp+0x10]
+sub_r16_m16 | sub cx, word ptr [ebp+0x12]
+sub_r8_m8 | sub cl, byte ptr [ebp-3]
+sub_m32_r32 | sub dword ptr [ebp+0x10], edx
+sub_m16_r16 | sub word ptr [ebp+6], dx
+sub_m8_r8h | sub byte ptr [ebp+1], dh
+sub_r32_imm32 | sub esi, 0x12345678
+sub_eax_imm32 | sub eax, 0x80
+sub_r32_simm8 | sub ecx, -5
+sub_r32_imm8 | sub ecx, 0x7f
+sub_r16_simm8 | sub cx, -2
+sub_m32_simm8 | sub dword ptr [ebp+8], -1
+sub_m16_simm8 | sub word ptr [ebp+8], -128
+sub_r16_imm16 | sub cx, 0x8001
+sub_r8_imm8 | sub cl, 0x80
+sub_al_imm8 | sub al, 0x7f
+sub_m32_imm32 | sub dword ptr [ebp+8], 0x11223344
+sub_m8_imm8 | sub byte ptr [ebp+9], 0x81
+sbb_r32_r32 | sbb eax, ebx
+sbb_r16_r16 | sbb ax, bx
+sbb_r8_r8 | sbb al, bl
+sbb_r8h_r8 | sbb ah, cl
+sbb_r8_r8h | sbb dl, bh
+sbb_r32_m32 | sbb ecx, dword ptr [ebp+0x10]
+sbb_r16_m16 | sbb cx, word ptr [ebp+0x12]
+sbb_r8_m8 | sbb cl, byte ptr [ebp-3]
+sbb_m32_r32 | sbb dword ptr [ebp+0x10], edx
+sbb_m16_r16 | sbb word ptr [ebp+6], dx
+sbb_m8_r8h | sbb byte ptr [ebp+1], dh
+sbb_r32_imm32 | sbb esi, 0x12345678
+sbb_eax_imm32 | sbb eax, 0x80
+sbb_r32_simm8 | sbb ecx, -5
+sbb_r32_imm8 | sbb ecx, 0x7f
+sbb_r16_simm8 | sbb cx, -2
+sbb_m32_simm8 | sbb dword ptr [ebp+8], -1
+sbb_m16_simm8 | sbb word ptr [ebp+8], -128
+sbb_r16_imm16 | sbb cx, 0x8001
+sbb_r8_imm8 | sbb cl, 0x80
+sbb_al_imm8 | sbb al, 0x7f
+sbb_m32_imm32 | sbb dword ptr [ebp+8], 0x11223344
+sbb_m8_imm8 | sbb byte ptr [ebp+9], 0x81
+cmp_r32_r32 | cmp eax, ebx
+cmp_r16_r16 | cmp ax, bx
+cmp_r8_r8 | cmp al, bl
+cmp_r8h_r8 | cmp ah, cl
+cmp_r8_r8h | cmp dl, bh
+cmp_r32_m32 | cmp ecx, dword ptr [ebp+0x10]
+cmp_r16_m16 | cmp cx, word ptr [ebp+0x12]
+cmp_r8_m8 | cmp cl, byte ptr [ebp-3]
+cmp_m32_r32 | cmp dword ptr [ebp+0x10], edx
+cmp_m16_r16 | cmp word ptr [ebp+6], dx
+cmp_m8_r8h | cmp byte ptr [ebp+1], dh
+cmp_r32_imm32 | cmp esi, 0x12345678
+cmp_eax_imm32 | cmp eax, 0x80
+cmp_r32_simm8 | cmp ecx, -5
+cmp_r32_imm8 | cmp ecx, 0x7f
+cmp_r16_simm8 | cmp cx, -2
+cmp_m32_simm8 | cmp dword ptr [ebp+8], -1
+cmp_m16_simm8 | cmp word ptr [ebp+8], -128
+cmp_r16_imm16 | cmp cx, 0x8001
+cmp_r8_imm8 | cmp cl, 0x80
+cmp_al_imm8 | cmp al, 0x7f
+cmp_m32_imm32 | cmp dword ptr [ebp+8], 0x11223344
+cmp_m8_imm8 | cmp byte ptr [ebp+9], 0x81
+and_r32_r32 | and eax, ebx
+and_r16_r16 | and ax, bx
+and_r8_r8 | and al, bl
+and_r8h_r8 | and ah, cl
+and_r8_r8h | and dl, bh
+and_r32_m32 | and ecx, dword ptr [ebp+0x10]
+and_r16_m16 | and cx, word ptr [ebp+0x12]
+and_r8_m8 | and cl, byte ptr [ebp-3]
+and_m32_r32 | and dword ptr [ebp+0x10], edx
+and_m16_r16 | and word ptr [ebp+6], dx
+and_m8_r8h | and byte ptr [ebp+1], dh
+and_r32_imm32 | and esi, 0x12345678
+and_eax_imm32 | and eax, 0x80
+and_r32_simm8 | and ecx, -5
+and_r32_imm8 | and ecx, 0x7f
+and_r16_simm8 | and cx, -2
+and_m32_simm8 | and dword ptr [ebp+8], -1
+and_m16_simm8 | and word ptr [ebp+8], -128
+and_r16_imm16 | and cx, 0x8001
+and_r8_imm8 | and cl, 0x80
+and_al_imm8 | and al, 0x7f
+and_m32_imm32 | and dword ptr [ebp+8], 0x11223344
+and_m8_imm8 | and byte ptr [ebp+9], 0x81
+or_r32_r32 | or eax, ebx
+or_r16_r16 | or ax, bx
+or_r8_r8 | or al, bl
+or_r8h_r8 | or ah, cl
+or_r8_r8h | or dl, bh
+or_r32_m32 | or ecx, dword ptr [ebp+0x10]
+or_r16_m16 | or cx, word ptr [ebp+0x12]
+or_r8_m8 | or cl, byte ptr [ebp-3]
+or_m32_r32 | or dword ptr [ebp+0x10], edx
+or_m16_r16 | or word ptr [ebp+6], dx
+or_m8_r8h | or byte ptr [ebp+1], dh
+or_r32_imm32 | or esi, 0x12345678
+or_eax_imm32 | or eax, 0x80
+or_r32_simm8 | or ecx, -5
+or_r32_imm8 | or ecx, 0x7f
+or_r16_simm8 | or cx, -2
+or_m32_simm8 | or dword ptr [ebp+8], -1
+or_m16_simm8 | or word ptr [ebp+8], -128
+or_r16_imm16 | or cx, 0x8001
+or_r8_imm8 | or cl, 0x80
+or_al_imm8 | or al, 0x7f
+or_m32_imm32 | or dword ptr [ebp+8], 0x11223344
+or_m8_imm8 | or byte ptr [ebp+9], 0x81
+xor_r32_r32 | xor eax, ebx
+xor_r16_r16 | xor ax, bx
+xor_r8_r8 | xor al, bl
+xor_r8h_r8 | xor ah, cl
+xor_r8_r8h | xor dl, bh
+xor_r32_m32 | xor ecx, dword ptr [ebp+0x10]
+xor_r16_m16 | xor cx, word ptr [ebp+0x12]
+xor_r8_m8 | xor cl, byte ptr [ebp-3]
+xor_m32_r32 | xor dword ptr [ebp+0x10], edx
+xor_m16_r16 | xor word ptr [ebp+6], dx
+xor_m8_r8h | xor byte ptr [ebp+1], dh
+xor_r32_imm32 | xor esi, 0x12345678
+xor_eax_imm32 | xor eax, 0x80
+xor_r32_simm8 | xor ecx, -5
+xor_r32_imm8 | xor ecx, 0x7f
+xor_r16_simm8 | xor cx, -2
+xor_m32_simm8 | xor dword ptr [ebp+8], -1
+xor_m16_simm8 | xor word ptr [ebp+8], -128
+xor_r16_imm16 | xor cx, 0x8001
+xor_r8_imm8 | xor cl, 0x80
+xor_al_imm8 | xor al, 0x7f
+xor_m32_imm32 | xor dword ptr [ebp+8], 0x11223344
+xor_m8_imm8 | xor byte ptr [ebp+9], 0x81
+test_r32_r32 | test eax, ebx
+test_r16_r16 | test ax, bx
+test_r8_r8 | test al, bl
+test_r8h_r8 | test ah, cl
+test_r8_r8h | test dl, bh
+test_m32_r32 | test dword ptr [ebp+0x10], edx
+test_m16_r16 | test word ptr [ebp+6], dx
+test_m8_r8h | test byte ptr [ebp+1], dh
+test_r32_imm32 | test esi, 0x12345678
+test_eax_imm32 | test eax, 0x80
+test_r16_imm16 | test cx, 0x8001
+test_r8_imm8 | test cl, 0x80
+test_al_imm8 | test al, 0x7f
+test_m32_imm32 | test dword ptr [ebp+8], 0x11223344
+test_m8_imm8 | test byte ptr [ebp+9], 0x81
+xor_self | xor ecx, ecx
+sub_self | sub edx, edx
+sbb_self | sbb eax, eax
+adc_chain | add eax, ebx; adc ecx, edx
+sbb_chain | sub eax, ebx; sbb ecx, edx
+
+# ---- unary: inc dec neg not ----
+inc_r32 | inc ecx
+inc_r16 | inc cx
+inc_r8 | inc cl
+inc_r8h | inc ch
+inc_m32 | inc dword ptr [ebp+4]
+inc_m16 | inc word ptr [ebp+4]
+inc_m8 | inc byte ptr [ebp+4]
+dec_r32 | dec ecx
+dec_r16 | dec cx
+dec_r8 | dec cl
+dec_r8h | dec ch
+dec_m32 | dec dword ptr [ebp+4]
+dec_m16 | dec word ptr [ebp+4]
+dec_m8 | dec byte ptr [ebp+4]
+neg_r32 | neg ecx
+neg_r16 | neg cx
+neg_r8 | neg cl
+neg_r8h | neg ch
+neg_m32 | neg dword ptr [ebp+4]
+neg_m16 | neg word ptr [ebp+4]
+neg_m8 | neg byte ptr [ebp+4]
+not_r32 | not ecx
+not_r16 | not cx
+not_r8 | not cl
+not_r8h | not ch
+not_m32 | not dword ptr [ebp+4]
+not_m16 | not word ptr [ebp+4]
+not_m8 | not byte ptr [ebp+4]
+
+# ---- shifts and rotates ----
+shl_r32_1 | shl eax, 1
+shl_r32_0 | shl eax, 0
+shl_r32_3 | shl eax, 3 | skip=of
+shl_r32_31 | shl eax, 31 | skip=of
+shl_r32_33 | shl eax, 33 | skip=of
+shl_r32_cl | shl eax, cl | ecx=0..40 skip=of
+shl_r32_cl1 | shl eax, cl | ecx=1
+shl_m32_cl | shl dword ptr [ebp+4], cl | ecx=0..40 skip=of
+shl_r16_1 | shl ax, 1
+shl_r16_0 | shl ax, 0
+shl_r16_3 | shl ax, 3 | skip=of
+shl_r16_15 | shl ax, 15 | skip=of
+shl_r16_19 | shl ax, 19 | skip=of
+shl_r16_cl | shl ax, cl | ecx=0..40 skip=of
+shl_r16_cl1 | shl ax, cl | ecx=1
+shl_m16_cl | shl word ptr [ebp+4], cl | ecx=0..40 skip=of
+shl_r8_1 | shl al, 1
+shl_r8_0 | shl al, 0
+shl_r8_3 | shl al, 3 | skip=of
+shl_r8_7 | shl al, 7 | skip=of
+shl_r8_11 | shl al, 11 | skip=of
+shl_r8_cl | shl al, cl | ecx=0..40 skip=of
+shl_r8_cl1 | shl al, cl | ecx=1
+shl_m8_cl | shl byte ptr [ebp+4], cl | ecx=0..40 skip=of
+shl_m32_1 | shl dword ptr [ebp+4], 1
+shl_r8h_cl | shl ah, cl | ecx=0..40 skip=of
+shr_r32_1 | shr eax, 1
+shr_r32_0 | shr eax, 0
+shr_r32_3 | shr eax, 3 | skip=of
+shr_r32_31 | shr eax, 31 | skip=of
+shr_r32_33 | shr eax, 33 | skip=of
+shr_r32_cl | shr eax, cl | ecx=0..40 skip=of
+shr_r32_cl1 | shr eax, cl | ecx=1
+shr_m32_cl | shr dword ptr [ebp+4], cl | ecx=0..40 skip=of
+shr_r16_1 | shr ax, 1
+shr_r16_0 | shr ax, 0
+shr_r16_3 | shr ax, 3 | skip=of
+shr_r16_15 | shr ax, 15 | skip=of
+shr_r16_19 | shr ax, 19 | skip=of
+shr_r16_cl | shr ax, cl | ecx=0..40 skip=of
+shr_r16_cl1 | shr ax, cl | ecx=1
+shr_m16_cl | shr word ptr [ebp+4], cl | ecx=0..40 skip=of
+shr_r8_1 | shr al, 1
+shr_r8_0 | shr al, 0
+shr_r8_3 | shr al, 3 | skip=of
+shr_r8_7 | shr al, 7 | skip=of
+shr_r8_11 | shr al, 11 | skip=of
+shr_r8_cl | shr al, cl | ecx=0..40 skip=of
+shr_r8_cl1 | shr al, cl | ecx=1
+shr_m8_cl | shr byte ptr [ebp+4], cl | ecx=0..40 skip=of
+shr_m32_1 | shr dword ptr [ebp+4], 1
+shr_r8h_cl | shr ah, cl | ecx=0..40 skip=of
+sar_r32_1 | sar eax, 1
+sar_r32_0 | sar eax, 0
+sar_r32_3 | sar eax, 3 | skip=of
+sar_r32_31 | sar eax, 31 | skip=of
+sar_r32_33 | sar eax, 33 | skip=of
+sar_r32_cl | sar eax, cl | ecx=0..40 skip=of
+sar_r32_cl1 | sar eax, cl | ecx=1
+sar_m32_cl | sar dword ptr [ebp+4], cl | ecx=0..40 skip=of
+sar_r16_1 | sar ax, 1
+sar_r16_0 | sar ax, 0
+sar_r16_3 | sar ax, 3 | skip=of
+sar_r16_15 | sar ax, 15 | skip=of
+sar_r16_19 | sar ax, 19 | skip=of
+sar_r16_cl | sar ax, cl | ecx=0..40 skip=of
+sar_r16_cl1 | sar ax, cl | ecx=1
+sar_m16_cl | sar word ptr [ebp+4], cl | ecx=0..40 skip=of
+sar_r8_1 | sar al, 1
+sar_r8_0 | sar al, 0
+sar_r8_3 | sar al, 3 | skip=of
+sar_r8_7 | sar al, 7 | skip=of
+sar_r8_11 | sar al, 11 | skip=of
+sar_r8_cl | sar al, cl | ecx=0..40 skip=of
+sar_r8_cl1 | sar al, cl | ecx=1
+sar_m8_cl | sar byte ptr [ebp+4], cl | ecx=0..40 skip=of
+sar_m32_1 | sar dword ptr [ebp+4], 1
+sar_r8h_cl | sar ah, cl | ecx=0..40 skip=of
+rol_r32_1 | rol eax, 1
+rol_r32_0 | rol eax, 0
+rol_r32_3 | rol eax, 3 | skip=of
+rol_r32_31 | rol eax, 31 | skip=of
+rol_r32_33 | rol eax, 33 | skip=of
+rol_r32_cl | rol eax, cl | ecx=0..40 skip=of
+rol_r32_cl1 | rol eax, cl | ecx=1
+rol_m32_cl | rol dword ptr [ebp+4], cl | ecx=0..40 skip=of
+rol_r16_1 | rol ax, 1
+rol_r16_0 | rol ax, 0
+rol_r16_3 | rol ax, 3 | skip=of
+rol_r16_15 | rol ax, 15 | skip=of
+rol_r16_19 | rol ax, 19 | skip=of
+rol_r16_cl | rol ax, cl | ecx=0..40 skip=of
+rol_r16_cl1 | rol ax, cl | ecx=1
+rol_m16_cl | rol word ptr [ebp+4], cl | ecx=0..40 skip=of
+rol_r8_1 | rol al, 1
+rol_r8_0 | rol al, 0
+rol_r8_3 | rol al, 3 | skip=of
+rol_r8_7 | rol al, 7 | skip=of
+rol_r8_11 | rol al, 11 | skip=of
+rol_r8_cl | rol al, cl | ecx=0..40 skip=of
+rol_r8_cl1 | rol al, cl | ecx=1
+rol_m8_cl | rol byte ptr [ebp+4], cl | ecx=0..40 skip=of
+rol_m32_1 | rol dword ptr [ebp+4], 1
+rol_r8h_cl | rol ah, cl | ecx=0..40 skip=of
+ror_r32_1 | ror eax, 1
+ror_r32_0 | ror eax, 0
+ror_r32_3 | ror eax, 3 | skip=of
+ror_r32_31 | ror eax, 31 | skip=of
+ror_r32_33 | ror eax, 33 | skip=of
+ror_r32_cl | ror eax, cl | ecx=0..40 skip=of
+ror_r32_cl1 | ror eax, cl | ecx=1
+ror_m32_cl | ror dword ptr [ebp+4], cl | ecx=0..40 skip=of
+ror_r16_1 | ror ax, 1
+ror_r16_0 | ror ax, 0
+ror_r16_3 | ror ax, 3 | skip=of
+ror_r16_15 | ror ax, 15 | skip=of
+ror_r16_19 | ror ax, 19 | skip=of
+ror_r16_cl | ror ax, cl | ecx=0..40 skip=of
+ror_r16_cl1 | ror ax, cl | ecx=1
+ror_m16_cl | ror word ptr [ebp+4], cl | ecx=0..40 skip=of
+ror_r8_1 | ror al, 1
+ror_r8_0 | ror al, 0
+ror_r8_3 | ror al, 3 | skip=of
+ror_r8_7 | ror al, 7 | skip=of
+ror_r8_11 | ror al, 11 | skip=of
+ror_r8_cl | ror al, cl | ecx=0..40 skip=of
+ror_r8_cl1 | ror al, cl | ecx=1
+ror_m8_cl | ror byte ptr [ebp+4], cl | ecx=0..40 skip=of
+ror_m32_1 | ror dword ptr [ebp+4], 1
+ror_r8h_cl | ror ah, cl | ecx=0..40 skip=of
+rcl_r32_1 | rcl eax, 1
+rcl_r32_0 | rcl eax, 0
+rcl_r32_3 | rcl eax, 3 | skip=of
+rcl_r32_31 | rcl eax, 31 | skip=of
+rcl_r32_33 | rcl eax, 33 | skip=of
+rcl_r32_cl | rcl eax, cl | ecx=0..40 skip=of
+rcl_r32_cl1 | rcl eax, cl | ecx=1
+rcl_m32_cl | rcl dword ptr [ebp+4], cl | ecx=0..40 skip=of
+rcl_r16_1 | rcl ax, 1
+rcl_r16_0 | rcl ax, 0
+rcl_r16_3 | rcl ax, 3 | skip=of
+rcl_r16_15 | rcl ax, 15 | skip=of
+rcl_r16_19 | rcl ax, 19 | skip=of
+rcl_r16_cl | rcl ax, cl | ecx=0..40 skip=of
+rcl_r16_cl1 | rcl ax, cl | ecx=1
+rcl_m16_cl | rcl word ptr [ebp+4], cl | ecx=0..40 skip=of
+rcl_r8_1 | rcl al, 1
+rcl_r8_0 | rcl al, 0
+rcl_r8_3 | rcl al, 3 | skip=of
+rcl_r8_7 | rcl al, 7 | skip=of
+rcl_r8_11 | rcl al, 11 | skip=of
+rcl_r8_cl | rcl al, cl | ecx=0..40 skip=of
+rcl_r8_cl1 | rcl al, cl | ecx=1
+rcl_m8_cl | rcl byte ptr [ebp+4], cl | ecx=0..40 skip=of
+rcl_m32_1 | rcl dword ptr [ebp+4], 1
+rcl_r8h_cl | rcl ah, cl | ecx=0..40 skip=of
+rcr_r32_1 | rcr eax, 1
+rcr_r32_0 | rcr eax, 0
+rcr_r32_3 | rcr eax, 3 | skip=of
+rcr_r32_31 | rcr eax, 31 | skip=of
+rcr_r32_33 | rcr eax, 33 | skip=of
+rcr_r32_cl | rcr eax, cl | ecx=0..40 skip=of
+rcr_r32_cl1 | rcr eax, cl | ecx=1
+rcr_m32_cl | rcr dword ptr [ebp+4], cl | ecx=0..40 skip=of
+rcr_r16_1 | rcr ax, 1
+rcr_r16_0 | rcr ax, 0
+rcr_r16_3 | rcr ax, 3 | skip=of
+rcr_r16_15 | rcr ax, 15 | skip=of
+rcr_r16_19 | rcr ax, 19 | skip=of
+rcr_r16_cl | rcr ax, cl | ecx=0..40 skip=of
+rcr_r16_cl1 | rcr ax, cl | ecx=1
+rcr_m16_cl | rcr word ptr [ebp+4], cl | ecx=0..40 skip=of
+rcr_r8_1 | rcr al, 1
+rcr_r8_0 | rcr al, 0
+rcr_r8_3 | rcr al, 3 | skip=of
+rcr_r8_7 | rcr al, 7 | skip=of
+rcr_r8_11 | rcr al, 11 | skip=of
+rcr_r8_cl | rcr al, cl | ecx=0..40 skip=of
+rcr_r8_cl1 | rcr al, cl | ecx=1
+rcr_m8_cl | rcr byte ptr [ebp+4], cl | ecx=0..40 skip=of
+rcr_m32_1 | rcr dword ptr [ebp+4], 1
+rcr_r8h_cl | rcr ah, cl | ecx=0..40 skip=of
+shl_cl0_keeps_cf | cmp eax, ebx; shl edx, cl; setb al | ecx=0..2
+sar_cl32_jcc | cmp eax, ebx; sar edx, cl; jl 1f; mov esi, 1; 1: | ecx=31..33 skip=of
+rol_imm0_keeps_flags | add eax, ebx; rol edx, 0; setz cl
+shrd_cl0_keeps_flags | sub eax, ebx; shrd edx, esi, cl; sbb ecx, ecx | ecx=0..1
+shld_r32_imm | shld eax, ebx, 5 | skip=of
+shld_r32_1 | shld eax, ebx, 1
+shld_r32_31 | shld eax, ebx, 31 | skip=of
+shld_r32_cl | shld eax, ebx, cl | ecx=0..40 skip=of
+shld_m32_cl | shld dword ptr [ebp+4], edx, cl | ecx=0..40 skip=of
+shld_r16_imm | shld ax, bx, 5 | skip=of
+shld_r16_cl | shld ax, bx, cl | ecx=0..16 skip=of
+shld_m16_imm | shld word ptr [ebp+2], cx, 9 | skip=of
+shrd_r32_imm | shrd eax, ebx, 5 | skip=of
+shrd_r32_1 | shrd eax, ebx, 1
+shrd_r32_31 | shrd eax, ebx, 31 | skip=of
+shrd_r32_cl | shrd eax, ebx, cl | ecx=0..40 skip=of
+shrd_m32_cl | shrd dword ptr [ebp+4], edx, cl | ecx=0..40 skip=of
+shrd_r16_imm | shrd ax, bx, 5 | skip=of
+shrd_r16_cl | shrd ax, bx, cl | ecx=0..16 skip=of
+shrd_m16_imm | shrd word ptr [ebp+2], cx, 9 | skip=of
+
+# ---- multiply and divide ----
+mul_r32 | mul ecx
+mul_r16 | mul cx
+mul_r8 | mul cl
+mul_m32 | mul dword ptr [ebp+4]
+imul_r32 | imul ecx
+imul_r16 | imul cx
+imul_r8 | imul cl
+imul_m32 | imul dword ptr [ebp+4]
+imul2_r32 | imul ecx, edx
+imul2_r16 | imul cx, dx
+imul2_m32 | imul ecx, dword ptr [ebp+4]
+imul3_imm32 | imul ecx, edx, -100000
+imul3_simm8 | imul ecx, edx, -3
+imul3_m32 | imul ecx, dword ptr [ebp+4], 7
+imul3_r16_simm8 | imul cx, dx, -3
+imul3_r16_imm16 | imul cx, dx, 0x1234
+div_r32 | div ecx | edx=0..3
+div_r32_any | div ecx
+div_r16 | div cx | edx=0..3
+div_r8 | div cl | eax=0..0x3ff
+div_m32 | div dword ptr [ebp+4] | edx=0
+idiv_r32 | cdq; idiv ecx
+idiv_r32_any | idiv ecx
+idiv_r16 | cwd; idiv cx
+idiv_r8 | cbw; idiv cl
+idiv_m32 | cdq; idiv dword ptr [ebp+4]
+
+# ---- moves and conversions ----
+movzx_r32_r8 | movzx eax, bl
+movzx_r32_r8h | movzx eax, bh
+movzx_r32_r16 | movzx ecx, dx
+movzx_r16_r8 | movzx cx, dl
+movzx_r32_m8 | movzx edx, byte ptr [ebp+3]
+movzx_r32_m16 | movzx edx, word ptr [ebp+3]
+movzx_self | movzx eax, al
+movsx_r32_r8 | movsx eax, bl
+movsx_r32_r8h | movsx eax, bh
+movsx_r32_r16 | movsx ecx, dx
+movsx_r16_r8 | movsx cx, dl
+movsx_r32_m8 | movsx edx, byte ptr [ebp+3]
+movsx_r32_m16 | movsx edx, word ptr [ebp+3]
+movsx_self | movsx eax, al
+lea_sib | lea eax, [ebx+ecx*4+0x10]
+lea_x3 | lea eax, [eax+eax*2]
+lea_neg | lea esi, [edi-1]
+lea_r16 | lea cx, [ebx+edx]
+lea_abs | lea edx, [0x12345678]
+lea_idx | lea edx, [ecx*8-0x80]
+xchg_r32 | xchg ebx, edx
+xchg_eax | xchg eax, ecx
+xchg_r8 | xchg al, ah
+xchg_r16 | xchg cx, dx
+xchg_m32 | xchg dword ptr [ebp+4], ecx
+xchg_m8 | xchg byte ptr [ebp+5], dh
+bswap_eax | bswap eax
+bswap_edi | bswap edi
+cdq | cdq
+cwde | cwde
+cbw | cbw
+cwd | cwd
+mov_m8_imm | mov byte ptr [ebp+3], 0x9a
+mov_m16_imm | mov word ptr [ebp+3], 0x9abc
+mov_r8h_m8 | mov ch, byte ptr [ebp+7]
+mov_moffs | mov eax, dword ptr [0x108010]
+mov_idx | mov eax, dword ptr [ebp+ecx*4] | ecx=0..64
+push_simm8 | push -1
+push_imm8 | push 0x7f
+push_imm32 | push 0x12345678
+push_m32 | push dword ptr [esp+4]
+push_pop | push eax; pop ecx
+pop_m32_esp | push ebx; pop dword ptr [esp]
+pop_m32 | pop dword ptr [ebp+4]
+push_r16 | push cx
+pushad_popad | pushad; mov eax, 1; popad
+pushad | pushad
+pushfd | pushfd
+popfd | and eax, 0x8d5; push eax; popfd
+lahf | lahf
+sahf | sahf
+leave | mov ebp, esp; push 0; leave
+stc_cmc | stc; cmc
+clc | clc
+cld_std | std
+
+# ---- setcc cmovcc jcc ----
+seto_cmp32 | cmp eax, ebx; seto cl
+seto_cmp32_eq | cmp eax, ebx; seto cl | eax=0..3 ebx=0..3
+seto_cmp8 | cmp al, bl; seto cl
+seto_cmp16_imm | cmp ax, -3; seto cl
+seto_cmp_m8_imm | cmp byte ptr [ebp+1], 0x80; seto cl
+seto_sub | sub eax, ebx; seto byte ptr [ebp+2]
+seto_test | test eax, ebx; seto cl
+seto_and8 | and al, bl; seto cl
+seto_add | add eax, ebx; seto cl
+seto_dec | dec eax; seto cl
+seto_neg | neg eax; seto cl
+seto_unfused | cmp eax, ebx; cmc; cmc; seto cl
+cmovo_cmp32 | cmp eax, ebx; cmovo ecx, edx
+cmovo_m32 | test eax, eax; cmovo ecx, dword ptr [ebp+4]
+cmovo_unfused | cmp eax, ebx; cmc; cmc; cmovo cx, dx
+jo_cmp32 | cmp eax, ebx; jo 1f; mov ecx, 1; 1:
+jo_cmp16 | cmp ax, bx; jo 1f; mov ecx, 1; 1:
+jo_cmp_imm | cmp eax, -1; jo 1f; mov ecx, 1; 1:
+jo_test | test cl, cl; jo 1f; mov ecx, 1; 1:
+jo_or | or eax, ebx; jo 1f; mov ecx, 1; 1:
+jo_inc | inc eax; jo 1f; mov ecx, 1; 1:
+jo_unfused | cmp eax, ebx; cmc; cmc; jo 1f; mov ecx, 1; 1:
+jo_unfused_shr | shr eax, 1; jo 1f; mov ecx, 1; 1:
+setno_cmp32 | cmp eax, ebx; setno cl
+setno_cmp32_eq | cmp eax, ebx; setno cl | eax=0..3 ebx=0..3
+setno_cmp8 | cmp al, bl; setno cl
+setno_cmp16_imm | cmp ax, -3; setno cl
+setno_cmp_m8_imm | cmp byte ptr [ebp+1], 0x80; setno cl
+setno_sub | sub eax, ebx; setno byte ptr [ebp+2]
+setno_test | test eax, ebx; setno cl
+setno_and8 | and al, bl; setno cl
+setno_add | add eax, ebx; setno cl
+setno_dec | dec eax; setno cl
+setno_neg | neg eax; setno cl
+setno_unfused | cmp eax, ebx; cmc; cmc; setno cl
+cmovno_cmp32 | cmp eax, ebx; cmovno ecx, edx
+cmovno_m32 | test eax, eax; cmovno ecx, dword ptr [ebp+4]
+cmovno_unfused | cmp eax, ebx; cmc; cmc; cmovno cx, dx
+jno_cmp32 | cmp eax, ebx; jno 1f; mov ecx, 1; 1:
+jno_cmp16 | cmp ax, bx; jno 1f; mov ecx, 1; 1:
+jno_cmp_imm | cmp eax, -1; jno 1f; mov ecx, 1; 1:
+jno_test | test cl, cl; jno 1f; mov ecx, 1; 1:
+jno_or | or eax, ebx; jno 1f; mov ecx, 1; 1:
+jno_inc | inc eax; jno 1f; mov ecx, 1; 1:
+jno_unfused | cmp eax, ebx; cmc; cmc; jno 1f; mov ecx, 1; 1:
+jno_unfused_shr | shr eax, 1; jno 1f; mov ecx, 1; 1:
+setb_cmp32 | cmp eax, ebx; setb cl
+setb_cmp32_eq | cmp eax, ebx; setb cl | eax=0..3 ebx=0..3
+setb_cmp8 | cmp al, bl; setb cl
+setb_cmp16_imm | cmp ax, -3; setb cl
+setb_cmp_m8_imm | cmp byte ptr [ebp+1], 0x80; setb cl
+setb_sub | sub eax, ebx; setb byte ptr [ebp+2]
+setb_test | test eax, ebx; setb cl
+setb_and8 | and al, bl; setb cl
+setb_add | add eax, ebx; setb cl
+setb_dec | dec eax; setb cl
+setb_neg | neg eax; setb cl
+setb_unfused | cmp eax, ebx; cmc; cmc; setb cl
+cmovb_cmp32 | cmp eax, ebx; cmovb ecx, edx
+cmovb_m32 | test eax, eax; cmovb ecx, dword ptr [ebp+4]
+cmovb_unfused | cmp eax, ebx; cmc; cmc; cmovb cx, dx
+jb_cmp32 | cmp eax, ebx; jb 1f; mov ecx, 1; 1:
+jb_cmp16 | cmp ax, bx; jb 1f; mov ecx, 1; 1:
+jb_cmp_imm | cmp eax, -1; jb 1f; mov ecx, 1; 1:
+jb_test | test cl, cl; jb 1f; mov ecx, 1; 1:
+jb_or | or eax, ebx; jb 1f; mov ecx, 1; 1:
+jb_inc | inc eax; jb 1f; mov ecx, 1; 1:
+jb_unfused | cmp eax, ebx; cmc; cmc; jb 1f; mov ecx, 1; 1:
+jb_unfused_shr | shr eax, 1; jb 1f; mov ecx, 1; 1:
+setnb_cmp32 | cmp eax, ebx; setnb cl
+setnb_cmp32_eq | cmp eax, ebx; setnb cl | eax=0..3 ebx=0..3
+setnb_cmp8 | cmp al, bl; setnb cl
+setnb_cmp16_imm | cmp ax, -3; setnb cl
+setnb_cmp_m8_imm | cmp byte ptr [ebp+1], 0x80; setnb cl
+setnb_sub | sub eax, ebx; setnb byte ptr [ebp+2]
+setnb_test | test eax, ebx; setnb cl
+setnb_and8 | and al, bl; setnb cl
+setnb_add | add eax, ebx; setnb cl
+setnb_dec | dec eax; setnb cl
+setnb_neg | neg eax; setnb cl
+setnb_unfused | cmp eax, ebx; cmc; cmc; setnb cl
+cmovnb_cmp32 | cmp eax, ebx; cmovnb ecx, edx
+cmovnb_m32 | test eax, eax; cmovnb ecx, dword ptr [ebp+4]
+cmovnb_unfused | cmp eax, ebx; cmc; cmc; cmovnb cx, dx
+jnb_cmp32 | cmp eax, ebx; jnb 1f; mov ecx, 1; 1:
+jnb_cmp16 | cmp ax, bx; jnb 1f; mov ecx, 1; 1:
+jnb_cmp_imm | cmp eax, -1; jnb 1f; mov ecx, 1; 1:
+jnb_test | test cl, cl; jnb 1f; mov ecx, 1; 1:
+jnb_or | or eax, ebx; jnb 1f; mov ecx, 1; 1:
+jnb_inc | inc eax; jnb 1f; mov ecx, 1; 1:
+jnb_unfused | cmp eax, ebx; cmc; cmc; jnb 1f; mov ecx, 1; 1:
+jnb_unfused_shr | shr eax, 1; jnb 1f; mov ecx, 1; 1:
+setz_cmp32 | cmp eax, ebx; setz cl
+setz_cmp32_eq | cmp eax, ebx; setz cl | eax=0..3 ebx=0..3
+setz_cmp8 | cmp al, bl; setz cl
+setz_cmp16_imm | cmp ax, -3; setz cl
+setz_cmp_m8_imm | cmp byte ptr [ebp+1], 0x80; setz cl
+setz_sub | sub eax, ebx; setz byte ptr [ebp+2]
+setz_test | test eax, ebx; setz cl
+setz_and8 | and al, bl; setz cl
+setz_add | add eax, ebx; setz cl
+setz_dec | dec eax; setz cl
+setz_neg | neg eax; setz cl
+setz_unfused | cmp eax, ebx; cmc; cmc; setz cl
+cmovz_cmp32 | cmp eax, ebx; cmovz ecx, edx
+cmovz_m32 | test eax, eax; cmovz ecx, dword ptr [ebp+4]
+cmovz_unfused | cmp eax, ebx; cmc; cmc; cmovz cx, dx
+jz_cmp32 | cmp eax, ebx; jz 1f; mov ecx, 1; 1:
+jz_cmp16 | cmp ax, bx; jz 1f; mov ecx, 1; 1:
+jz_cmp_imm | cmp eax, -1; jz 1f; mov ecx, 1; 1:
+jz_test | test cl, cl; jz 1f; mov ecx, 1; 1:
+jz_or | or eax, ebx; jz 1f; mov ecx, 1; 1:
+jz_inc | inc eax; jz 1f; mov ecx, 1; 1:
+jz_unfused | cmp eax, ebx; cmc; cmc; jz 1f; mov ecx, 1; 1:
+jz_unfused_shr | shr eax, 1; jz 1f; mov ecx, 1; 1:
+setnz_cmp32 | cmp eax, ebx; setnz cl
+setnz_cmp32_eq | cmp eax, ebx; setnz cl | eax=0..3 ebx=0..3
+setnz_cmp8 | cmp al, bl; setnz cl
+setnz_cmp16_imm | cmp ax, -3; setnz cl
+setnz_cmp_m8_imm | cmp byte ptr [ebp+1], 0x80; setnz cl
+setnz_sub | sub eax, ebx; setnz byte ptr [ebp+2]
+setnz_test | test eax, ebx; setnz cl
+setnz_and8 | and al, bl; setnz cl
+setnz_add | add eax, ebx; setnz cl
+setnz_dec | dec eax; setnz cl
+setnz_neg | neg eax; setnz cl
+setnz_unfused | cmp eax, ebx; cmc; cmc; setnz cl
+cmovnz_cmp32 | cmp eax, ebx; cmovnz ecx, edx
+cmovnz_m32 | test eax, eax; cmovnz ecx, dword ptr [ebp+4]
+cmovnz_unfused | cmp eax, ebx; cmc; cmc; cmovnz cx, dx
+jnz_cmp32 | cmp eax, ebx; jnz 1f; mov ecx, 1; 1:
+jnz_cmp16 | cmp ax, bx; jnz 1f; mov ecx, 1; 1:
+jnz_cmp_imm | cmp eax, -1; jnz 1f; mov ecx, 1; 1:
+jnz_test | test cl, cl; jnz 1f; mov ecx, 1; 1:
+jnz_or | or eax, ebx; jnz 1f; mov ecx, 1; 1:
+jnz_inc | inc eax; jnz 1f; mov ecx, 1; 1:
+jnz_unfused | cmp eax, ebx; cmc; cmc; jnz 1f; mov ecx, 1; 1:
+jnz_unfused_shr | shr eax, 1; jnz 1f; mov ecx, 1; 1:
+setbe_cmp32 | cmp eax, ebx; setbe cl
+setbe_cmp32_eq | cmp eax, ebx; setbe cl | eax=0..3 ebx=0..3
+setbe_cmp8 | cmp al, bl; setbe cl
+setbe_cmp16_imm | cmp ax, -3; setbe cl
+setbe_cmp_m8_imm | cmp byte ptr [ebp+1], 0x80; setbe cl
+setbe_sub | sub eax, ebx; setbe byte ptr [ebp+2]
+setbe_test | test eax, ebx; setbe cl
+setbe_and8 | and al, bl; setbe cl
+setbe_add | add eax, ebx; setbe cl
+setbe_dec | dec eax; setbe cl
+setbe_neg | neg eax; setbe cl
+setbe_unfused | cmp eax, ebx; cmc; cmc; setbe cl
+cmovbe_cmp32 | cmp eax, ebx; cmovbe ecx, edx
+cmovbe_m32 | test eax, eax; cmovbe ecx, dword ptr [ebp+4]
+cmovbe_unfused | cmp eax, ebx; cmc; cmc; cmovbe cx, dx
+jbe_cmp32 | cmp eax, ebx; jbe 1f; mov ecx, 1; 1:
+jbe_cmp16 | cmp ax, bx; jbe 1f; mov ecx, 1; 1:
+jbe_cmp_imm | cmp eax, -1; jbe 1f; mov ecx, 1; 1:
+jbe_test | test cl, cl; jbe 1f; mov ecx, 1; 1:
+jbe_or | or eax, ebx; jbe 1f; mov ecx, 1; 1:
+jbe_inc | inc eax; jbe 1f; mov ecx, 1; 1:
+jbe_unfused | cmp eax, ebx; cmc; cmc; jbe 1f; mov ecx, 1; 1:
+jbe_unfused_shr | shr eax, 1; jbe 1f; mov ecx, 1; 1:
+setnbe_cmp32 | cmp eax, ebx; setnbe cl
+setnbe_cmp32_eq | cmp eax, ebx; setnbe cl | eax=0..3 ebx=0..3
+setnbe_cmp8 | cmp al, bl; setnbe cl
+setnbe_cmp16_imm | cmp ax, -3; setnbe cl
+setnbe_cmp_m8_imm | cmp byte ptr [ebp+1], 0x80; setnbe cl
+setnbe_sub | sub eax, ebx; setnbe byte ptr [ebp+2]
+setnbe_test | test eax, ebx; setnbe cl
+setnbe_and8 | and al, bl; setnbe cl
+setnbe_add | add eax, ebx; setnbe cl
+setnbe_dec | dec eax; setnbe cl
+setnbe_neg | neg eax; setnbe cl
+setnbe_unfused | cmp eax, ebx; cmc; cmc; setnbe cl
+cmovnbe_cmp32 | cmp eax, ebx; cmovnbe ecx, edx
+cmovnbe_m32 | test eax, eax; cmovnbe ecx, dword ptr [ebp+4]
+cmovnbe_unfused | cmp eax, ebx; cmc; cmc; cmovnbe cx, dx
+jnbe_cmp32 | cmp eax, ebx; jnbe 1f; mov ecx, 1; 1:
+jnbe_cmp16 | cmp ax, bx; jnbe 1f; mov ecx, 1; 1:
+jnbe_cmp_imm | cmp eax, -1; jnbe 1f; mov ecx, 1; 1:
+jnbe_test | test cl, cl; jnbe 1f; mov ecx, 1; 1:
+jnbe_or | or eax, ebx; jnbe 1f; mov ecx, 1; 1:
+jnbe_inc | inc eax; jnbe 1f; mov ecx, 1; 1:
+jnbe_unfused | cmp eax, ebx; cmc; cmc; jnbe 1f; mov ecx, 1; 1:
+jnbe_unfused_shr | shr eax, 1; jnbe 1f; mov ecx, 1; 1:
+sets_cmp32 | cmp eax, ebx; sets cl
+sets_cmp32_eq | cmp eax, ebx; sets cl | eax=0..3 ebx=0..3
+sets_cmp8 | cmp al, bl; sets cl
+sets_cmp16_imm | cmp ax, -3; sets cl
+sets_cmp_m8_imm | cmp byte ptr [ebp+1], 0x80; sets cl
+sets_sub | sub eax, ebx; sets byte ptr [ebp+2]
+sets_test | test eax, ebx; sets cl
+sets_and8 | and al, bl; sets cl
+sets_add | add eax, ebx; sets cl
+sets_dec | dec eax; sets cl
+sets_neg | neg eax; sets cl
+sets_unfused | cmp eax, ebx; cmc; cmc; sets cl
+cmovs_cmp32 | cmp eax, ebx; cmovs ecx, edx
+cmovs_m32 | test eax, eax; cmovs ecx, dword ptr [ebp+4]
+cmovs_unfused | cmp eax, ebx; cmc; cmc; cmovs cx, dx
+js_cmp32 | cmp eax, ebx; js 1f; mov ecx, 1; 1:
+js_cmp16 | cmp ax, bx; js 1f; mov ecx, 1; 1:
+js_cmp_imm | cmp eax, -1; js 1f; mov ecx, 1; 1:
+js_test | test cl, cl; js 1f; mov ecx, 1; 1:
+js_or | or eax, ebx; js 1f; mov ecx, 1; 1:
+js_inc | inc eax; js 1f; mov ecx, 1; 1:
+js_unfused | cmp eax, ebx; cmc; cmc; js 1f; mov ecx, 1; 1:
+js_unfused_shr | shr eax, 1; js 1f; mov ecx, 1; 1:
+setns_cmp32 | cmp eax, ebx; setns cl
+setns_cmp32_eq | cmp eax, ebx; setns cl | eax=0..3 ebx=0..3
+setns_cmp8 | cmp al, bl; setns cl
+setns_cmp16_imm | cmp ax, -3; setns cl
+setns_cmp_m8_imm | cmp byte ptr [ebp+1], 0x80; setns cl
+setns_sub | sub eax, ebx; setns byte ptr [ebp+2]
+setns_test | test eax, ebx; setns cl
+setns_and8 | and al, bl; setns cl
+setns_add | add eax, ebx; setns cl
+setns_dec | dec eax; setns cl
+setns_neg | neg eax; setns cl
+setns_unfused | cmp eax, ebx; cmc; cmc; setns cl
+cmovns_cmp32 | cmp eax, ebx; cmovns ecx, edx
+cmovns_m32 | test eax, eax; cmovns ecx, dword ptr [ebp+4]
+cmovns_unfused | cmp eax, ebx; cmc; cmc; cmovns cx, dx
+jns_cmp32 | cmp eax, ebx; jns 1f; mov ecx, 1; 1:
+jns_cmp16 | cmp ax, bx; jns 1f; mov ecx, 1; 1:
+jns_cmp_imm | cmp eax, -1; jns 1f; mov ecx, 1; 1:
+jns_test | test cl, cl; jns 1f; mov ecx, 1; 1:
+jns_or | or eax, ebx; jns 1f; mov ecx, 1; 1:
+jns_inc | inc eax; jns 1f; mov ecx, 1; 1:
+jns_unfused | cmp eax, ebx; cmc; cmc; jns 1f; mov ecx, 1; 1:
+jns_unfused_shr | shr eax, 1; jns 1f; mov ecx, 1; 1:
+setp_cmp32 | cmp eax, ebx; setp cl
+setp_cmp32_eq | cmp eax, ebx; setp cl | eax=0..3 ebx=0..3
+setp_cmp8 | cmp al, bl; setp cl
+setp_cmp16_imm | cmp ax, -3; setp cl
+setp_cmp_m8_imm | cmp byte ptr [ebp+1], 0x80; setp cl
+setp_sub | sub eax, ebx; setp byte ptr [ebp+2]
+setp_test | test eax, ebx; setp cl
+setp_and8 | and al, bl; setp cl
+setp_add | add eax, ebx; setp cl
+setp_dec | dec eax; setp cl
+setp_neg | neg eax; setp cl
+setp_unfused | cmp eax, ebx; cmc; cmc; setp cl
+cmovp_cmp32 | cmp eax, ebx; cmovp ecx, edx
+cmovp_m32 | test eax, eax; cmovp ecx, dword ptr [ebp+4]
+cmovp_unfused | cmp eax, ebx; cmc; cmc; cmovp cx, dx
+jp_cmp32 | cmp eax, ebx; jp 1f; mov ecx, 1; 1:
+jp_cmp16 | cmp ax, bx; jp 1f; mov ecx, 1; 1:
+jp_cmp_imm | cmp eax, -1; jp 1f; mov ecx, 1; 1:
+jp_test | test cl, cl; jp 1f; mov ecx, 1; 1:
+jp_or | or eax, ebx; jp 1f; mov ecx, 1; 1:
+jp_inc | inc eax; jp 1f; mov ecx, 1; 1:
+jp_unfused | cmp eax, ebx; cmc; cmc; jp 1f; mov ecx, 1; 1:
+jp_unfused_shr | shr eax, 1; jp 1f; mov ecx, 1; 1:
+setnp_cmp32 | cmp eax, ebx; setnp cl
+setnp_cmp32_eq | cmp eax, ebx; setnp cl | eax=0..3 ebx=0..3
+setnp_cmp8 | cmp al, bl; setnp cl
+setnp_cmp16_imm | cmp ax, -3; setnp cl
+setnp_cmp_m8_imm | cmp byte ptr [ebp+1], 0x80; setnp cl
+setnp_sub | sub eax, ebx; setnp byte ptr [ebp+2]
+setnp_test | test eax, ebx; setnp cl
+setnp_and8 | and al, bl; setnp cl
+setnp_add | add eax, ebx; setnp cl
+setnp_dec | dec eax; setnp cl
+setnp_neg | neg eax; setnp cl
+setnp_unfused | cmp eax, ebx; cmc; cmc; setnp cl
+cmovnp_cmp32 | cmp eax, ebx; cmovnp ecx, edx
+cmovnp_m32 | test eax, eax; cmovnp ecx, dword ptr [ebp+4]
+cmovnp_unfused | cmp eax, ebx; cmc; cmc; cmovnp cx, dx
+jnp_cmp32 | cmp eax, ebx; jnp 1f; mov ecx, 1; 1:
+jnp_cmp16 | cmp ax, bx; jnp 1f; mov ecx, 1; 1:
+jnp_cmp_imm | cmp eax, -1; jnp 1f; mov ecx, 1; 1:
+jnp_test | test cl, cl; jnp 1f; mov ecx, 1; 1:
+jnp_or | or eax, ebx; jnp 1f; mov ecx, 1; 1:
+jnp_inc | inc eax; jnp 1f; mov ecx, 1; 1:
+jnp_unfused | cmp eax, ebx; cmc; cmc; jnp 1f; mov ecx, 1; 1:
+jnp_unfused_shr | shr eax, 1; jnp 1f; mov ecx, 1; 1:
+setl_cmp32 | cmp eax, ebx; setl cl
+setl_cmp32_eq | cmp eax, ebx; setl cl | eax=0..3 ebx=0..3
+setl_cmp8 | cmp al, bl; setl cl
+setl_cmp16_imm | cmp ax, -3; setl cl
+setl_cmp_m8_imm | cmp byte ptr [ebp+1], 0x80; setl cl
+setl_sub | sub eax, ebx; setl byte ptr [ebp+2]
+setl_test | test eax, ebx; setl cl
+setl_and8 | and al, bl; setl cl
+setl_add | add eax, ebx; setl cl
+setl_dec | dec eax; setl cl
+setl_neg | neg eax; setl cl
+setl_unfused | cmp eax, ebx; cmc; cmc; setl cl
+cmovl_cmp32 | cmp eax, ebx; cmovl ecx, edx
+cmovl_m32 | test eax, eax; cmovl ecx, dword ptr [ebp+4]
+cmovl_unfused | cmp eax, ebx; cmc; cmc; cmovl cx, dx
+jl_cmp32 | cmp eax, ebx; jl 1f; mov ecx, 1; 1:
+jl_cmp16 | cmp ax, bx; jl 1f; mov ecx, 1; 1:
+jl_cmp_imm | cmp eax, -1; jl 1f; mov ecx, 1; 1:
+jl_test | test cl, cl; jl 1f; mov ecx, 1; 1:
+jl_or | or eax, ebx; jl 1f; mov ecx, 1; 1:
+jl_inc | inc eax; jl 1f; mov ecx, 1; 1:
+jl_unfused | cmp eax, ebx; cmc; cmc; jl 1f; mov ecx, 1; 1:
+jl_unfused_shr | shr eax, 1; jl 1f; mov ecx, 1; 1:
+setnl_cmp32 | cmp eax, ebx; setnl cl
+setnl_cmp32_eq | cmp eax, ebx; setnl cl | eax=0..3 ebx=0..3
+setnl_cmp8 | cmp al, bl; setnl cl
+setnl_cmp16_imm | cmp ax, -3; setnl cl
+setnl_cmp_m8_imm | cmp byte ptr [ebp+1], 0x80; setnl cl
+setnl_sub | sub eax, ebx; setnl byte ptr [ebp+2]
+setnl_test | test eax, ebx; setnl cl
+setnl_and8 | and al, bl; setnl cl
+setnl_add | add eax, ebx; setnl cl
+setnl_dec | dec eax; setnl cl
+setnl_neg | neg eax; setnl cl
+setnl_unfused | cmp eax, ebx; cmc; cmc; setnl cl
+cmovnl_cmp32 | cmp eax, ebx; cmovnl ecx, edx
+cmovnl_m32 | test eax, eax; cmovnl ecx, dword ptr [ebp+4]
+cmovnl_unfused | cmp eax, ebx; cmc; cmc; cmovnl cx, dx
+jnl_cmp32 | cmp eax, ebx; jnl 1f; mov ecx, 1; 1:
+jnl_cmp16 | cmp ax, bx; jnl 1f; mov ecx, 1; 1:
+jnl_cmp_imm | cmp eax, -1; jnl 1f; mov ecx, 1; 1:
+jnl_test | test cl, cl; jnl 1f; mov ecx, 1; 1:
+jnl_or | or eax, ebx; jnl 1f; mov ecx, 1; 1:
+jnl_inc | inc eax; jnl 1f; mov ecx, 1; 1:
+jnl_unfused | cmp eax, ebx; cmc; cmc; jnl 1f; mov ecx, 1; 1:
+jnl_unfused_shr | shr eax, 1; jnl 1f; mov ecx, 1; 1:
+setle_cmp32 | cmp eax, ebx; setle cl
+setle_cmp32_eq | cmp eax, ebx; setle cl | eax=0..3 ebx=0..3
+setle_cmp8 | cmp al, bl; setle cl
+setle_cmp16_imm | cmp ax, -3; setle cl
+setle_cmp_m8_imm | cmp byte ptr [ebp+1], 0x80; setle cl
+setle_sub | sub eax, ebx; setle byte ptr [ebp+2]
+setle_test | test eax, ebx; setle cl
+setle_and8 | and al, bl; setle cl
+setle_add | add eax, ebx; setle cl
+setle_dec | dec eax; setle cl
+setle_neg | neg eax; setle cl
+setle_unfused | cmp eax, ebx; cmc; cmc; setle cl
+cmovle_cmp32 | cmp eax, ebx; cmovle ecx, edx
+cmovle_m32 | test eax, eax; cmovle ecx, dword ptr [ebp+4]
+cmovle_unfused | cmp eax, ebx; cmc; cmc; cmovle cx, dx
+jle_cmp32 | cmp eax, ebx; jle 1f; mov ecx, 1; 1:
+jle_cmp16 | cmp ax, bx; jle 1f; mov ecx, 1; 1:
+jle_cmp_imm | cmp eax, -1; jle 1f; mov ecx, 1; 1:
+jle_test | test cl, cl; jle 1f; mov ecx, 1; 1:
+jle_or | or eax, ebx; jle 1f; mov ecx, 1; 1:
+jle_inc | inc eax; jle 1f; mov ecx, 1; 1:
+jle_unfused | cmp eax, ebx; cmc; cmc; jle 1f; mov ecx, 1; 1:
+jle_unfused_shr | shr eax, 1; jle 1f; mov ecx, 1; 1:
+setnle_cmp32 | cmp eax, ebx; setnle cl
+setnle_cmp32_eq | cmp eax, ebx; setnle cl | eax=0..3 ebx=0..3
+setnle_cmp8 | cmp al, bl; setnle cl
+setnle_cmp16_imm | cmp ax, -3; setnle cl
+setnle_cmp_m8_imm | cmp byte ptr [ebp+1], 0x80; setnle cl
+setnle_sub | sub eax, ebx; setnle byte ptr [ebp+2]
+setnle_test | test eax, ebx; setnle cl
+setnle_and8 | and al, bl; setnle cl
+setnle_add | add eax, ebx; setnle cl
+setnle_dec | dec eax; setnle cl
+setnle_neg | neg eax; setnle cl
+setnle_unfused | cmp eax, ebx; cmc; cmc; setnle cl
+cmovnle_cmp32 | cmp eax, ebx; cmovnle ecx, edx
+cmovnle_m32 | test eax, eax; cmovnle ecx, dword ptr [ebp+4]
+cmovnle_unfused | cmp eax, ebx; cmc; cmc; cmovnle cx, dx
+jnle_cmp32 | cmp eax, ebx; jnle 1f; mov ecx, 1; 1:
+jnle_cmp16 | cmp ax, bx; jnle 1f; mov ecx, 1; 1:
+jnle_cmp_imm | cmp eax, -1; jnle 1f; mov ecx, 1; 1:
+jnle_test | test cl, cl; jnle 1f; mov ecx, 1; 1:
+jnle_or | or eax, ebx; jnle 1f; mov ecx, 1; 1:
+jnle_inc | inc eax; jnle 1f; mov ecx, 1; 1:
+jnle_unfused | cmp eax, ebx; cmc; cmc; jnle 1f; mov ecx, 1; 1:
+jnle_unfused_shr | shr eax, 1; jnle 1f; mov ecx, 1; 1:
+jecxz | jecxz 1f; mov eax, 1; 1: | ecx=0..2
+loop | 1: add eax, ecx; loop 1b | ecx=1..20
+loope | 1: inc eax; cmp byte ptr [ebp+ecx], 0; loope 1b | ecx=1..20
+loopne | 1: inc eax; cmp byte ptr [ebp+ecx], 0; loopne 1b | ecx=1..20
+jcc_back | 1: add eax, 3; cmp eax, ebx; jl 1b | eax=0..100 ebx=0..100
+jcc_diamond | cmp eax, ebx; jae 1f; mov ecx, eax; jmp 2f; 1: mov ecx, ebx; 2: add ecx, 1
+
+# ---- bit ops ----
+bt_r32_r32 | bt eax, ecx
+bt_r32_imm | bt eax, 5
+bt_r32_imm_wrap | bt eax, 37
+bt_r16_r16 | bt ax, cx
+bt_m32_imm | bt dword ptr [ebp+4], 30
+bt_m16_imm | bt word ptr [ebp+4], 13
+bt_m32_r32 | bt dword ptr [ebp+0x40], ecx | ecx=-256..256
+bt_m16_r16 | bt word ptr [ebp+0x40], cx | ecx=-256..256
+bts_r32_r32 | bts eax, ecx
+bts_r32_imm | bts eax, 5
+bts_r32_imm_wrap | bts eax, 37
+bts_r16_r16 | bts ax, cx
+bts_m32_imm | bts dword ptr [ebp+4], 30
+bts_m16_imm | bts word ptr [ebp+4], 13
+bts_m32_r32 | bts dword ptr [ebp+0x40], ecx | ecx=-256..256
+bts_m16_r16 | bts word ptr [ebp+0x40], cx | ecx=-256..256
+btr_r32_r32 | btr eax, ecx
+btr_r32_imm | btr eax, 5
+btr_r32_imm_wrap | btr eax, 37
+btr_r16_r16 | btr ax, cx
+btr_m32_imm | btr dword ptr [ebp+4], 30
+btr_m16_imm | btr word ptr [ebp+4], 13
+btr_m32_r32 | btr dword ptr [ebp+0x40], ecx | ecx=-256..256
+btr_m16_r16 | btr word ptr [ebp+0x40], cx | ecx=-256..256
+btc_r32_r32 | btc eax, ecx
+btc_r32_imm | btc eax, 5
+btc_r32_imm_wrap | btc eax, 37
+btc_r16_r16 | btc ax, cx
+btc_m32_imm | btc dword ptr [ebp+4], 30
+btc_m16_imm | btc word ptr [ebp+4], 13
+btc_m32_r32 | btc dword ptr [ebp+0x40], ecx | ecx=-256..256
+btc_m16_r16 | btc word ptr [ebp+0x40], cx | ecx=-256..256
+bsf_r32 | bsf eax, ecx
+bsf_r16 | bsf ax, cx
+bsf_m32 | bsf eax, dword ptr [ebp+4]
+bsf_zero | bsf eax, ecx | ecx=0
+bsr_r32 | bsr eax, ecx
+bsr_r16 | bsr ax, cx
+bsr_m32 | bsr eax, dword ptr [ebp+4]
+bsr_zero | bsr eax, ecx | ecx=0
+
+# ---- string ops ----
+movsb_df0 | movsb | esi=buf+0x2000 edi=buf+0x3000 df=0
+rep_movsb_df0 | rep movsb | esi=buf+0x2000 edi=buf+0x3000 df=0 ecx=0..40
+stosb_df0 | stosb | esi=buf+0x2000 edi=buf+0x3000 df=0
+rep_stosb_df0 | rep stosb | esi=buf+0x2000 edi=buf+0x3000 df=0 ecx=0..40
+lodsb_df0 | lodsb | esi=buf+0x2000 edi=buf+0x3000 df=0
+cmpsb_df0 | cmpsb | esi=buf+0x2000 edi=buf+0x3000 df=0
+repe_cmpsb_df0 | repe cmpsb | esi=buf+0x2000 edi=buf+0x2000 ecx=0..40 df=0
+repne_cmpsb_df0 | repne cmpsb | esi=buf+0x2000 edi=buf+0x3000 df=0 ecx=0..40
+scasb_df0 | scasb | esi=buf+0x2000 edi=buf+0x3000 df=0
+repne_scasb_df0 | repne scasb | esi=buf+0x2000 edi=buf+0x3000 df=0 ecx=0..40 eax=0
+repe_scasb_df0 | repe scasb | esi=buf+0x2000 edi=buf+0x3000 df=0 ecx=0..40
+movsb_df1 | movsb | esi=buf+0x2000 edi=buf+0x3000 df=1
+rep_movsb_df1 | rep movsb | esi=buf+0x2000 edi=buf+0x3000 df=1 ecx=0..40
+stosb_df1 | stosb | esi=buf+0x2000 edi=buf+0x3000 df=1
+rep_stosb_df1 | rep stosb | esi=buf+0x2000 edi=buf+0x3000 df=1 ecx=0..40
+lodsb_df1 | lodsb | esi=buf+0x2000 edi=buf+0x3000 df=1
+cmpsb_df1 | cmpsb | esi=buf+0x2000 edi=buf+0x3000 df=1
+repe_cmpsb_df1 | repe cmpsb | esi=buf+0x2000 edi=buf+0x2000 ecx=0..40 df=1
+repne_cmpsb_df1 | repne cmpsb | esi=buf+0x2000 edi=buf+0x3000 df=1 ecx=0..40
+scasb_df1 | scasb | esi=buf+0x2000 edi=buf+0x3000 df=1
+repne_scasb_df1 | repne scasb | esi=buf+0x2000 edi=buf+0x3000 df=1 ecx=0..40 eax=0
+repe_scasb_df1 | repe scasb | esi=buf+0x2000 edi=buf+0x3000 df=1 ecx=0..40
+movsw_df0 | movsw | esi=buf+0x2000 edi=buf+0x3000 df=0
+rep_movsw_df0 | rep movsw | esi=buf+0x2000 edi=buf+0x3000 df=0 ecx=0..40
+stosw_df0 | stosw | esi=buf+0x2000 edi=buf+0x3000 df=0
+rep_stosw_df0 | rep stosw | esi=buf+0x2000 edi=buf+0x3000 df=0 ecx=0..40
+lodsw_df0 | lodsw | esi=buf+0x2000 edi=buf+0x3000 df=0
+cmpsw_df0 | cmpsw | esi=buf+0x2000 edi=buf+0x3000 df=0
+repe_cmpsw_df0 | repe cmpsw | esi=buf+0x2000 edi=buf+0x2000 ecx=0..40 df=0
+repne_cmpsw_df0 | repne cmpsw | esi=buf+0x2000 edi=buf+0x3000 df=0 ecx=0..40
+scasw_df0 | scasw | esi=buf+0x2000 edi=buf+0x3000 df=0
+repne_scasw_df0 | repne scasw | esi=buf+0x2000 edi=buf+0x3000 df=0 ecx=0..40 eax=0
+repe_scasw_df0 | repe scasw | esi=buf+0x2000 edi=buf+0x3000 df=0 ecx=0..40
+movsw_df1 | movsw | esi=buf+0x2000 edi=buf+0x3000 df=1
+rep_movsw_df1 | rep movsw | esi=buf+0x2000 edi=buf+0x3000 df=1 ecx=0..40
+stosw_df1 | stosw | esi=buf+0x2000 edi=buf+0x3000 df=1
+rep_stosw_df1 | rep stosw | esi=buf+0x2000 edi=buf+0x3000 df=1 ecx=0..40
+lodsw_df1 | lodsw | esi=buf+0x2000 edi=buf+0x3000 df=1
+cmpsw_df1 | cmpsw | esi=buf+0x2000 edi=buf+0x3000 df=1
+repe_cmpsw_df1 | repe cmpsw | esi=buf+0x2000 edi=buf+0x2000 ecx=0..40 df=1
+repne_cmpsw_df1 | repne cmpsw | esi=buf+0x2000 edi=buf+0x3000 df=1 ecx=0..40
+scasw_df1 | scasw | esi=buf+0x2000 edi=buf+0x3000 df=1
+repne_scasw_df1 | repne scasw | esi=buf+0x2000 edi=buf+0x3000 df=1 ecx=0..40 eax=0
+repe_scasw_df1 | repe scasw | esi=buf+0x2000 edi=buf+0x3000 df=1 ecx=0..40
+movsd_df0 | movsd | esi=buf+0x2000 edi=buf+0x3000 df=0
+rep_movsd_df0 | rep movsd | esi=buf+0x2000 edi=buf+0x3000 df=0 ecx=0..40
+stosd_df0 | stosd | esi=buf+0x2000 edi=buf+0x3000 df=0
+rep_stosd_df0 | rep stosd | esi=buf+0x2000 edi=buf+0x3000 df=0 ecx=0..40
+lodsd_df0 | lodsd | esi=buf+0x2000 edi=buf+0x3000 df=0
+cmpsd_df0 | cmpsd | esi=buf+0x2000 edi=buf+0x3000 df=0
+repe_cmpsd_df0 | repe cmpsd | esi=buf+0x2000 edi=buf+0x2000 ecx=0..40 df=0
+repne_cmpsd_df0 | repne cmpsd | esi=buf+0x2000 edi=buf+0x3000 df=0 ecx=0..40
+scasd_df0 | scasd | esi=buf+0x2000 edi=buf+0x3000 df=0
+repne_scasd_df0 | repne scasd | esi=buf+0x2000 edi=buf+0x3000 df=0 ecx=0..40 eax=0
+repe_scasd_df0 | repe scasd | esi=buf+0x2000 edi=buf+0x3000 df=0 ecx=0..40
+movsd_df1 | movsd | esi=buf+0x2000 edi=buf+0x3000 df=1
+rep_movsd_df1 | rep movsd | esi=buf+0x2000 edi=buf+0x3000 df=1 ecx=0..40
+stosd_df1 | stosd | esi=buf+0x2000 edi=buf+0x3000 df=1
+rep_stosd_df1 | rep stosd | esi=buf+0x2000 edi=buf+0x3000 df=1 ecx=0..40
+lodsd_df1 | lodsd | esi=buf+0x2000 edi=buf+0x3000 df=1
+cmpsd_df1 | cmpsd | esi=buf+0x2000 edi=buf+0x3000 df=1
+repe_cmpsd_df1 | repe cmpsd | esi=buf+0x2000 edi=buf+0x2000 ecx=0..40 df=1
+repne_cmpsd_df1 | repne cmpsd | esi=buf+0x2000 edi=buf+0x3000 df=1 ecx=0..40
+scasd_df1 | scasd | esi=buf+0x2000 edi=buf+0x3000 df=1
+repne_scasd_df1 | repne scasd | esi=buf+0x2000 edi=buf+0x3000 df=1 ecx=0..40 eax=0
+repe_scasd_df1 | repe scasd | esi=buf+0x2000 edi=buf+0x3000 df=1 ecx=0..40
+rep_movsb_overlap_fwd | rep movsb | esi=buf+0x2000 edi=buf+0x2003 ecx=0..40
+rep_movsd_overlap_fwd | rep movsd | esi=buf+0x2000 edi=buf+0x2006 ecx=0..40
+rep_movsd_overlap_back | rep movsd | esi=buf+0x2006 edi=buf+0x2000 ecx=0..40
+rep_lodsb | rep lodsb | esi=buf+0x2000 edi=buf+0x3000 ecx=0..10
+strlen | mov ecx, -1; xor eax, eax; repne scasb; not ecx; dec ecx | esi=buf+0x2000 edi=buf+0x3000
+
+# ---- SSE moves and logic ----
+movaps_rr | movaps xmm0, xmm1
+movaps_load | movaps xmm2, xmmword ptr [ebp+0x20]
+movaps_store | movaps xmmword ptr [ebp+0x30], xmm3
+movups_load | movups xmm4, xmmword ptr [ebp+0x13]
+movups_store | movups xmmword ptr [ebp+0x13], xmm5
+movdqa_rr | movdqa xmm6, xmm7
+movdqu_load | movdqu xmm1, xmmword ptr [ebp+0x7]
+movss_rr | movss xmm0, xmm1
+movss_load | movss xmm2, dword ptr [ebp+0x14]
+movss_store | movss dword ptr [ebp+0x14], xmm3
+movsd_rr | movsd xmm0, xmm1
+movsd_load | movsd xmm2, qword ptr [ebp+0x18]
+movsd_store | movsd qword ptr [ebp+0x18], xmm3
+movd_load | movd xmm1, eax
+movd_store | movd ecx, xmm2
+movd_m32 | movd xmm3, dword ptr [ebp+4]
+movq_rr | movq xmm1, xmm2
+movq_load | movq xmm3, qword ptr [ebp+8]
+movq_store | movq qword ptr [ebp+8], xmm4
+movlps_load | movlps xmm1, qword ptr [ebp+8]
+movhps_load | movhps xmm1, qword ptr [ebp+8]
+movlps_store | movlps qword ptr [ebp+8], xmm2
+movhps_store | movhps qword ptr [ebp+8], xmm2
+movlhps | movlhps xmm1, xmm2
+movhlps | movhlps xmm1, xmm2
+andps_rr | andps xmm1, xmm2
+andps_rm | andps xmm3, xmmword ptr [ebp+0x20]
+andnps_rr | andnps xmm1, xmm2
+andnps_rm | andnps xmm3, xmmword ptr [ebp+0x20]
+orps_rr | orps xmm1, xmm2
+orps_rm | orps xmm3, xmmword ptr [ebp+0x20]
+xorps_rr | xorps xmm1, xmm2
+xorps_rm | xorps xmm3, xmmword ptr [ebp+0x20]
+andpd_rr | andpd xmm1, xmm2
+andpd_rm | andpd xmm3, xmmword ptr [ebp+0x20]
+xorpd_rr | xorpd xmm1, xmm2
+xorpd_rm | xorpd xmm3, xmmword ptr [ebp+0x20]
+pand_rr | pand xmm1, xmm2
+pand_rm | pand xmm3, xmmword ptr [ebp+0x20]
+pandn_rr | pandn xmm1, xmm2
+pandn_rm | pandn xmm3, xmmword ptr [ebp+0x20]
+por_rr | por xmm1, xmm2
+por_rm | por xmm3, xmmword ptr [ebp+0x20]
+pxor_rr | pxor xmm1, xmm2
+pxor_rm | pxor xmm3, xmmword ptr [ebp+0x20]
+xorps_self | xorps xmm4, xmm4
+pxor_self | pxor xmm5, xmm5
+
+# ---- SSE float arithmetic ----
+addps_rr | addps xmm1, xmm2 | xmm=f32 mem=f32
+addps_rm | addps xmm3, xmmword ptr [ebp+0x20] | xmm=f32 mem=f32
+subps_rr | subps xmm1, xmm2 | xmm=f32 mem=f32
+subps_rm | subps xmm3, xmmword ptr [ebp+0x20] | xmm=f32 mem=f32
+mulps_rr | mulps xmm1, xmm2 | xmm=f32 mem=f32
+mulps_rm | mulps xmm3, xmmword ptr [ebp+0x20] | xmm=f32 mem=f32
+divps_rr | divps xmm1, xmm2 | xmm=f32 mem=f32
+divps_rm | divps xmm3, xmmword ptr [ebp+0x20] | xmm=f32 mem=f32
+minps_rr | minps xmm1, xmm2 | xmm=f32 mem=f32
+minps_rm | minps xmm3, xmmword ptr [ebp+0x20] | xmm=f32 mem=f32
+maxps_rr | maxps xmm1, xmm2 | xmm=f32 mem=f32
+maxps_rm | maxps xmm3, xmmword ptr [ebp+0x20] | xmm=f32 mem=f32
+sqrtps_rr | sqrtps xmm1, xmm2 | xmm=f32 mem=f32
+sqrtps_rm | sqrtps xmm3, xmmword ptr [ebp+0x20] | xmm=f32 mem=f32
+addss_rr | addss xmm1, xmm2 | xmm=f32 mem=f32
+addss_rm | addss xmm3, dword ptr [ebp+0x24] | xmm=f32 mem=f32
+subss_rr | subss xmm1, xmm2 | xmm=f32 mem=f32
+subss_rm | subss xmm3, dword ptr [ebp+0x24] | xmm=f32 mem=f32
+mulss_rr | mulss xmm1, xmm2 | xmm=f32 mem=f32
+mulss_rm | mulss xmm3, dword ptr [ebp+0x24] | xmm=f32 mem=f32
+divss_rr | divss xmm1, xmm2 | xmm=f32 mem=f32
+divss_rm | divss xmm3, dword ptr [ebp+0x24] | xmm=f32 mem=f32
+minss_rr | minss xmm1, xmm2 | xmm=f32 mem=f32
+minss_rm | minss xmm3, dword ptr [ebp+0x24] | xmm=f32 mem=f32
+maxss_rr | maxss xmm1, xmm2 | xmm=f32 mem=f32
+maxss_rm | maxss xmm3, dword ptr [ebp+0x24] | xmm=f32 mem=f32
+sqrtss_rr | sqrtss xmm1, xmm2 | xmm=f32 mem=f32
+sqrtss_rm | sqrtss xmm3, dword ptr [ebp+0x24] | xmm=f32 mem=f32
+addpd_rr | addpd xmm1, xmm2 | xmm=f64 mem=f64
+subpd_rr | subpd xmm1, xmm2 | xmm=f64 mem=f64
+mulpd_rr | mulpd xmm1, xmm2 | xmm=f64 mem=f64
+divpd_rr | divpd xmm1, xmm2 | xmm=f64 mem=f64
+addsd_rr | addsd xmm1, xmm2 | xmm=f64 mem=f64
+subsd_rr | subsd xmm1, xmm2 | xmm=f64 mem=f64
+mulsd_rr | mulsd xmm1, xmm2 | xmm=f64 mem=f64
+divsd_rr | divsd xmm1, xmm2 | xmm=f64 mem=f64
+minsd_rr | minsd xmm1, xmm2 | xmm=f64 mem=f64
+maxsd_rr | maxsd xmm1, xmm2 | xmm=f64 mem=f64
+sqrtsd_rr | sqrtsd xmm1, xmm2 | xmm=f64 mem=f64
+addsd_rm | addsd xmm3, qword ptr [ebp+0x28] | xmm=f64 mem=f64
+mulpd_rm | mulpd xmm3, xmmword ptr [ebp+0x20] | xmm=f64 mem=f64
+
+# ---- SSE shuffles and unpacks ----
+shufps_0x00 | shufps xmm1, xmm2, 0x00
+pshufd_0x00 | pshufd xmm1, xmm2, 0x00
+shufps_0x1b | shufps xmm1, xmm2, 0x1b
+pshufd_0x1b | pshufd xmm1, xmm2, 0x1b
+shufps_0xe4 | shufps xmm1, xmm2, 0xe4
+pshufd_0xe4 | pshufd xmm1, xmm2, 0xe4
+shufps_0x4e | shufps xmm1, xmm2, 0x4e
+pshufd_0x4e | pshufd xmm1, xmm2, 0x4e
+shufps_0xb1 | shufps xmm1, xmm2, 0xb1
+pshufd_0xb1 | pshufd xmm1, xmm2, 0xb1
+shufps_0x93 | shufps xmm1, xmm2, 0x93
+pshufd_0x93 | pshufd xmm1, xmm2, 0x93
+shufps_self | shufps xmm3, xmm3, 0x39
+shufps_m | shufps xmm3, xmmword ptr [ebp+0x20], 0x8d
+pshufd_m | pshufd xmm4, xmmword ptr [ebp+0x20], 0x27
+shufpd_1 | shufpd xmm1, xmm2, 1
+shufpd_2 | shufpd xmm1, xmm2, 2
+pshuflw | pshuflw xmm1, xmm2, 0x1b
+pshufhw | pshufhw xmm1, xmm2, 0x1b
+unpcklps_rr | unpcklps xmm1, xmm2
+unpcklps_rm | unpcklps xmm3, xmmword ptr [ebp+0x20]
+unpckhps_rr | unpckhps xmm1, xmm2
+unpckhps_rm | unpckhps xmm3, xmmword ptr [ebp+0x20]
+unpcklpd_rr | unpcklpd xmm1, xmm2
+unpcklpd_rm | unpcklpd xmm3, xmmword ptr [ebp+0x20]
+unpckhpd_rr | unpckhpd xmm1, xmm2
+unpckhpd_rm | unpckhpd xmm3, xmmword ptr [ebp+0x20]
+punpcklbw_rr | punpcklbw xmm1, xmm2
+punpcklbw_rm | punpcklbw xmm3, xmmword ptr [ebp+0x20]
+punpckhbw_rr | punpckhbw xmm1, xmm2
+punpckhbw_rm | punpckhbw xmm3, xmmword ptr [ebp+0x20]
+punpcklwd_rr | punpcklwd xmm1, xmm2
+punpcklwd_rm | punpcklwd xmm3, xmmword ptr [ebp+0x20]
+punpckhwd_rr | punpckhwd xmm1, xmm2
+punpckhwd_rm | punpckhwd xmm3, xmmword ptr [ebp+0x20]
+punpckldq_rr | punpckldq xmm1, xmm2
+punpckldq_rm | punpckldq xmm3, xmmword ptr [ebp+0x20]
+punpckhdq_rr | punpckhdq xmm1, xmm2
+punpckhdq_rm | punpckhdq xmm3, xmmword ptr [ebp+0x20]
+punpcklqdq_rr | punpcklqdq xmm1, xmm2
+punpcklqdq_rm | punpcklqdq xmm3, xmmword ptr [ebp+0x20]
+punpckhqdq_rr | punpckhqdq xmm1, xmm2
+punpckhqdq_rm | punpckhqdq xmm3, xmmword ptr [ebp+0x20]
+unpcklps_self | unpcklps xmm1, xmm1
+packuswb | packuswb xmm1, xmm2
+packssdw | packssdw xmm1, xmm2
+packsswb | packsswb xmm1, xmm2
+psrldq_0 | psrldq xmm1, 0
+pslldq_0 | pslldq xmm1, 0
+psrldq_1 | psrldq xmm1, 1
+pslldq_1 | pslldq xmm1, 1
+psrldq_4 | psrldq xmm1, 4
+pslldq_4 | pslldq xmm1, 4
+psrldq_8 | psrldq xmm1, 8
+pslldq_8 | pslldq xmm1, 8
+psrldq_15 | psrldq xmm1, 15
+pslldq_15 | pslldq xmm1, 15
+psrldq_16 | psrldq xmm1, 16
+pslldq_16 | pslldq xmm1, 16
+
+# ---- SSE compares, masks, integer ----
+cmpps_0 | cmpps xmm1, xmm2, 0 | xmm=f32 mem=f32
+cmpss_0 | cmpss xmm1, xmm2, 0 | xmm=f32 mem=f32
+cmpps_1 | cmpps xmm1, xmm2, 1 | xmm=f32 mem=f32
+cmpss_1 | cmpss xmm1, xmm2, 1 | xmm=f32 mem=f32
+cmpps_2 | cmpps xmm1, xmm2, 2 | xmm=f32 mem=f32
+cmpss_2 | cmpss xmm1, xmm2, 2 | xmm=f32 mem=f32
+cmpps_3 | cmpps xmm1, xmm2, 3 | xmm=f32 mem=f32
+cmpss_3 | cmpss xmm1, xmm2, 3 | xmm=f32 mem=f32
+cmpps_4 | cmpps xmm1, xmm2, 4 | xmm=f32 mem=f32
+cmpss_4 | cmpss xmm1, xmm2, 4 | xmm=f32 mem=f32
+cmpps_5 | cmpps xmm1, xmm2, 5 | xmm=f32 mem=f32
+cmpss_5 | cmpss xmm1, xmm2, 5 | xmm=f32 mem=f32
+cmpps_6 | cmpps xmm1, xmm2, 6 | xmm=f32 mem=f32
+cmpss_6 | cmpss xmm1, xmm2, 6 | xmm=f32 mem=f32
+cmpps_7 | cmpps xmm1, xmm2, 7 | xmm=f32 mem=f32
+cmpss_7 | cmpss xmm1, xmm2, 7 | xmm=f32 mem=f32
+cmpps_m | cmpps xmm1, xmmword ptr [ebp+0x20], 1 | xmm=f32 mem=f32
+cmppd_2 | cmppd xmm1, xmm2, 2 | xmm=f64 mem=f64
+cmpsd_1 | cmpsd xmm1, xmm2, 1 | xmm=f64 mem=f64
+comiss_flags | comiss xmm1, xmm2 | xmm=f32 mem=f32
+comiss_m | comiss xmm1, dword ptr [ebp+0x24] | xmm=f32 mem=f32
+comiss_setb | comiss xmm1, xmm2; setb cl | xmm=f32 mem=f32
+comiss_jb | comiss xmm1, xmm2; jb 1f; mov ecx, 1; 1: | xmm=f32 mem=f32
+comiss_setnb | comiss xmm1, xmm2; setnb cl | xmm=f32 mem=f32
+comiss_jnb | comiss xmm1, xmm2; jnb 1f; mov ecx, 1; 1: | xmm=f32 mem=f32
+comiss_setz | comiss xmm1, xmm2; setz cl | xmm=f32 mem=f32
+comiss_jz | comiss xmm1, xmm2; jz 1f; mov ecx, 1; 1: | xmm=f32 mem=f32
+comiss_setnz | comiss xmm1, xmm2; setnz cl | xmm=f32 mem=f32
+comiss_jnz | comiss xmm1, xmm2; jnz 1f; mov ecx, 1; 1: | xmm=f32 mem=f32
+comiss_setbe | comiss xmm1, xmm2; setbe cl | xmm=f32 mem=f32
+comiss_jbe | comiss xmm1, xmm2; jbe 1f; mov ecx, 1; 1: | xmm=f32 mem=f32
+comiss_setnbe | comiss xmm1, xmm2; setnbe cl | xmm=f32 mem=f32
+comiss_jnbe | comiss xmm1, xmm2; jnbe 1f; mov ecx, 1; 1: | xmm=f32 mem=f32
+comiss_setp | comiss xmm1, xmm2; setp cl | xmm=f32 mem=f32
+comiss_jp | comiss xmm1, xmm2; jp 1f; mov ecx, 1; 1: | xmm=f32 mem=f32
+comiss_setnp | comiss xmm1, xmm2; setnp cl | xmm=f32 mem=f32
+comiss_jnp | comiss xmm1, xmm2; jnp 1f; mov ecx, 1; 1: | xmm=f32 mem=f32
+ucomiss_flags | ucomiss xmm1, xmm2 | xmm=f32 mem=f32
+ucomiss_m | ucomiss xmm1, dword ptr [ebp+0x24] | xmm=f32 mem=f32
+ucomiss_setb | ucomiss xmm1, xmm2; setb cl | xmm=f32 mem=f32
+ucomiss_jb | ucomiss xmm1, xmm2; jb 1f; mov ecx, 1; 1: | xmm=f32 mem=f32
+ucomiss_setnb | ucomiss xmm1, xmm2; setnb cl | xmm=f32 mem=f32
+ucomiss_jnb | ucomiss xmm1, xmm2; jnb 1f; mov ecx, 1; 1: | xmm=f32 mem=f32
+ucomiss_setz | ucomiss xmm1, xmm2; setz cl | xmm=f32 mem=f32
+ucomiss_jz | ucomiss xmm1, xmm2; jz 1f; mov ecx, 1; 1: | xmm=f32 mem=f32
+ucomiss_setnz | ucomiss xmm1, xmm2; setnz cl | xmm=f32 mem=f32
+ucomiss_jnz | ucomiss xmm1, xmm2; jnz 1f; mov ecx, 1; 1: | xmm=f32 mem=f32
+ucomiss_setbe | ucomiss xmm1, xmm2; setbe cl | xmm=f32 mem=f32
+ucomiss_jbe | ucomiss xmm1, xmm2; jbe 1f; mov ecx, 1; 1: | xmm=f32 mem=f32
+ucomiss_setnbe | ucomiss xmm1, xmm2; setnbe cl | xmm=f32 mem=f32
+ucomiss_jnbe | ucomiss xmm1, xmm2; jnbe 1f; mov ecx, 1; 1: | xmm=f32 mem=f32
+ucomiss_setp | ucomiss xmm1, xmm2; setp cl | xmm=f32 mem=f32
+ucomiss_jp | ucomiss xmm1, xmm2; jp 1f; mov ecx, 1; 1: | xmm=f32 mem=f32
+ucomiss_setnp | ucomiss xmm1, xmm2; setnp cl | xmm=f32 mem=f32
+ucomiss_jnp | ucomiss xmm1, xmm2; jnp 1f; mov ecx, 1; 1: | xmm=f32 mem=f32
+comisd_flags | comisd xmm1, xmm2 | xmm=f64 mem=f64
+ucomisd_jp | ucomisd xmm1, xmm2; jp 1f; mov ecx, 1; 1: | xmm=f64 mem=f64
+movmskps | movmskps eax, xmm1
+movmskpd | movmskpd eax, xmm1
+pmovmskb | pmovmskb eax, xmm1
+pextrw | pextrw eax, xmm1, 5
+pinsrw | pinsrw xmm1, ecx, 3
+pinsrw_m | pinsrw xmm1, word ptr [ebp+2], 6
+paddb | paddb xmm1, xmm2
+paddw | paddw xmm1, xmm2
+paddd | paddd xmm1, xmm2
+paddq | paddq xmm1, xmm2
+psubb | psubb xmm1, xmm2
+psubw | psubw xmm1, xmm2
+psubd | psubd xmm1, xmm2
+psubq | psubq xmm1, xmm2
+paddsw | paddsw xmm1, xmm2
+pmaxsw | pmaxsw xmm1, xmm2
+pminsw | pminsw xmm1, xmm2
+pmullw | pmullw xmm1, xmm2
+pcmpeqb | pcmpeqb xmm1, xmm2
+pcmpeqw | pcmpeqw xmm1, xmm2
+pcmpeqd | pcmpeqd xmm1, xmm2
+pcmpgtb | pcmpgtb xmm1, xmm2
+pcmpgtw | pcmpgtw xmm1, xmm2
+pcmpgtd | pcmpgtd xmm1, xmm2
+psrlq_imm | psrlq xmm1, 5
+psrlq_big | psrlq xmm1, 40
+psllq_imm | psllq xmm1, 5
+psllq_big | psllq xmm1, 40
+psrld_imm | psrld xmm1, 5
+psrld_big | psrld xmm1, 40
+pslld_imm | pslld xmm1, 5
+pslld_big | pslld xmm1, 40
+psrad_imm | psrad xmm1, 5
+psrad_big | psrad xmm1, 40
+psrlw_imm | psrlw xmm1, 5
+psrlw_big | psrlw xmm1, 40
+psllw_imm | psllw xmm1, 5
+psllw_big | psllw xmm1, 40
+psraw_imm | psraw xmm1, 5
+psraw_big | psraw xmm1, 40
+pslld_xmm | pslld xmm1, xmm2
+stmxcsr | stmxcsr dword ptr [ebp+4]
+
+# ---- SSE conversions ----
+cvtsi2ss | cvtsi2ss xmm1, eax
+cvtsi2ss_m | cvtsi2ss xmm1, dword ptr [ebp+4]
+cvtsi2sd | cvtsi2sd xmm1, eax
+cvttss2si | cvttss2si eax, xmm1 | xmm=f32 mem=f32
+cvttss2si_m | cvttss2si eax, dword ptr [ebp+4] | xmm=f32 mem=f32
+cvtss2si | cvtss2si eax, xmm1 | xmm=f32 mem=f32
+cvtss2si_m | cvtss2si eax, dword ptr [ebp+4] | xmm=f32 mem=f32
+cvttsd2si | cvttsd2si eax, xmm1 | xmm=f64 mem=f64
+cvtsd2si | cvtsd2si eax, xmm1 | xmm=f64 mem=f64
+cvtss2sd | cvtss2sd xmm1, xmm2 | xmm=f32 mem=f32
+cvtss2sd_m | cvtss2sd xmm1, dword ptr [ebp+4] | xmm=f32 mem=f32
+cvtsd2ss | cvtsd2ss xmm1, xmm2 | xmm=f64 mem=f64
+cvtps2pd | cvtps2pd xmm1, xmm2 | xmm=f32 mem=f32
+cvtps2pd_m | cvtps2pd xmm1, qword ptr [ebp+8] | xmm=f32 mem=f32
+cvtpd2ps | cvtpd2ps xmm1, xmm2 | xmm=f64 mem=f64
+cvtdq2ps | cvtdq2ps xmm1, xmm2
+cvtdq2pd | cvtdq2pd xmm1, xmm2
+cvttps2dq | cvttps2dq xmm1, xmm2 | xmm=f32 mem=f32
+cvtps2dq | cvtps2dq xmm1, xmm2 | xmm=f32 mem=f32
+cvttpd2dq | cvttpd2dq xmm1, xmm2 | xmm=f64 mem=f64
+cvtpd2dq | cvtpd2dq xmm1, xmm2 | xmm=f64 mem=f64
+
+# ---- x87 (compared with a tolerance; the lifter models x87 as double) ----
+x87_fld_m32 | fld dword ptr [ebp]; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fld_m64 | fld qword ptr [ebp]; fstp qword ptr [ebp+0x100] | mem=f64 f64=buf+0x8100
+x87_fild_m32 | fild dword ptr [ebp]; fstp qword ptr [ebp+0x100] | f64=buf+0x8100
+x87_fild_m16 | fild word ptr [ebp]; fstp qword ptr [ebp+0x100] | f64=buf+0x8100
+x87_fild_m64 | fild qword ptr [ebp]; fstp qword ptr [ebp+0x100] | f64=buf+0x8100
+x87_fld1 | fld1; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fldz | fldz; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fldpi | fldpi; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fldl2e | fldl2e; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fldln2 | fldln2; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fadd_m32 | fld dword ptr [ebp]; fadd dword ptr [ebp+4]; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fadd_m64 | fld qword ptr [ebp]; fadd qword ptr [ebp+8]; fstp qword ptr [ebp+0x100] | mem=f64 f64=buf+0x8100
+x87_fadd_st0_sti | fld dword ptr [ebp]; fld dword ptr [ebp+4]; fadd st(0), st(1); fstp st(1); fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fadd_sti_st0 | fld dword ptr [ebp]; fld dword ptr [ebp+4]; fadd st(1), st(0); fstp st(0); fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_faddp | fld dword ptr [ebp]; fld dword ptr [ebp+4]; faddp st(1), st(0); fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fsub_m32 | fld dword ptr [ebp]; fsub dword ptr [ebp+4]; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fsub_m64 | fld qword ptr [ebp]; fsub qword ptr [ebp+8]; fstp qword ptr [ebp+0x100] | mem=f64 f64=buf+0x8100
+x87_fsub_st0_sti | fld dword ptr [ebp]; fld dword ptr [ebp+4]; fsub st(0), st(1); fstp st(1); fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fsub_sti_st0 | fld dword ptr [ebp]; fld dword ptr [ebp+4]; fsub st(1), st(0); fstp st(0); fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fsubp | fld dword ptr [ebp]; fld dword ptr [ebp+4]; fsubp st(1), st(0); fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fsubr_m32 | fld dword ptr [ebp]; fsubr dword ptr [ebp+4]; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fsubr_m64 | fld qword ptr [ebp]; fsubr qword ptr [ebp+8]; fstp qword ptr [ebp+0x100] | mem=f64 f64=buf+0x8100
+x87_fsubr_st0_sti | fld dword ptr [ebp]; fld dword ptr [ebp+4]; fsubr st(0), st(1); fstp st(1); fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fsubr_sti_st0 | fld dword ptr [ebp]; fld dword ptr [ebp+4]; fsubr st(1), st(0); fstp st(0); fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fsubrp | fld dword ptr [ebp]; fld dword ptr [ebp+4]; fsubrp st(1), st(0); fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fmul_m32 | fld dword ptr [ebp]; fmul dword ptr [ebp+4]; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fmul_m64 | fld qword ptr [ebp]; fmul qword ptr [ebp+8]; fstp qword ptr [ebp+0x100] | mem=f64 f64=buf+0x8100
+x87_fmul_st0_sti | fld dword ptr [ebp]; fld dword ptr [ebp+4]; fmul st(0), st(1); fstp st(1); fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fmul_sti_st0 | fld dword ptr [ebp]; fld dword ptr [ebp+4]; fmul st(1), st(0); fstp st(0); fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fmulp | fld dword ptr [ebp]; fld dword ptr [ebp+4]; fmulp st(1), st(0); fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fdiv_m32 | fld dword ptr [ebp]; fdiv dword ptr [ebp+4]; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fdiv_m64 | fld qword ptr [ebp]; fdiv qword ptr [ebp+8]; fstp qword ptr [ebp+0x100] | mem=f64 f64=buf+0x8100
+x87_fdiv_st0_sti | fld dword ptr [ebp]; fld dword ptr [ebp+4]; fdiv st(0), st(1); fstp st(1); fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fdiv_sti_st0 | fld dword ptr [ebp]; fld dword ptr [ebp+4]; fdiv st(1), st(0); fstp st(0); fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fdivp | fld dword ptr [ebp]; fld dword ptr [ebp+4]; fdivp st(1), st(0); fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fdivr_m32 | fld dword ptr [ebp]; fdivr dword ptr [ebp+4]; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fdivr_m64 | fld qword ptr [ebp]; fdivr qword ptr [ebp+8]; fstp qword ptr [ebp+0x100] | mem=f64 f64=buf+0x8100
+x87_fdivr_st0_sti | fld dword ptr [ebp]; fld dword ptr [ebp+4]; fdivr st(0), st(1); fstp st(1); fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fdivr_sti_st0 | fld dword ptr [ebp]; fld dword ptr [ebp+4]; fdivr st(1), st(0); fstp st(0); fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fdivrp | fld dword ptr [ebp]; fld dword ptr [ebp+4]; fdivrp st(1), st(0); fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fiadd | mov dword ptr [ebp+0x40], eax; fld dword ptr [ebp]; fiadd dword ptr [ebp+0x40]; fstp qword ptr [ebp+0x100] | mem=f32 eax=-1000..1000 f64=buf+0x8100
+x87_fisub | mov dword ptr [ebp+0x40], eax; fld dword ptr [ebp]; fisub dword ptr [ebp+0x40]; fstp qword ptr [ebp+0x100] | mem=f32 eax=-1000..1000 f64=buf+0x8100
+x87_fisubr | mov dword ptr [ebp+0x40], eax; fld dword ptr [ebp]; fisubr dword ptr [ebp+0x40]; fstp qword ptr [ebp+0x100] | mem=f32 eax=-1000..1000 f64=buf+0x8100
+x87_fimul | mov dword ptr [ebp+0x40], eax; fld dword ptr [ebp]; fimul dword ptr [ebp+0x40]; fstp qword ptr [ebp+0x100] | mem=f32 eax=-1000..1000 f64=buf+0x8100
+x87_fidiv | mov dword ptr [ebp+0x40], eax; fld dword ptr [ebp]; fidiv dword ptr [ebp+0x40]; fstp qword ptr [ebp+0x100] | mem=f32 eax=-1000..1000 f64=buf+0x8100
+x87_fidivr | mov dword ptr [ebp+0x40], eax; fld dword ptr [ebp]; fidivr dword ptr [ebp+0x40]; fstp qword ptr [ebp+0x100] | mem=f32 eax=-1000..1000 f64=buf+0x8100
+x87_fchs | fld dword ptr [ebp]; fchs; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fabs | fld dword ptr [ebp]; fabs; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fsqrt | fld dword ptr [ebp]; fabs; fsqrt; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fxch | fld dword ptr [ebp]; fld dword ptr [ebp+4]; fxch st(1); fstp qword ptr [ebp+0x108]; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100 f64=buf+0x8108
+x87_fld_st | fld dword ptr [ebp]; fld st(0); faddp st(1), st(0); fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fst_m32 | fld dword ptr [ebp]; fst dword ptr [ebp+0x110]; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100 f32=buf+0x8110
+x87_frndint | fld dword ptr [ebp]; frndint; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fsin | fld1; fld dword ptr [ebp]; fprem; fstp st(1); fsin; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fcos | fld1; fld dword ptr [ebp]; fprem; fstp st(1); fcos; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fpatan | fld dword ptr [ebp]; fld dword ptr [ebp+4]; fpatan; fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fscale | fild dword ptr [ebp+0x40]; fld dword ptr [ebp]; fscale; fstp st(1); fstp qword ptr [ebp+0x100] | mem=f32 f64=buf+0x8100
+x87_fprem_loop | mov dword ptr [ebp+0x40], ebx; or ecx, 1; mov dword ptr [ebp+0x44], ecx; fild dword ptr [ebp+0x44]; fild dword ptr [ebp+0x40]; 1: fprem; fnstsw ax; sahf; jp 1b; fstp st(1); fstp qword ptr [ebp+0x100] | f64=buf+0x8100
+x87_fprem_quotient_sw | mov dword ptr [ebp+0x40], ebx; or ecx, 1; mov dword ptr [ebp+0x44], ecx; fild dword ptr [ebp+0x44]; fild dword ptr [ebp+0x40]; fprem; fnstsw ax; and eax, 0x4700; fstp st(0); fstp st(0) | ecx=-100..100 ebx=-100000..100000
+x87_f80_roundtrip | fld qword ptr [ebp]; fstp tbyte ptr [ebp+0x120]; fld tbyte ptr [ebp+0x120]; fstp qword ptr [ebp+0x100] | mem=f64 f64=buf+0x8100
+x87_fistp_m32 | fld dword ptr [ebp]; fistp dword ptr [ebp+0x100] | mem=f32
+x87_fistp_m16 | fld dword ptr [ebp]; fistp word ptr [ebp+0x100] | mem=f32
+x87_fistp_m64 | fld qword ptr [ebp]; fistp qword ptr [ebp+0x100] | mem=f64
+x87_fist_trunc | mov word ptr [ebp+0x104], 0x0e7f; fldcw word ptr [ebp+0x104]; fld dword ptr [ebp]; fistp dword ptr [ebp+0x100] | mem=f32
+x87_fnstcw | fnstcw word ptr [ebp+0x100]
+x87_fcom_sw | fld dword ptr [ebp+4]; fld dword ptr [ebp]; fcom st(1); fstp st(0); fstp st(0); fnstsw ax; and eax, 0x4500 | mem=f32
+x87_fcomp_sw | fld dword ptr [ebp+4]; fld dword ptr [ebp]; fcomp st(1); fstp st(0); fnstsw ax; and eax, 0x4500 | mem=f32
+x87_fucom_sw | fld dword ptr [ebp+4]; fld dword ptr [ebp]; fucom st(1); fstp st(0); fstp st(0); fnstsw ax; and eax, 0x4500 | mem=f32
+x87_fucomp_sw | fld dword ptr [ebp+4]; fld dword ptr [ebp]; fucomp st(1); fstp st(0); fnstsw ax; and eax, 0x4500 | mem=f32
+x87_fcom_m32 | fld dword ptr [ebp]; fcom dword ptr [ebp+4]; fstp st(0); fnstsw ax; and eax, 0x4500 | mem=f32
+x87_fcompp | fld dword ptr [ebp+4]; fld dword ptr [ebp]; fcompp; fnstsw ax; and eax, 0x4500 | mem=f32
+x87_fucompp_sahf | fld dword ptr [ebp+4]; fld dword ptr [ebp]; fucompp; fnstsw ax; sahf; setb cl; setz ch; setp dl | mem=f32
+x87_fcom_test_ah | fld dword ptr [ebp+4]; fcomp dword ptr [ebp]; fnstsw ax; test ah, 0x41; setz cl | mem=f32
+x87_ftst | fld dword ptr [ebp]; ftst; fstp st(0); fnstsw ax; and eax, 0x4500 | mem=f32
+x87_fxam | fld dword ptr [ebp]; fxam; fstp st(0); fnstsw ax; and eax, 0x4700 | mem=f32
+x87_fcomi | fld dword ptr [ebp+4]; fld dword ptr [ebp]; fcomi st(0), st(1); fstp st(0); fstp st(0); setb cl; setz ch; setp dl; seta dh | mem=f32 skip=of,sf,af
+x87_fucomi | fld dword ptr [ebp+4]; fld dword ptr [ebp]; fucomi st(0), st(1); fstp st(0); fstp st(0); setb cl; setz ch; setp dl; seta dh | mem=f32 skip=of,sf,af
+x87_fcomip | fld dword ptr [ebp+4]; fld dword ptr [ebp]; fcomip st(0), st(1); fstp st(0); setb cl; setz ch; setp dl; seta dh | mem=f32 skip=of,sf,af
+x87_fucomip | fld dword ptr [ebp+4]; fld dword ptr [ebp]; fucomip st(0), st(1); fstp st(0); setb cl; setz ch; setp dl; seta dh | mem=f32 skip=of,sf,af

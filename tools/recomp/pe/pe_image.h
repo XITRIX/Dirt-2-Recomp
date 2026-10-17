@@ -39,6 +39,8 @@ struct TlsInfo {
 class PeImage {
 public:
     static std::optional<PeImage> load(const std::string& path, std::string& error);
+    // In-memory image with one executable section at code_va, for tests.
+    static PeImage from_code(uint32_t image_base, uint32_t code_va, const std::vector<uint8_t>& code);
 
     uint32_t image_base() const { return image_base_; }
     uint32_t image_size() const { return image_size_; }

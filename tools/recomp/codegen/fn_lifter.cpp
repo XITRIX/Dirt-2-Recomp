@@ -65,6 +65,16 @@ int gpr_index(ZydisRegister r32) {
     }
 }
 
+bool is_shift(ZydisMnemonic m) {
+    switch (m) {
+        case ZYDIS_MNEMONIC_SHL: case ZYDIS_MNEMONIC_SHR: case ZYDIS_MNEMONIC_SAR: case ZYDIS_MNEMONIC_ROL:
+        case ZYDIS_MNEMONIC_ROR: case ZYDIS_MNEMONIC_RCL: case ZYDIS_MNEMONIC_RCR: case ZYDIS_MNEMONIC_SHLD:
+        case ZYDIS_MNEMONIC_SHRD:
+            return true;
+        default: return false;
+    }
+}
+
 bool is_high8(ZydisRegister r) {
     return r == ZYDIS_REGISTER_AH || r == ZYDIS_REGISTER_CH || r == ZYDIS_REGISTER_DH || r == ZYDIS_REGISTER_BH;
 }
@@ -329,6 +339,13 @@ void FnLifter::decode_blocks() {
                 li.reads = fl->tested & F_ARITH;
                 li.writes = (fl->modified | fl->set_0 | fl->set_1 | fl->undefined) & F_ARITH;
             }
+            if (is_shift(li.in.mnem()) && li.in.nops() >= 2) {
+                // A masked count of 0 leaves every flag untouched: an immediate 0
+                // defines nothing, and a CL count may pass the old flags through.
+                const ZydisDecodedOperand& cnt = li.in.op(li.in.nops() - 1);
+                if (cnt.type == ZYDIS_OPERAND_TYPE_IMMEDIATE && (cnt.imm.value.u & 31) == 0) li.reads = li.writes = 0;
+                else if (cnt.type == ZYDIS_OPERAND_TYPE_REGISTER) li.reads |= li.writes;
+            }
             const Flow fw = classify(li.in);
             if (fw == Flow::Call) {
                 li.reads = 0;
@@ -369,7 +386,7 @@ void FnLifter::liveness() {
         changed = false;
         for (size_t bi = blocks_.size(); bi-- > 0;) {
             LBlock& lb = blocks_[bi];
-            uint32_t out = 0;
+            uint32_t out = flags_live_out && lb.b->kind == BlockEnd::Ret ? F_ARITH : 0;
             for (uint32_t s : lb.b->succ)
                 if (auto it = block_index_.find(s); it != block_index_.end()) out |= blocks_[it->second].live_in;
             uint32_t live = out;
@@ -491,6 +508,7 @@ void FnLifter::emit_terminator(LBlock& lb, size_t bi) {
             break;
         case BlockEnd::Ret: {
             const uint32_t pop = last->in.nops() ? uint32_t(last->in.op(0).imm.value.u) : 0;
+            if (flags_live_out) line("c->eflags = recomp_pack_flags(cf, pf, af, zf, sf, of, c->df);");
             line("c->esp += {}; return;", 4 + pop);
             break;
         }

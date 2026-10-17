@@ -114,6 +114,21 @@ static inline void fcom_sw(X86* c, double a, double b) {
     else if (a == b) sw |= 0x4000;
     c->fsw = sw;
 }
+/* fprem (truncating) / fprem1 (round to nearest) as one complete reduction:
+ * C2 = 0 and C0, C3, C1 = quotient bits 2, 1, 0. */
+static inline void recomp_fprem(X86* c, int nearest) {
+    const double x = ST(0), y = ST(1);
+    int qn = 0;
+    const double r1 = remquo(x, y, &qn);
+    uint32_t q = (uint32_t)(qn < 0 ? -qn : qn);
+    double r = r1;
+    if (!nearest) {
+        r = fmod(x, y);
+        if (r != r1) q -= 1; /* the nearest quotient rounded away from zero */
+    }
+    ST(0) = r;
+    c->fsw = (uint16_t)((c->fsw & ~0x4700) | ((q & 4) ? 0x100 : 0) | ((q & 1) ? 0x200 : 0) | ((q & 2) ? 0x4000 : 0));
+}
 static inline uint16_t fstsw(X86* c) { return (uint16_t)((c->fsw & ~0x3800) | ((c->ftop & 7) << 11)); }
 
 /* x86 integer conversions: out-of-range and NaN produce the "integer indefinite" value. */

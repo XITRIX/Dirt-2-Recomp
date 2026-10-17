@@ -92,6 +92,9 @@ public:
     const std::set<uint32_t>& lifted_;
     LiftStats& stats_;
     bool resumable_ = false;  // has SEH continuation landing pad
+    // Test mode: treat every arithmetic flag as live at `ret` and spill them to
+    // c->eflags before returning, so differential tests can observe all flags.
+    bool flags_live_out = false;
     std::vector<LBlock> blocks_;
     std::unordered_map<uint32_t, size_t> block_index_;
     std::string out_, indent_ = "    ";

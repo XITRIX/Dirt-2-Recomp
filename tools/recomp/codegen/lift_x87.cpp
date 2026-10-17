@@ -129,8 +129,8 @@ bool FnLifter::lift_x87(LInsn& li) {
         case ZYDIS_MNEMONIC_F2XM1: line("ST(0) = exp2(ST(0)) - 1.0;"); return true;
         case ZYDIS_MNEMONIC_FSCALE: line("ST(0) = ldexp(ST(0), (int)trunc(ST(1)));"); return true;
         case ZYDIS_MNEMONIC_FRNDINT: line("ST(0) = recomp_fround(c, ST(0));"); return true;
-        case ZYDIS_MNEMONIC_FPREM: line("ST(0) = fmod(ST(0), ST(1)); c->fsw &= ~0x400;"); return true;
-        case ZYDIS_MNEMONIC_FPREM1: line("ST(0) = remainder(ST(0), ST(1)); c->fsw &= ~0x400;"); return true;
+        case ZYDIS_MNEMONIC_FPREM: line("recomp_fprem(c, 0);"); return true;
+        case ZYDIS_MNEMONIC_FPREM1: line("recomp_fprem(c, 1);"); return true;
         case ZYDIS_MNEMONIC_FXCH: {
             const int i = nst >= 2 ? (st[0] == 0 ? st[1] : st[0]) : (nst == 1 ? st[0] : 1);
             line("{{ const double t = ST(0); ST(0) = ST({0}); ST({0}) = t; }}", i);

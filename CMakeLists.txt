@@ -25,6 +25,13 @@ if(DIRT2_BUILD_TOOLS)
   add_subdirectory(tools/recomp)
 endif()
 
+# Lifter differential tests against Unicorn (fetched unless a system copy is found).
+option(DIRT2_BUILD_TESTS "Build the lifter differential tests" OFF)
+if(DIRT2_BUILD_TESTS AND DIRT2_BUILD_TOOLS)
+  enable_testing()
+  add_subdirectory(tests/lifter)
+endif()
+
 add_subdirectory(runtime)
 add_subdirectory(shims)
 
