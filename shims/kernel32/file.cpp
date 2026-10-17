@@ -176,6 +176,8 @@ uint32_t do_io(uint32_t h, uint32_t buf, uint32_t n, uint32_t done_out, uint32_t
         r = write ? ::write(f->fd, rt::host_ptr(buf), n) : ::read(f->fd, rt::host_ptr(buf), n);
     }
     static const bool log_io = std::getenv("DIRT2_LOG_FILES") != nullptr;
+    if (log_io && !ov)
+        rt::log("t%u %s %s n=%u -> %zd", rt::current_thread_id(), write ? "write" : "read", f->win.c_str(), n, r);
     if (log_io && ov)
         rt::log("t%u %s %s @%llu n=%u -> %zd (ov %08X ev %08X)", rt::current_thread_id(), write ? "write" : "read",
                 f->win.c_str(), (unsigned long long)(off_t(rd32(ov + 8)) | (off_t(rd32(ov + 12)) << 32)), n, r, ov,

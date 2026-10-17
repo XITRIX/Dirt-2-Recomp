@@ -179,7 +179,8 @@ Debug switches:
 
 | Switch | Effect |
 |---|---|
-| `DIRT2_LOG_FILES` | File opens and overlapped reads |
+| `DIRT2_LOG_FILES` | File opens, reads and writes (sync and overlapped) |
+| `DIRT2_LOG_REG` | Registry opens, queries and sets (registry is in-memory, per run) |
 | `DIRT2_LOG_WAITS` | Waits ≥ 50 ms and sleeps |
 | `DIRT2_LOG_LOCKS` | Resource locks, updates, texture bindings, pixel shader changes |
 | `DIRT2_LOG_CTAB` | D3DX constant table lookups and uploads |

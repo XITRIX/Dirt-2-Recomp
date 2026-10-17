@@ -3,6 +3,7 @@
 #include <sys/stat.h>
 
 #include <chrono>
+#include <cstdlib>
 #include <map>
 #include <mutex>
 #include <vector>
@@ -24,6 +25,11 @@ std::mutex g_reg_mu;
 std::map<std::string, Key> g_keys;          // lower-case full path -> key
 std::map<uint32_t, std::string> g_open;     // HKEY -> path
 uint32_t g_next_key = 0x1100;
+
+bool reg_trace() {
+    static const bool on = std::getenv("DIRT2_LOG_REG") != nullptr;
+    return on;
+}
 
 std::string root_name(uint32_t hkey) {
     switch (hkey) {
@@ -48,6 +54,7 @@ uint32_t open_key(uint32_t parent, const char* sub, uint32_t out, bool create) {
     const std::string base = root_name(parent);
     if (base.empty()) return ERROR_INVALID_HANDLE;
     const std::string path = lower(sub && *sub ? base + "\\" + sub : base);
+    if (reg_trace()) rt::log("reg: %s %s%s", create ? "create" : "open", path.c_str(), g_keys.count(path) ? "" : " (missing)");
     if (!g_keys.count(path)) {
         if (!create) return ERROR_FILE_NOT_FOUND;
         g_keys[path].path = path;
@@ -102,6 +109,7 @@ STDCALL(advapi32, RegQueryValueExA, 6) {
     auto it = g_keys.find(root_name(a[0]));
     if (it == g_keys.end()) return ERROR_FILE_NOT_FOUND;
     const std::string name = lower(a.str(1) ? a.str(1) : "");
+    if (reg_trace()) rt::log("reg: query %s\\%s", it->first.c_str(), name.c_str());
     auto v = it->second.values.find(name);
     if (v == it->second.values.end()) return ERROR_FILE_NOT_FOUND;
     if (a[3]) wr32(a[3], it->second.types[name]);
@@ -122,6 +130,7 @@ STDCALL(advapi32, RegSetValueExA, 6) {
     const uint8_t* p = rt::host_ptr(a[4]);
     it->second.values[name].assign(p, p + a[5]);
     it->second.types[name] = a[3];
+    if (reg_trace()) rt::log("reg: set %s\\%s type %u size %u", it->first.c_str(), name.c_str(), a[3], a[5]);
     return ERROR_SUCCESS;
 }
 STDCALL(advapi32, RegEnumKeyA, 4) { return ERROR_NO_MORE_ITEMS; }
