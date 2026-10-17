@@ -1,0 +1,14 @@
+# Game data is never committed
+/Colin McRae DiRT 2*/
+/game/
+*.pssg
+*.bik
+*.nfs
+
+# Build output
+/build/
+/out/
+/generated/
+.DS_Store
+*.xcodeproj/xcuserdata/
+.cache/
