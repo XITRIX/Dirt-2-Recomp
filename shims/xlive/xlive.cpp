@@ -5,8 +5,11 @@
 // which is what the game expects from real GFWL.
 //
 // Argument counts were taken from the `ret N` of each export in the xliveless
-// emulator shipped with the game, and from the documented winsock signatures
-// for the X* socket forwards.
+// emulator shipped with the game, from the documented winsock signatures for
+// the X* socket forwards, and from the GFWL signatures for exports that tail-
+// jump in the emulator. A wrong count shifts the caller's esp and corrupts its
+// frame silently (XUserCheckPrivilege did exactly that), so check new ones with
+// a --check-esp build.
 #include <atomic>
 #include <mutex>
 #include <unordered_map>
@@ -100,7 +103,7 @@ STDCALL_ORD(xlive, 5267, 3) {  // XUserGetSigninInfo(user, flags, *info)
     copy_out(i + 24, 16, kUserName);
     return 0;
 }
-STDCALL_ORD(xlive, 5265, 4) {  // XUserCheckPrivilege(user, priv, *result)
+STDCALL_ORD(xlive, 5265, 3) {  // XUserCheckPrivilege(user, priv, *result)
     if (a[2]) wr32(a[2], 0);
     return a[0] == 0 ? 0 : ERROR_NO_SUCH_USER;
 }
@@ -156,7 +159,11 @@ STDCALL_ORD(xlive, 5216, 8) { return complete(a[7], ERROR_FUNCTION_FAILED); }  /
 STDCALL_ORD(xlive, 5250, 1) { return 0; }  // XShowAchievementsUI
 STDCALL_ORD(xlive, 5252, 3) { return 0; }  // XShowGamerCardUI
 STDCALL_ORD(xlive, 5260, 2) { return 0; }  // XShowSigninUI
-STDCALL_ORD(xlive, 5266, 7) { return complete(a[6], 0); }  // XShowMessageBoxUI
+// XShowMessageBoxUI(user, title, text, nbuttons, buttons, focus, flags, *result, ov)
+STDCALL_ORD(xlive, 5266, 9) {
+    if (a[7]) wr32(a[7], 0);  // first button
+    return complete(a[8], 0);
+}
 STDCALL_ORD(xlive, 5275, 1) { return 0; }  // XShowFriendsUI
 STDCALL_ORD(xlive, 5365, 5) { return 0; }  // XShowMarketplaceUI
 
@@ -183,7 +190,7 @@ STDCALL_ORD(xlive, 5343, 5) { return complete(a[4], ERROR_FUNCTION_FAILED); }   
 STDCALL_ORD(xlive, 5315, 2) { return ERROR_FUNCTION_FAILED; }                   // XInviteGetAcceptedInfo
 STDCALL_ORD(xlive, 5305, 5) { return complete(a[4], ERROR_FUNCTION_FAILED); }   // XStorageUploadFromMemory
 STDCALL_ORD(xlive, 5309, 8) { return ERROR_FUNCTION_FAILED; }                   // XStorageBuildServerPathByXuid
-STDCALL_ORD(xlive, 5344, 9) { return ERROR_FUNCTION_FAILED; }                   // XStorageBuildServerPath
+STDCALL_ORD(xlive, 5344, 7) { return ERROR_FUNCTION_FAILED; }                   // XStorageBuildServerPath(user, facility, info, size, name, path, *len)
 STDCALL_ORD(xlive, 5345, 7) { return complete(a[6], ERROR_FUNCTION_FAILED); }   // XStorageDownloadToMemory
 
 // ---- content and protected files ----

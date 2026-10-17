@@ -33,6 +33,9 @@ if(DIRT2_BUILD_TESTS AND DIRT2_BUILD_TOOLS)
 endif()
 
 find_package(SDL3 REQUIRED CONFIG)
+# OpenAL Soft (Homebrew keg on macOS: CMAKE_PREFIX_PATH=/opt/homebrew/opt/openal-soft).
+list(APPEND CMAKE_PREFIX_PATH "/opt/homebrew/opt/openal-soft")
+find_package(OpenAL REQUIRED CONFIG)
 
 # Graphics: DXVK native d3d9 on MoltenVK, built by tools/scripts/build_graphics.sh.
 set(DIRT2_DXVK_DIR "${CMAKE_SOURCE_DIR}/third_party/dxvk")
@@ -60,6 +63,11 @@ if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
   target_compile_options(dirt2_gen PRIVATE -w -O2 -fno-strict-aliasing)
   # x86 memory ordering for the lifted code (acquire loads / release stores).
   option(DIRT2_TSO "Emulate x86 TSO memory ordering in lifted code" ON)
+  # Debug: guest write-watch hooks (RECOMP_WATCH=addr[,len] at run time).
+  option(DIRT2_WATCH "Compile guest write-watch hooks into lifted code" OFF)
+  if(DIRT2_WATCH)
+    target_compile_definitions(dirt2_gen PRIVATE RECOMP_WATCH=1)
+  endif()
   if(DIRT2_TSO)
     target_compile_definitions(dirt2_gen PRIVATE RECOMP_TSO=1)
   endif()

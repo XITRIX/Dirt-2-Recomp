@@ -27,11 +27,13 @@ int main(int argc, char** argv) {
     const std::string cmd = argv[1], exe = argv[2];
     std::string out = "generated";
     bool include_dead = false;
+    bool check_esp = false;
     std::vector<std::string> entry_files;
     for (int i = 3; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--out") && i + 1 < argc) out = argv[++i];
         else if (!std::strcmp(argv[i], "--entries") && i + 1 < argc) entry_files.push_back(argv[++i]);
         else if (!std::strcmp(argv[i], "--include-dead")) include_dead = true;
+        else if (!std::strcmp(argv[i], "--check-esp")) check_esp = true;
     }
 
     if (cmd != "analyze" && cmd != "lift" && cmd != "disasm") return usage();
@@ -113,6 +115,7 @@ int main(int argc, char** argv) {
         LiftOptions lo;
         lo.out_dir = out;
         lo.include_dead = include_dead;
+        lo.check_esp = check_esp;
         LiftStats ls;
         if (!lift_program(*img, dis, disc, lo, ls, err)) {
             std::fprintf(stderr, "error: %s\n", err.c_str());

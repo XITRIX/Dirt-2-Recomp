@@ -58,6 +58,8 @@ recomp_fn lookup(uint32_t addr);
 // by `callee_pops`), returns eax.
 uint32_t invoke(X86* c, uint32_t addr, std::initializer_list<uint32_t> args, bool callee_pops);
 void register_thunk(uint32_t addr, recomp_fn fn);
+// Where unknown call targets are appended (for --entries on the next lift).
+void set_discovery_log(const std::string& path);
 // Allocates a guest address that dispatches to fn (COM vtable slots, callbacks).
 uint32_t alloc_thunk(recomp_fn fn);
 
@@ -68,7 +70,8 @@ void rtl_unwind(X86* c, uint32_t target_frame, uint32_t record, uint32_t retval)
 
 // ---- misc ----
 [[noreturn]] void fatal(const char* fmt, ...);
-void install_crash_handler();  // signal handler with a guest-aware report
+void install_crash_handler();
+void dump_watch();  // watch.cpp  // signal handler with a guest-aware report
 void log(const char* fmt, ...);
 std::string game_dir();
 void set_game_dir(const std::string& d);

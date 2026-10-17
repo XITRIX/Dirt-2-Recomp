@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstdio>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 
 #include "recomp/host.h"
@@ -18,14 +19,18 @@ std::mutex g_mu;
 std::unordered_map<uint32_t, recomp_fn> g_thunks;
 std::unordered_map<uint32_t, recomp_fn> g_extra;  // functions registered at run time
 
+std::string g_discovery_log = "recomp_discovered.txt";
+
 void record_unknown(uint32_t addr) {
-    if (FILE* f = std::fopen("recomp_discovered.txt", "a")) {
+    if (FILE* f = std::fopen(g_discovery_log.c_str(), "a")) {
         std::fprintf(f, "%08X\n", addr);
         std::fclose(f);
     }
 }
 
 }  // namespace
+
+void set_discovery_log(const std::string& path) { g_discovery_log = path; }
 
 uint32_t alloc_thunk(recomp_fn fn) {
     static std::atomic<uint32_t> next{kThunkBase + 0xC0000};

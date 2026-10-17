@@ -14,6 +14,9 @@
 #include <d3d9.h>
 
 #include <cstdlib>
+#include <atomic>
+#include <chrono>
+#include <cstdio>
 #include <map>
 #include <mutex>
 #include <tuple>
@@ -453,10 +456,61 @@ void d3d_get_adapter_monitor(X86* c) {
     c->esp += 4 * 3;
 }
 
+// Debug: DIRT2_SCREENSHOT_DIR=<dir> [DIRT2_SCREENSHOT_EVERY=<n>] saves the back
+// buffer as BMP every n presents; frame rate is logged every 300 presents.
+void capture_back_buffer(IDirect3DDevice9* dev, uint32_t frame) {
+    static const char* dir = std::getenv("DIRT2_SCREENSHOT_DIR");
+    static const uint32_t every = std::getenv("DIRT2_SCREENSHOT_EVERY") ? std::atoi(std::getenv("DIRT2_SCREENSHOT_EVERY")) : 120;
+    if (!dir || !every || frame % every) return;
+    IDirect3DSurface9* bb = nullptr;
+    if (FAILED(dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &bb))) return;
+    D3DSURFACE_DESC d{};
+    bb->GetDesc(&d);
+    IDirect3DSurface9* sys = nullptr;
+    if (SUCCEEDED(dev->CreateOffscreenPlainSurface(d.Width, d.Height, d.Format, D3DPOOL_SYSTEMMEM, &sys, nullptr)) &&
+        SUCCEEDED(dev->GetRenderTargetData(bb, sys))) {
+        D3DLOCKED_RECT lr{};
+        if (SUCCEEDED(sys->LockRect(&lr, nullptr, D3DLOCK_READONLY))) {
+            char path[512];
+            std::snprintf(path, sizeof path, "%s/frame_%06u.bmp", dir, frame);
+            if (FILE* f = std::fopen(path, "wb")) {
+                const uint32_t row = d.Width * 4, size = row * d.Height;
+                uint8_t hdr[54] = {'B', 'M'};
+                auto put32 = [&](int off, uint32_t v) { std::memcpy(hdr + off, &v, 4); };
+                put32(2, 54 + size); put32(10, 54); put32(14, 40); put32(18, d.Width);
+                put32(22, uint32_t(-int32_t(d.Height)));  // top-down
+                hdr[26] = 1; hdr[28] = 32; put32(34, size);
+                std::fwrite(hdr, 1, 54, f);
+                for (uint32_t y = 0; y < d.Height; ++y) {
+                    const uint8_t* src = static_cast<const uint8_t*>(lr.pBits) + y * lr.Pitch;
+                    std::vector<uint8_t> line(src, src + row);
+                    for (uint32_t x = 0; x < d.Width; ++x) line[4 * x + 3] = 0xFF;
+                    std::fwrite(line.data(), 1, row, f);
+                }
+                std::fclose(f);
+                rt::log("d3d9: saved %s (%ux%u fmt %u)", path, d.Width, d.Height, d.Format);
+            }
+            sys->UnlockRect();
+        }
+    }
+    if (sys) sys->Release();
+    bb->Release();
+}
+
 // Present(src, dst, hDestWindowOverride, dirty): the override window is ignored.
 void dev_present(X86* c) {
     const Args a{c};
     auto* self = static_cast<IDirect3DDevice9*>(to_host(a[0]));
+    static std::atomic<uint32_t> frames{0};
+    static auto t0 = std::chrono::steady_clock::now();
+    const uint32_t frame = ++frames;
+    if (self) capture_back_buffer(self, frame);
+    if (frame == 1) rt::log("d3d9: first Present");
+    if (frame % 300 == 0) {
+        const auto now = std::chrono::steady_clock::now();
+        rt::log("d3d9: %u presents, %.1f fps", frame, 300.0 / std::chrono::duration<double>(now - t0).count());
+        t0 = now;
+    }
     const HRESULT hr = self ? self->Present(a.ptr<const RECT>(1), a.ptr<const RECT>(2), nullptr,
                                             a.ptr<const RGNDATA>(4))
                             : D3DERR_INVALIDCALL;

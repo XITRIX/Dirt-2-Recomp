@@ -2,3 +2,5 @@
 # computed or encoded pointers). One hex address per line; the runtime
 # appends misses to recomp_discovered.txt, which are merged here.
 00E2C5F0
+00E24DB0
+00CD3F80

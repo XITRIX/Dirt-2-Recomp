@@ -509,6 +509,7 @@ void FnLifter::emit_terminator(LBlock& lb, size_t bi) {
         case BlockEnd::Ret: {
             const uint32_t pop = last->in.nops() ? uint32_t(last->in.op(0).imm.value.u) : 0;
             if (flags_live_out) line("c->eflags = recomp_pack_flags(cf, pf, af, zf, sf, of, c->df);");
+            if (check_esp) line("if (c->esp != esp0_) recomp_esp_mismatch(c, {}, esp0_, {});", hex(f_.start), hex(last->in.addr));
             line("c->esp += {}; return;", 4 + pop);
             break;
         }
@@ -587,6 +588,7 @@ std::string FnLifter::emit() {
     liveness();
     out_ += std::format("void {}(X86* c) {{\n", fn_name(f_.start));
     line("uint32_t cf = 0, pf = 0, af = 0, zf = 0, sf = 0, of = 0, fa = 0, fb = 0, fr = 0;");
+    if (check_esp) line("const uint32_t esp0_ = c->esp;");
     const size_t entry = block_index_.at(f_.start);
     if (const uint32_t in = blocks_[entry].live_in) {
         ++stats_.live_in_flags;

@@ -31,7 +31,7 @@ const Module kModules[] = {
     {"xinput1_3.dll", 0x6B000000}, {"dinput8.dll", 0x6F000000}, {"dsound.dll", 0x73F10000},
     {"openal32.dll", 0x6E000000}, {"binkw32.dll", 0x6D000000}, {"xlive.dll", 0x6C000000},
     {"ddraw.dll", 0x73760000}, {"imagehlp.dll", 0x76C90000}, {"crypt32.dll", 0x77AA0000},
-    {"wintrust.dll", 0x76C30000}, {"dbghelp.dll", 0x59A60000}, {"psapi.dll", 0x76BF0000},
+    {"wintrust.dll", 0x76C30000}, {"dbghelp.dll", 0x59A60000}, {"psapi.dll", 0x76BF0000}, {"vorbisfile.dll", 0x6A000000},
 };
 
 std::string lower(std::string s) {

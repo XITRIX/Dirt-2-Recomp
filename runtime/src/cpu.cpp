@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <mutex>
+#include <unordered_map>
 #include <execinfo.h>
 #include <signal.h>
 #include <unistd.h>
@@ -44,9 +46,15 @@ void fatal(const char* fmt, ...) {
             std::fprintf(stderr, "\n");
         }
     }
+    if (X86* c = current_cpu(); c && c->esp > 0x10000) {
+        std::fprintf(stderr, "  stack:");
+        for (int k = 0; k < 24; ++k) std::fprintf(stderr, "%s%08X", k % 8 ? " " : "\n    ", rd32(c->esp + 4 * k));
+        std::fprintf(stderr, "\n");
+    }
     void* frames[32];
     const int n = backtrace(frames, 32);
     backtrace_symbols_fd(frames, n, 2);
+    dump_watch();
     std::fflush(stderr);
     std::abort();
 }
@@ -65,6 +73,7 @@ void crash_handler(int sig, siginfo_t* info, void*) {
     void* frames[48];
     const int n = backtrace(frames, 48);
     backtrace_symbols_fd(frames, n, 2);
+    dump_watch();
     _exit(128 + sig);
 }
 
@@ -92,6 +101,18 @@ void recomp_unimpl(X86* c, uint32_t addr, const char* what) {
 
 void recomp_trap(X86* c, uint32_t addr, const char* what) {
     rt::fatal("trap '%s' at 0x%08X", what, addr);
+}
+
+// --check-esp builds: a function reached ret with a different esp than on entry.
+// The first few reports per function are logged; the innermost one points at
+// the unbalanced callee (usually a shim with the wrong argument count).
+void recomp_esp_mismatch(X86* c, uint32_t fn, uint32_t esp0, uint32_t ret_addr) {
+    static std::mutex mu;
+    static std::unordered_map<uint32_t, int> seen;
+    std::lock_guard lk(mu);
+    if (seen[fn]++ >= 2) return;
+    std::fprintf(stderr, "[rt] esp imbalance in f_%08X at ret 0x%08X: entry %08X, now %08X (%+d) [thread %u]\n", fn, ret_addr,
+                 esp0, c->esp, int(c->esp - esp0), rt::current_thread_id());
 }
 
 void recomp_div_error(X86* c, uint32_t addr) {

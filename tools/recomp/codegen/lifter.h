@@ -12,6 +12,7 @@ namespace recomp {
 struct LiftOptions {
     std::string out_dir = "generated";
     bool include_dead = false;     // lift unreferenced (gap-scanned) functions too
+    bool check_esp = false;        // debug: report functions whose ret sees a different esp than entry
     size_t funcs_per_file = 300;
 };
 

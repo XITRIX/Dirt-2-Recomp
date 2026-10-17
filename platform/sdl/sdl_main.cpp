@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
 
 #include "../platform.h"
@@ -135,8 +136,21 @@ int main(int argc, char** argv) {
     rt::set_game_dir(dir);
     rt::install_crash_handler();
 
-    // DXVK native needs to know its window system.
+    // DXVK native needs to know its window system. Its log and caches, and our
+    // discovery log, go to the data directory: the process chdirs into the game
+    // folder, which must stay untouched.
     setenv("DXVK_WSI_DRIVER", "SDL3", 0);
+    {
+        std::string data;
+        if (const char* e = std::getenv("DIRT2_DATA_DIR")) data = e;
+        else if (const char* h = std::getenv("HOME")) data = std::string(h) + "/Library/Application Support/Dirt2Recomp";
+        else data = ".";
+        std::error_code ec;
+        std::filesystem::create_directories(data, ec);
+        setenv("DXVK_LOG_PATH", data.c_str(), 0);
+        setenv("DXVK_STATE_CACHE_PATH", data.c_str(), 0);
+        rt::set_discovery_log(data + "/recomp_discovered.txt");
+    }
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS)) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
