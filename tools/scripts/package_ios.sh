@@ -34,7 +34,12 @@ find_profile() {
         [ -f "$p" ] || continue
         plist=$(security cms -D -i "$p" 2>/dev/null) || continue
         echo "$plist" | grep -q "<string>$TEAM.$BUNDLE_ID</string>" || continue
-        echo "$plist" | grep -q "extended-virtual-addressing" || continue
+        # Every entitlement we sign with must be granted by the profile.
+        missing=
+        for key in $(/usr/libexec/PlistBuddy -c Print "$ENTS" | awk '/=/{print $1}'); do
+            echo "$plist" | grep -q "<key>$key</key>" || missing=1
+        done
+        [ -z "$missing" ] || continue
         echo "$p"
         return 0
     done
@@ -42,7 +47,7 @@ find_profile() {
 }
 
 if ! PROFILE=$(find_profile); then
-    echo "no provisioning profile for $TEAM.$BUNDLE_ID with the memory entitlements: asking Xcode for one"
+    echo "no provisioning profile for $TEAM.$BUNDLE_ID with all entitlements in $ENTS: asking Xcode for one"
     STUB=$ROOT/build/ios-profile-stub
     rm -rf "$STUB" && mkdir -p "$STUB/src"
     cat > "$STUB/src/main.m" <<'EOF'

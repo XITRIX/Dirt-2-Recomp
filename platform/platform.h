@@ -26,4 +26,8 @@ void display_size(int* width, int* height);
 bool prompt_text(const std::string& title, const std::string& message, const std::string& initial,
                  std::string& result);
 
+// Uses the image at path (e.g. the game's dirt2.ico) as the application icon
+// where the platform takes it from the process (macOS without a bundle).
+void set_app_icon(const std::string& path);
+
 }  // namespace platform

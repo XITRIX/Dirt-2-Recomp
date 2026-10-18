@@ -115,6 +115,11 @@ if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
     set_target_properties(dirt2 PROPERTIES
       MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/platform/apple/Info.plist.in"
       MACOSX_BUNDLE_GUI_IDENTIFIER "${DIRT2_BUNDLE_ID}")
+    # App icon from the game's own dirt2.ico (not committed: game data).
+    add_custom_command(TARGET dirt2 POST_BUILD
+      COMMAND "${CMAKE_SOURCE_DIR}/tools/scripts/ios_app_icon.sh" "${DIRT2_GAME_DIR}/dirt2.ico"
+        $<TARGET_BUNDLE_DIR:dirt2> ${DIRT2_PLATFORM} "${CMAKE_CURRENT_BINARY_DIR}/app-icon"
+      VERBATIM)
   else()
     add_executable(dirt2 platform/sdl/sdl_main.cpp platform/apple/text_prompt.mm)
   endif()

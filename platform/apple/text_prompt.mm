@@ -1,6 +1,8 @@
-// platform::prompt_text on Apple platforms: a native alert with a text field,
-// shown on the main thread (where SDL pumps the run loop). On iOS this brings up
-// the system keyboard; it stands in for the GFWL on-screen keyboard.
+// Native UI on Apple platforms. platform::prompt_text: an alert with a text
+// field, shown on the main thread (where SDL pumps the run loop); on iOS it
+// brings up the system keyboard. It stands in for the GFWL on-screen keyboard.
+// platform::set_app_icon: the game's icon for the Dock and alerts on macOS,
+// where the executable is not an app bundle.
 #include <SDL3/SDL.h>
 #include <TargetConditionals.h>
 #include <dispatch/dispatch.h>
@@ -86,6 +88,14 @@ bool prompt_text(const std::string& title, const std::string& message, const std
     dispatch_semaphore_wait(p.done, DISPATCH_TIME_FOREVER);
     if (p.ok) result = p.result;
     return p.ok;
+}
+
+void set_app_icon(const std::string& path) {
+#if !TARGET_OS_IPHONE
+    if (NSImage* icon = [[NSImage alloc] initWithContentsOfFile:ns(path)]) NSApp.applicationIconImage = icon;
+#else
+    (void)path;  // the app bundle has its own icon
+#endif
 }
 
 }  // namespace platform

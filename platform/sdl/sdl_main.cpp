@@ -218,6 +218,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
+    platform::set_app_icon(dir + "/dirt2.ico");
     // Community mappings shipped next to the executable, then optional user
     // additions in the data directory (later entries override earlier ones).
     if (const char* base = SDL_GetBasePath()) {

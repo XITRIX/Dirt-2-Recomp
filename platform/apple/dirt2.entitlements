@@ -5,6 +5,9 @@
 	<!-- The guest's 4 GB address space is one reservation. -->
 	<key>com.apple.developer.kernel.extended-virtual-addressing</key>
 	<true/>
+	<!-- Steady performance when the system lowers power levels. -->
+	<key>com.apple.developer.sustained-execution</key>
+	<true/>
 	<!-- The game's working set is 1.5-2 GB. -->
 	<key>com.apple.developer.kernel.increased-memory-limit</key>
 	<true/>
