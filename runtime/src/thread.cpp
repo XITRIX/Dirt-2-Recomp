@@ -1,6 +1,7 @@
 // Guest threads: each host thread owns an X86 context, a guest stack, a TEB
 // and a copy of the image's static TLS block.
 #include <pthread.h>
+#include <cstdio>
 #include <setjmp.h>
 
 #include <atomic>
@@ -90,6 +91,16 @@ Thread* make_thread(uint32_t stack_size) {
 void* thread_main(void* arg) {
     auto* t = static_cast<Thread*>(arg);
     t_cur = t;
+    {
+        // Named by guest entry point, for profilers and debuggers.
+        char name[32];
+        std::snprintf(name, sizeof name, "guest %08X", t->entry);
+#if defined(__APPLE__)
+        pthread_setname_np(name);
+#else
+        pthread_setname_np(pthread_self(), name);
+#endif
+    }
     {
         std::unique_lock lk(t->gate_mu);
         t->gate_cv.wait(lk, [&] { return t->suspend_count <= 0; });

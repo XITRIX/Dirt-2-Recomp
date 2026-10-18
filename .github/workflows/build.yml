@@ -1,0 +1,134 @@
+# Builds the macOS app and an unsigned iOS .ipa.
+#
+# The game's own files are not in the repository: the job downloads a zip with
+# dirt2_game.exe (Steam v1.1) and dirt2.ico from the URL in the repository
+# secret DIRT2_GAME_URL, and checks the exe's SHA-256 before using it.
+#
+# Artifacts:
+#   DiRT2-macOS.zip           DiRT2.app, ad hoc signed (right-click > Open the first time)
+#   DiRT2-iOS-unsigned.ipa    sign it with a profile granting the entitlements in
+#                             platform/apple/dirt2.entitlements (4 GB address space,
+#                             increased memory limit; iCloud optional)
+#
+# The library builds (deps, MoltenVK/DXVK, LLVM, DXMT) take about an hour and
+# are cached, keyed on their scripts, patches and submodule commits.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:  # Actions > Build > Run workflow
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GAME_EXE_SHA256: 49b1e00ea1d4bd02e633ceed63390b5cae07601333f673c4efd8d2f0eb54fe48
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Xcode
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Build tools
+        run: brew install ninja meson glslang pkgconf || true
+
+      - name: Game files
+        env:
+          DIRT2_GAME_URL: ${{ secrets.DIRT2_GAME_URL }}
+        run: |
+          if [ -z "$DIRT2_GAME_URL" ]; then
+            echo "::error::Set the repository secret DIRT2_GAME_URL to a zip with dirt2_game.exe and dirt2.ico"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/game"
+          curl -fsSL "$DIRT2_GAME_URL" -o "$RUNNER_TEMP/game.zip"
+          unzip -q "$RUNNER_TEMP/game.zip" -d "$RUNNER_TEMP/game"
+          EXE=$(find "$RUNNER_TEMP/game" -name dirt2_game.exe | head -1)
+          [ -n "$EXE" ] || { echo "::error::dirt2_game.exe not found in the zip"; exit 1; }
+          echo "$GAME_EXE_SHA256  $EXE" | shasum -a 256 -c --quiet || { echo "::error::dirt2_game.exe is not v1.1 (SHA-256 mismatch)"; exit 1; }
+          echo "GAME_DIR=$(dirname "$EXE")" >> "$GITHUB_ENV"
+          rm "$RUNNER_TEMP/game.zip"
+
+      - name: Cache keys
+        id: keys
+        run: |
+          echo "deps=${{ hashFiles('tools/scripts/build_deps.sh') }}" >> "$GITHUB_OUTPUT"
+          echo "llvm=${{ hashFiles('tools/scripts/build_llvm.sh') }}" >> "$GITHUB_OUTPUT"
+          subs=$(git submodule status --recursive | shasum | cut -d' ' -f1)
+          echo "graphics=$subs-${{ hashFiles('third_party/patches/**', 'tools/scripts/prepare_sources.sh', 'tools/scripts/build_graphics.sh', 'tools/scripts/build_moltenvk.sh', 'tools/scripts/build_mvk_externals.sh', 'tools/scripts/build_dxmt.sh', 'tools/scripts/build_llvm.sh') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache libraries
+        uses: actions/cache@v4
+        with:
+          path: build/deps
+          key: deps-${{ steps.keys.outputs.deps }}
+
+      - name: Cache LLVM
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/llvm/macos
+            build/llvm/iphoneos
+            build/llvm/work-macos/bin/llvm-tblgen
+          key: llvm-${{ steps.keys.outputs.llvm }}
+
+      - name: Cache graphics stack
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/src
+            build/moltenvk
+            build/dxvk
+            build/dxmt
+            build/tools
+          key: graphics-${{ steps.keys.outputs.graphics }}
+
+      - name: Libraries
+        run: |
+          tools/scripts/build_deps.sh macos iphoneos
+          tools/scripts/build_graphics.sh macos iphoneos
+          tools/scripts/build_llvm.sh macos iphoneos
+          tools/scripts/build_dxmt.sh macos iphoneos
+
+      - name: Recompile the game
+        run: |
+          cmake --preset macos-arm64 -DDIRT2_GAME_DIR="$GAME_DIR"
+          cmake --build build/macos-arm64 --target recomp
+          ./build/macos-arm64/tools/recomp/recomp lift "$GAME_DIR/dirt2_game.exe" --out generated \
+            --entries tools/recomp/config/entries.txt --hooks tools/recomp/config/hooks.txt --include-dead
+
+      - name: macOS app
+        run: |
+          cmake --preset macos-arm64 -DDIRT2_GAME_DIR="$GAME_DIR"
+          cmake --build build/macos-arm64
+          tools/scripts/package_macos.sh build/package/macos "$GAME_DIR"
+
+      - name: iOS app (unsigned)
+        run: |
+          cmake --preset ios -DDIRT2_GAME_DIR="$GAME_DIR"
+          cmake --build build/ios
+          tools/scripts/package_ios.sh unsigned
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DiRT2-macOS
+          path: build/package/macos/DiRT2-macOS.zip
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DiRT2-iOS-unsigned
+          path: build/package/iphoneos/DiRT2-iOS-unsigned.ipa
+          if-no-files-found: error

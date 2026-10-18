@@ -173,4 +173,28 @@ void set_app_icon(const std::string& path) {
 #endif
 }
 
+bool choose_folder(const std::string& title, std::string& path) {
+#if TARGET_OS_IPHONE
+    (void)title;
+    (void)path;
+    return false;
+#else
+    // Called on the main thread before the game starts (no SDL window yet).
+    @autoreleasepool {
+        [NSApplication sharedApplication];
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        [NSApp activateIgnoringOtherApps:YES];
+        NSOpenPanel* panel = [NSOpenPanel openPanel];
+        panel.message = ns(title);
+        panel.prompt = @"Choose";
+        panel.canChooseDirectories = YES;
+        panel.canChooseFiles = NO;
+        panel.allowsMultipleSelection = NO;
+        if ([panel runModal] != NSModalResponseOK || !panel.URL) return false;
+        path = panel.URL.path.UTF8String;
+        return true;
+    }
+#endif
+}
+
 }  // namespace platform

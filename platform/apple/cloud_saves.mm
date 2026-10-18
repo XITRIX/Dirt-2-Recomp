@@ -21,6 +21,7 @@
 // bundle) this is a no-op.
 #include <TargetConditionals.h>
 #import <CloudKit/CloudKit.h>
+#import <Security/Security.h>
 #import <Foundation/Foundation.h>
 #if TARGET_OS_IPHONE
 #import <UIKit/UIKit.h>
@@ -357,6 +358,36 @@ void watch() {
 
 }  // namespace
 
+namespace {
+
+NSString* const kContainer = @"iCloud.com.daniilvinogradov.dirt2recomp";
+
+// Whether the code signature grants our iCloud container.
+bool has_icloud_entitlement() {
+#if TARGET_OS_OSX
+    SecTaskRef task = SecTaskCreateFromSelf(nullptr);
+    if (!task) return false;
+    CFTypeRef v = SecTaskCopyValueForEntitlement(task, CFSTR("com.apple.developer.icloud-container-identifiers"), nullptr);
+    CFRelease(task);
+    if (!v) return false;
+    bool ok = false;
+    if (CFGetTypeID(v) == CFArrayGetTypeID())
+        ok = [(__bridge NSArray*)v containsObject:kContainer];
+    CFRelease(v);
+    return ok;
+#else
+    // iOS has no SecTask API: the provisioning profile the app was signed with
+    // lists the containers it grants.
+    NSString* path = [NSBundle.mainBundle pathForResource:@"embedded" ofType:@"mobileprovision"];
+    NSData* d = path ? [NSData dataWithContentsOfFile:path] : nil;
+    if (!d) return false;
+    NSData* needle = [kContainer dataUsingEncoding:NSUTF8StringEncoding];
+    return [d rangeOfData:needle options:0 range:NSMakeRange(0, d.length)].location != NSNotFound;
+#endif
+}
+
+}  // namespace
+
 void cloud_saves_start(const std::string& local_dir) {
     g_local = local_dir;
     // CloudKit needs the entitlement (absent: simulator builds, the bare macOS
@@ -365,7 +396,13 @@ void cloud_saves_start(const std::string& local_dir) {
         rt::log("cloud saves: no app bundle, saves stay on this device");
         return;
     }
-    CKContainer* container = [CKContainer containerWithIdentifier:@"iCloud.com.daniilvinogradov.dirt2recomp"];
+    // Without the iCloud entitlement (an ad hoc signed .app, an .ipa signed by
+    // someone else) CloudKit traps (SIGTRAP) rather than failing: check first.
+    if (!has_icloud_entitlement()) {
+        rt::log("cloud saves: this build has no iCloud entitlement, saves stay on this device");
+        return;
+    }
+    CKContainer* container = [CKContainer containerWithIdentifier:kContainer];
     __block CKAccountStatus status = CKAccountStatusCouldNotDetermine;
     dispatch_semaphore_t done = dispatch_semaphore_create(0);
     [container accountStatusWithCompletionHandler:^(CKAccountStatus st, NSError*) {

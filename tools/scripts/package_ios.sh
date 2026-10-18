@@ -1,6 +1,10 @@
 #!/bin/bash
 # Signs the iOS app bundle and packs it.
 #   package_ios.sh sim      ad-hoc signs build/ios-sim/DiRT2.app (simulator)
+#   package_ios.sh unsigned writes build/package/iphoneos/DiRT2-iOS-unsigned.ipa from
+#                           build/ios/dirt2.app with no signature, for signing elsewhere
+#                           (CI: .github/workflows/build.yml). Whoever signs it needs a
+#                           profile with the entitlements in platform/apple/dirt2.entitlements.
 #   package_ios.sh device   signs build/ios/DiRT2.app for the device with the development
 #                           certificate and a provisioning profile that carries the memory
 #                           entitlements, and writes build/package/iphoneos/DiRT2-iOS.ipa
@@ -28,6 +32,20 @@ fi
 
 APP=$ROOT/build/ios/dirt2.app
 [ -d "$APP" ] || { echo "no $APP: build the ios preset first" >&2; exit 1; }
+
+if [ "$MODE" = unsigned ]; then
+    PKG=$ROOT/build/package/iphoneos
+    WORK=$(mktemp -d)
+    mkdir -p "$PKG" "$WORK/Payload"
+    cp -R "$APP" "$WORK/Payload/DiRT2.app"
+    # No signature or profile from an earlier device build.
+    find "$WORK/Payload" -name _CodeSignature -type d -prune -exec rm -rf {} +
+    rm -f "$WORK/Payload/DiRT2.app/embedded.mobileprovision"
+    (cd "$WORK" && rm -f "$PKG/DiRT2-iOS-unsigned.ipa" && zip -qry "$PKG/DiRT2-iOS-unsigned.ipa" Payload)
+    rm -rf "$WORK"
+    ls -la "$PKG/DiRT2-iOS-unsigned.ipa"
+    exit 0
+fi
 
 # A profile for this app ID that grants extended virtual addressing.
 find_profile() {

@@ -61,7 +61,10 @@ EOF
     "$MESON" compile -C "$WORK" > "$WORK.build.log" 2>&1 || { grep -m30 -E "error|FAILED" "$WORK.build.log" >&2; exit 1; }
     "$MESON" install -C "$WORK" > /dev/null
     [ -x "$WORK/src/airconv/darwin/airconv" ] && mkdir -p "$OUT/bin" && cp "$WORK/src/airconv/darwin/airconv" "$OUT/bin/"
-    if [ "$PLATFORM" != macos ]; then
+    if [ "$PLATFORM" = macos ]; then
+        # Found through the app's rpath (Contents/Frameworks) or the build tree's.
+        install_name_tool -id @rpath/libdxmt-native.dylib "$OUT/lib/libdxmt-native.dylib"
+    else
         # iOS apps embed dynamic code as frameworks: Frameworks/dxmt.framework/dxmt.
         FW=$OUT/dxmt.framework
         rm -rf "$FW" && mkdir -p "$FW"

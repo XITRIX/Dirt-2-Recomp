@@ -6,7 +6,8 @@ add_library(recomp_runtime STATIC
   src/thread.cpp
   src/cpu.cpp
   src/seh.cpp
-  src/watch.cpp)
+  src/watch.cpp
+  src/profiler.cpp)
 target_include_directories(recomp_runtime PUBLIC include)
 target_compile_options(recomp_runtime PRIVATE -Wall -Wno-unused-parameter)
 find_package(Threads REQUIRED)

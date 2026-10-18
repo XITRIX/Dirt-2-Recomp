@@ -30,6 +30,10 @@ void record_unknown(uint32_t addr) {
 
 }  // namespace
 
+namespace {
+void invalidate_cached(uint32_t addr);
+}  // namespace
+
 void set_discovery_log(const std::string& path) { g_discovery_log = path; }
 
 uint32_t alloc_thunk(recomp_fn fn) {
@@ -42,9 +46,32 @@ uint32_t alloc_thunk(recomp_fn fn) {
 void register_thunk(uint32_t addr, recomp_fn fn) {
     std::lock_guard lk(g_mu);
     g_thunks[addr] = fn;
+    invalidate_cached(addr);  // a re-registered address
 }
 
-recomp_fn lookup(uint32_t addr) {
+namespace {
+
+// Lock-free direct-mapped cache in front of the lookup. Every indirect call
+// (virtual calls, function pointers, and every D3D/COM method, which lands on
+// a thunk) went through a binary search of the 160k-entry table and, for
+// thunks, a global mutex: the top self-time entry in profiles, and a point of
+// contention between the game's threads. A slot holds (address, function); a
+// writer stores the function first and publishes the address last, a reader
+// re-checks the address after reading the function.
+constexpr uint32_t kCacheBits = 16;
+struct CacheSlot {
+    std::atomic<uint32_t> addr{0};
+    std::atomic<recomp_fn> fn{nullptr};
+};
+CacheSlot g_cache[1u << kCacheBits];
+
+CacheSlot& slot_for(uint32_t addr) {
+    return g_cache[(addr * 0x9E3779B1u) >> (32 - kCacheBits)];
+}
+
+void invalidate_cached(uint32_t addr) { slot_for(addr).addr.store(0, std::memory_order_release); }
+
+recomp_fn lookup_slow(uint32_t addr) {
     const RecompFnEntry* b = recomp_fn_table;
     const RecompFnEntry* e = recomp_fn_table + recomp_fn_count;
     const RecompFnEntry* it = std::lower_bound(b, e, addr, [](const RecompFnEntry& x, uint32_t a) { return x.addr < a; });
@@ -53,6 +80,23 @@ recomp_fn lookup(uint32_t addr) {
     if (auto t = g_thunks.find(addr); t != g_thunks.end()) return t->second;
     if (auto t = g_extra.find(addr); t != g_extra.end()) return t->second;
     return nullptr;
+}
+
+}  // namespace
+
+recomp_fn lookup(uint32_t addr) {
+    CacheSlot& c = slot_for(addr);
+    if (c.addr.load(std::memory_order_acquire) == addr) {
+        recomp_fn fn = c.fn.load(std::memory_order_relaxed);
+        if (fn && c.addr.load(std::memory_order_acquire) == addr) return fn;
+    }
+    recomp_fn fn = lookup_slow(addr);
+    if (fn && addr) {
+        c.addr.store(0, std::memory_order_relaxed);  // invalidate while the function changes
+        c.fn.store(fn, std::memory_order_release);
+        c.addr.store(addr, std::memory_order_release);
+    }
+    return fn;
 }
 
 uint32_t invoke(X86* c, uint32_t addr, std::initializer_list<uint32_t> args, bool callee_pops) {

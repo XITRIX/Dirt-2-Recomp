@@ -73,6 +73,8 @@ void rtl_unwind(X86* c, uint32_t target_frame, uint32_t record, uint32_t retval)
 void install_crash_handler();
 void dump_watch();  // watch.cpp  // signal handler with a guest-aware report
 void log(const char* fmt, ...);
+// In-process sampling profiler (runtime/src/profiler.cpp); logs hot spots every 10 s.
+void start_profiler();
 std::string game_dir();
 void set_game_dir(const std::string& d);
 

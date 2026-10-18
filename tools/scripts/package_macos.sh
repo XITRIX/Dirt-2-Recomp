@@ -1,60 +1,82 @@
 #!/bin/bash
-# Packages the macOS build into a folder and zip:
-#   DiRT2-macOS/dirt2                 the recompiled game; every third-party library
-#                                     (DXVK, MoltenVK, SDL3, OpenAL Soft, FFmpeg, vorbis)
-#                                     is linked in statically
-#   DiRT2-macOS/gamecontrollerdb.txt  SDL gamepad mappings (third_party/SDL_GameControllerDB)
-#   DiRT2-macOS/run.sh                launcher; takes the game folder (the one with dirt2_game.exe)
-#   DiRT2-macOS/dirt2.{dxvk.bin,dxvk.lut,pipelines}  pipeline warm-up data, if build/pipelines has it
-#   DiRT2-macOS/dirt2.dxmt-pipelines, dxmt/          the same for the DX11 path (merge_dxmt_pipelines.py)
-# Game data is not included. Usage: package_macos.sh [out_dir]
+# Packages the macOS build as an app and zip (ad hoc signed, no developer identity):
+#   DiRT2.app/Contents/MacOS/dirt2                    the recompiled game; every third-party
+#                                                     library but DXMT is linked in statically
+#   DiRT2.app/Contents/Frameworks/libdxmt-native.dylib  DXMT (DX11 -> Metal), LGPL, kept separate
+#   DiRT2.app/Contents/Resources/gamecontrollerdb.txt   SDL gamepad mappings
+#   DiRT2.app/Contents/Resources/dirt2.{dxvk.*,pipelines,dxmt-pipelines}, dxmt/
+#                                                     pipeline warm-up data, if build/pipelines has it
+#   DiRT2.app/Contents/Resources/dirt2.icns           from the game's dirt2.ico, if found
+# Game data is not included: the app looks for a "Dirt 2" folder next to itself,
+# then the folder chosen last time, then asks (platform/sdl/sdl_main.cpp).
+# Usage: package_macos.sh [out_dir] [game folder (for the icon)]
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT=$PWD
 OUT=${1:-$ROOT/build/package/macos}
-PKG=$OUT/DiRT2-macOS
+GAME=${2:-${DIRT2_GAME_DIR:-$ROOT/Colin McRae DiRT 2 (v.1.1) [Steam-Rip]/Dirt 2}}
+APP=$OUT/DiRT2.app
+BIN=$ROOT/build/macos-arm64/dirt2
+DXMT=$ROOT/build/dxmt/macos/lib/libdxmt-native.dylib
 
-rm -rf "$PKG"
-mkdir -p "$PKG"
-cp "$ROOT/build/macos-arm64/dirt2" "$PKG/dirt2"
-cp "$ROOT/third_party/SDL_GameControllerDB/gamecontrollerdb.txt" "$PKG/"
-# Pipeline warm-up data, when produced (tools/scripts/merge_pipelines.py)
-for f in dirt2.dxvk.bin dirt2.dxvk.lut dirt2.pipelines dirt2.dxmt-pipelines; do
-    if [ -f "$ROOT/build/pipelines/$f" ]; then cp "$ROOT/build/pipelines/$f" "$PKG/"; fi
-done
-if [ -d "$ROOT/build/pipelines/dxmt" ]; then cp -R "$ROOT/build/pipelines/dxmt" "$PKG/"; fi
+rm -rf "$APP"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources"
+cp "$BIN" "$APP/Contents/MacOS/dirt2"
 
-# Static build: the executable may only load system libraries and frameworks.
-foreign=$(otool -L "$PKG/dirt2" | tail -n +2 | awk '{print $1}' | grep -vE '^(/usr/lib/|/System/)' || true)
+# Only system libraries and the embedded DXMT may be loaded.
+foreign=$(otool -L "$APP/Contents/MacOS/dirt2" | tail -n +2 | awk '{print $1}' |
+    grep -vE '^(/usr/lib/|/System/|@rpath/libdxmt-native\.dylib)' || true)
 if [ -n "$foreign" ]; then
     echo "error: dirt2 links non-system libraries:" >&2
     echo "$foreign" >&2
     exit 1
 fi
-codesign --force --sign - "$PKG/dirt2"
-
-cat > "$PKG/run.sh" <<'RUN'
-#!/bin/bash
-# DiRT 2 (static recompilation) launcher.
-# Usage: ./run.sh ["/path/to/Dirt 2"]   (the folder that contains dirt2_game.exe)
-# Without an argument it uses $DIRT2_GAME_DIR, then "Dirt 2" next to this script,
-# then asks for the folder. Saves and logs go to ~/Library/Application Support/Dirt2Recomp.
-# Options: DIRT2_PLAY_VIDEOS=1 plays the intro videos, DIRT2_WINDOWED=1 runs in a window.
-HERE=$(cd "$(dirname "$0")" && pwd)
-GAME=${1:-${DIRT2_GAME_DIR:-}}
-[ -z "$GAME" ] && [ -f "$HERE/Dirt 2/dirt2_game.exe" ] && GAME="$HERE/Dirt 2"
-if [ -z "$GAME" ]; then
-    GAME=$(osascript -e 'POSIX path of (choose folder with prompt "Select the DiRT 2 folder (with dirt2_game.exe)")') || exit 1
+if otool -L "$APP/Contents/MacOS/dirt2" | grep -q libdxmt-native; then
+    [ -f "$DXMT" ] || { echo "error: $DXMT missing (tools/scripts/build_dxmt.sh macos)" >&2; exit 1; }
+    cp "$DXMT" "$APP/Contents/Frameworks/"
 fi
-if [ ! -f "$GAME/dirt2_game.exe" ]; then
-    echo "dirt2_game.exe not found in: $GAME" >&2
-    exit 1
-fi
-export MVK_CONFIG_LOG_LEVEL=${MVK_CONFIG_LOG_LEVEL:-1}
-exec "$HERE/dirt2" --game "$GAME"
-RUN
-chmod +x "$PKG/run.sh"
 
-xattr -cr "$PKG" 2>/dev/null || true
-(cd "$OUT" && rm -f DiRT2-macOS.zip && ditto -c -k --keepParent DiRT2-macOS DiRT2-macOS.zip)
+cp "$ROOT/third_party/SDL_GameControllerDB/gamecontrollerdb.txt" "$APP/Contents/Resources/"
+for f in dirt2.dxvk.bin dirt2.dxvk.lut dirt2.pipelines dirt2.dxmt-pipelines; do
+    if [ -f "$ROOT/build/pipelines/$f" ]; then cp "$ROOT/build/pipelines/$f" "$APP/Contents/Resources/"; fi
+done
+if [ -d "$ROOT/build/pipelines/dxmt" ]; then cp -R "$ROOT/build/pipelines/dxmt" "$APP/Contents/Resources/"; fi
+
+ICON_KEY=
+if [ -f "$GAME/dirt2.ico" ]; then
+    WORK=$(mktemp -d)
+    if sips -s format png "$GAME/dirt2.ico" --out "$WORK/icon.png" >/dev/null 2>&1; then
+        mkdir -p "$WORK/dirt2.iconset"
+        for sz in 16 32 128 256 512; do
+            sips -z $sz $sz "$WORK/icon.png" --out "$WORK/dirt2.iconset/icon_${sz}x${sz}.png" >/dev/null
+            sips -z $((sz * 2)) $((sz * 2)) "$WORK/icon.png" --out "$WORK/dirt2.iconset/icon_${sz}x${sz}@2x.png" >/dev/null
+        done
+        iconutil -c icns "$WORK/dirt2.iconset" -o "$APP/Contents/Resources/dirt2.icns" && ICON_KEY="<key>CFBundleIconFile</key><string>dirt2</string>"
+    fi
+    rm -rf "$WORK"
+fi
+
+cat > "$APP/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>dirt2</string>
+<key>CFBundleIdentifier</key><string>${DIRT2_BUNDLE_ID:-com.daniilvinogradov.dirt2recomp}</string>
+<key>CFBundleName</key><string>DiRT 2</string>
+<key>CFBundleDisplayName</key><string>DiRT 2</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>1.0</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>LSMinimumSystemVersion</key><string>13.0</string>
+<key>LSApplicationCategoryType</key><string>public.app-category.racing-games</string>
+<key>LSSupportsGameMode</key><true/>
+<key>NSHighResolutionCapable</key><true/>
+$ICON_KEY
+</dict></plist>
+PLIST
+
+xattr -cr "$APP" 2>/dev/null || true
+for lib in "$APP"/Contents/Frameworks/*.dylib; do [ -f "$lib" ] && codesign --force --sign - "$lib"; done
+codesign --force --sign - "$APP"
+(cd "$OUT" && rm -f DiRT2-macOS.zip && ditto -c -k --keepParent DiRT2.app DiRT2-macOS.zip)
 ls -la "$OUT/DiRT2-macOS.zip"

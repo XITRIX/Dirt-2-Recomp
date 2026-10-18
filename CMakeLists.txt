@@ -156,12 +156,16 @@ if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
     target_link_options(dirt2 PRIVATE "-Wl,-u,_${sym}")
   endforeach()
   set_source_files_properties(platform/apple/text_prompt.mm platform/apple/cloud_saves.mm platform/apple/metalfx.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
-  target_link_libraries(dirt2 PRIVATE "-framework CloudKit" "-weak_framework MetalFX")
+  target_link_libraries(dirt2 PRIVATE "-framework CloudKit" "-framework Security" "-weak_framework MetalFX")
   target_include_directories(dirt2 PRIVATE "${DIRT2_MOLTENVK_LIB_DIR}/../include")
   target_link_libraries(dirt2 PRIVATE dirt2_shims dirt2_gen recomp_runtime dxvk_d3d9 SDL3::SDL3)
   if(DIRT2_HAVE_DXMT)
     # Object libraries' objects do not pass through other object libraries.
     target_link_libraries(dirt2 PRIVATE dirt2_shims_d3d11)
+    if(NOT DIRT2_IOS)
+      # DiRT2.app/Contents/Frameworks/libdxmt-native.dylib (package_macos.sh).
+      target_link_options(dirt2 PRIVATE "-Wl,-rpath,@executable_path/../Frameworks")
+    endif()
     if(DIRT2_IOS)
       # DX11 (DXMT) is the renderer on iOS; dxmt.framework ships in the app.
       target_compile_definitions(dirt2 PRIVATE DIRT2_DEFAULT_DX11=1)

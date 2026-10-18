@@ -85,7 +85,7 @@ cmake --build build/macos-arm64
 
 - **Renderer:** DX9 is the default on macOS. Run with `DIRT2_RENDERER=dx11` to use the DX11 path.
 - **Saves and settings:** these go to `~/Library/Application Support/Dirt2Recomp`.
-- **A shareable build:** `tools/scripts/package_macos.sh` writes `build/package/macos/DiRT2-macOS.zip`, without game data.
+- **A shareable build:** `tools/scripts/package_macos.sh` writes `build/package/macos/DiRT2-macOS.zip` with `DiRT2.app`, without game data. Without `--game`, the app looks for a **Dirt 2** folder next to itself, then the folder chosen last time, then asks for it.
 
 ### 5. iOS: build, sign, install
 
@@ -93,6 +93,7 @@ cmake --build build/macos-arm64
 cmake --preset ios -DDIRT2_GAME_DIR="<game folder>"   # the app icon comes from the game's dirt2.ico
 cmake --build build/ios
 DIRT2_TEAM=<your team id> DIRT2_BUNDLE_ID=<your bundle id> tools/scripts/package_ios.sh device
+# or: tools/scripts/package_ios.sh unsigned   -> build/package/iphoneos/DiRT2-iOS-unsigned.ipa
 ```
 
 - **Signing:** `package_ios.sh` signs the app with a provisioning profile that grants the entitlements the game needs: the 4 GB address space, the increased memory limit, and iCloud for save sync. If no such profile is installed, it asks Xcode to create one; the device must be registered to your team.
@@ -106,6 +107,16 @@ xcrun devicectl device install app --device <device id> build/ios/dirt2.app
 ```
 
 **Copy the game data once.** In Finder, select the device, open the **Files** tab, and drag the game folder (the one with `dirt2_game.exe`) onto **DiRT 2**. On the device itself, the Files app shows the same folder under **On My iPhone** / **On My iPad**. After that, launch DiRT 2 from the home screen. A controller is recommended.
+
+### Prebuilt binaries (GitHub Actions)
+
+`.github/workflows/build.yml` builds both on every push to `main`, on `v*` tags, and on demand (**Actions → Build → Run workflow**):
+- `DiRT2-macOS.zip`: the app, ad hoc signed. Right-click it and choose **Open** the first time.
+- `DiRT2-iOS-unsigned.ipa`: unsigned. Sign it with your own team, using a profile that grants the entitlements in `platform/apple/dirt2.entitlements`: the 4 GB address space and the increased memory limit (iCloud is optional).
+
+The game files aren't in the repository. Set the repository secret `DIRT2_GAME_URL` to a downloadable zip containing `dirt2_game.exe` (v1.1; the job checks its SHA-256) and `dirt2.ico`.
+
+The first run builds the libraries, which takes about an hour; later runs use the cache. Shader warm-up data (`build/pipelines`) is game-derived and not in CI, so CI builds compile shaders on first sight.
 
 ### Troubleshooting
 

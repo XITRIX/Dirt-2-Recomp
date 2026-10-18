@@ -70,6 +70,10 @@ bool metalfx_supported();
 bool metalfx_enabled();
 void set_metalfx_enabled(bool on);
 
+// macOS: a native folder picker (main thread, before the game starts); false
+// when cancelled, or on iOS.
+bool choose_folder(const std::string& title, std::string& path);
+
 // Asks the user to pick one of two options in a native dialog; returns 0 or 1.
 // Blocks the calling thread, which must not be the main thread.
 int choose(const std::string& title, const std::string& message, const std::string& first, const std::string& second);

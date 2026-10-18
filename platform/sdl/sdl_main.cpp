@@ -279,6 +279,7 @@ void watch_metalfx_setting(std::string path) {
 }
 
 void* game_main(void*) {
+    pthread_setname_np("game main");
     rt::install_crash_handler();
     // Saves sync before the game reads them (C:\Users\Player\Documents maps into
     // the data folder). On this thread so the main thread can show a dialog.
@@ -496,6 +497,51 @@ int main(int argc, char** argv) {
                 return 2;
             }
         }
+#else
+    // macOS without --game (the .app): "Dirt 2" next to the app, the folder chosen
+    // last time, or a folder picker; the choice is remembered.
+    if (dir.empty()) {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const std::string data_dir = std::getenv("DIRT2_DATA_DIR") ? std::getenv("DIRT2_DATA_DIR")
+                                     : std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") +
+                                           "/Library/Application Support/Dirt2Recomp";
+        const std::string saved = data_dir + "/game_dir.txt";
+        auto valid = [&](const std::string& d) { return !d.empty() && fs::exists(d + "/dirt2_game.exe", ec); };
+        if (const char* b = SDL_GetBasePath()) {
+            // Contents/Resources/ inside the .app; the folder that holds the .app.
+            for (const fs::path& p : {fs::path(b) / "../../../Dirt 2", fs::path(b) / "Dirt 2"})
+                if (valid(p.lexically_normal().string())) {
+                    dir = p.lexically_normal().string();
+                    break;
+                }
+        }
+        if (dir.empty())
+            if (FILE* f = std::fopen(saved.c_str(), "r")) {
+                char buf[4096] = {};
+                if (std::fgets(buf, sizeof buf, f)) {
+                    std::string d = buf;
+                    while (!d.empty() && (d.back() == '\n' || d.back() == '\r')) d.pop_back();
+                    if (valid(d)) dir = d;
+                }
+                std::fclose(f);
+            }
+        while (dir.empty()) {
+            std::string picked;
+            if (!platform::choose_folder("Select the DiRT 2 game folder (the one with dirt2_game.exe)", picked)) {
+                std::fprintf(stderr, "usage: %s --game <folder with dirt2_game.exe>\n", argv[0]);
+                return 2;
+            }
+            if (valid(picked)) {
+                dir = picked;
+                fs::create_directories(data_dir, ec);
+                if (FILE* f = std::fopen(saved.c_str(), "w")) {
+                    std::fputs(dir.c_str(), f);
+                    std::fclose(f);
+                }
+            }
+        }
+    }
 #endif
     if (dir.empty()) {
         std::fprintf(stderr, "usage: %s --game <folder with dirt2_game.exe>\n", argv[0]);
@@ -521,6 +567,8 @@ int main(int argc, char** argv) {
         rt::set_discovery_log(data + "/recomp_discovered.txt");
         tee_stderr(data + "/dirt2.log");
         platform::metalfx_init();
+        // DIRT2_PROFILE=1, or a file named "profile" in the data folder (iOS has no environment).
+        if (std::getenv("DIRT2_PROFILE") || std::filesystem::exists(data + "/profile")) rt::start_profiler();
         setup_pipeline_warmup(data);
     }
     // SDL's GameController (MFi) driver reports some pads (Backbone One) as
