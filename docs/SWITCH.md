@@ -51,4 +51,33 @@ Phase 1 is built:
 - the Horizon memory backend and libnx crash handler (`runtime/src/cpu.cpp`);
 - `tools/scripts/package_switch.sh`.
 
-Gate 0 has not been run on hardware yet.
+**Gate 0 passed on hardware (2026-10-18).** The game ran its CRT and engine start-up and reached `Direct3DCreate9` in 3.5–5.2 s from launch, with 97 MB of guest memory committed.
+
+Most of the launch time is loading the 20 MB exe from the SD card (2.7–4.2 s). The game's own start-up, from entering the guest to `Direct3DCreate9`, took:
+
+| Device | Time |
+|---|---|
+| Switch | 0.65–0.85 s |
+| iPhone 15 Pro | 0.11 s |
+| Mac (M-series) | 0.17 s |
+
+That is about **6–8× slower than the iPhone**, the good end of the estimate, on a short sample. Projected, it gives a race of about 4–5 fps at stock clocks before CPU work. Gate 1 measures it properly.
+
+**Shader pipeline (Phase 4, step 1) is done offline.** The game has **888 unique DX9 shaders**: 336 vertex and 552 pixel, from the three dx9 PSSG packs plus the d3dx9 shim's built-ins. All of them translate and compile:
+
+```bash
+tools/scripts/build_shader_tools.sh        # MojoShader (pinned + patch) + SPIRV-Cross -> build/tools/dx9shader
+tools/scripts/dx9_shader_census.py         # -> build/shaders/dx9/{glsl,dksh}, census.md
+```
+
+The route is d3dbc → MojoShader (SPIR-V) → SPIRV-Cross (GLSL 4.60) → uam (DKSH), 3.5 MB of DKSH in all.
+
+Interface conventions for the deko3d device, written per shader to `glsl/<sha1>.json`:
+- **Vertex outputs and pixel inputs** use one fixed location per semantic: TEXCOORD0–15 → 0–15, COLOR0–3 → 16–19, NORMAL → 20–21, TANGENT 22, BINORMAL 23, FOG 24, BLENDWEIGHT 25, BLENDINDICES 26, POSITION1–4 → 27–30.
+- **Vertex inputs** take the location of their input register; the JSON lists each one's usage and index.
+- **Constants** are one std140 block per stage at binding 0: a float4 array, then int4, then bool, with offsets in the JSON.
+- **Samplers:** sampler sN is binding N in its stage.
+
+Compiling is not rendering: correctness is checked against DXVK screenshots at Gate 3.
+
+The first build crashed after the gate. `std::exit` ran static destructors under the game's running threads; it now uses `_Exit`.

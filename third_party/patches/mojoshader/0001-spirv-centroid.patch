@@ -1,0 +1,48 @@
+--- a/profiles/mojoshader_profile_spirv.c
++++ b/profiles/mojoshader_profile_spirv.c
+@@ -263,6 +263,14 @@
+     pop_output(ctx);
+ } // spv_output_builtin
+ 
++// centroid-sampled pixel shader input (_centroid on a dcl): OpDecorate Centroid
++static void spv_output_centroid(Context *ctx, uint32 id)
++{
++    push_output(ctx, &ctx->helpers);
++    spv_emit(ctx, 3, SpvOpDecorate, id, SpvDecorationCentroid);
++    pop_output(ctx);
++} // spv_output_centroid
++
+ static uint32 spv_output_location(Context *ctx, uint32 id, uint32 loc)
+ {
+     push_output(ctx, &ctx->helpers);
+@@ -2311,12 +2319,6 @@
+     else if (shader_is_pixel(ctx))
+     {
+         // samplers DCLs get handled in emit_SPIRV_sampler().
+-
+-        if (flags & MOD_CENTROID)  // !!! FIXME
+-        {
+-            failf(ctx, "centroid unsupported in %s profile", ctx->profile->name);
+-            return;
+-        } // if
+ 
+         switch (regtype)
+         {
+@@ -2383,6 +2385,8 @@
+ 
+                         spv_link_ps_attributes(ctx, ctx->spirv.id_var_texcoord0_input, regtype, usage, index);
+                         spv_output_name(ctx, ctx->spirv.id_var_texcoord0_input, "ps_PointCoordOrTexCoord0");
++                        if (flags & MOD_CENTROID)
++                            spv_output_centroid(ctx, ctx->spirv.id_var_texcoord0_input);
+ 
+                         push_output(ctx, &ctx->mainline_top);
+                         uint32 id_loaded = spv_bumpid(ctx);
+@@ -2400,6 +2404,8 @@
+                         tid = spv_get_type(ctx, STI_PTR_VEC4_I);
+                         spv_emit(ctx, 4, SpvOpVariable, tid, r->spirv.iddecl, SpvStorageClassInput);
+                         pop_output(ctx);
++                        if (flags & MOD_CENTROID)
++                            spv_output_centroid(ctx, r->spirv.iddecl);
+                     } // else
+                 } // if
+                 break;
