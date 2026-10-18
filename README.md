@@ -114,7 +114,21 @@ xcrun devicectl device install app --device <device id> build/ios/dirt2.app
 - `DiRT2-macOS.zip`: the app, ad hoc signed. Right-click it and choose **Open** the first time.
 - `DiRT2-iOS-unsigned.ipa`: unsigned. Sign it with your own team, using a profile that grants the entitlements in `platform/apple/dirt2.entitlements`: the 4 GB address space and the increased memory limit (iCloud is optional).
 
-The game files aren't in the repository. Set the repository secret `DIRT2_GAME_URL` to a downloadable zip containing `dirt2_game.exe` (v1.1; the job checks its SHA-256) and `dirt2.ico`.
+The game files aren't in this repository. CI takes `dirt2_game.exe` (v1.1; the job checks its SHA-256) and `dirt2.ico` from a **private repository** of your own:
+
+1. Create a private repository, by default `<you>/Dirt-2-Game`, containing just those two files (any folder layout).
+2. Create a key pair:
+
+   ```bash
+   ssh-keygen -t ed25519 -N "" -f dirt2_game_key
+   ```
+
+3. In the private repository, open **Settings → Deploy keys**, add `dirt2_game_key.pub`, and leave **Allow write access** off.
+4. In this repository, open **Settings → Secrets and variables → Actions**:
+   - add the secret `DIRT2_GAME_DEPLOY_KEY` with the contents of `dirt2_game_key` (the private half);
+   - if your private repository has another name, add the variable `DIRT2_GAME_REPO` (`owner/name`).
+
+Alternatively, set the secret `DIRT2_GAME_URL` to a downloadable zip with the same two files.
 
 The first run builds the libraries, which takes about an hour; later runs use the cache. Shader warm-up data (`build/pipelines`) is game-derived and not in CI, so CI builds compile shaders on first sight.
 

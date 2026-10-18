@@ -13,3 +13,4 @@
 *.xcodeproj/xcuserdata/
 .cache/
 *.log
+/game-files/

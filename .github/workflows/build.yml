@@ -1,8 +1,11 @@
 # Builds the macOS app and an unsigned iOS .ipa.
 #
-# The game's own files are not in the repository: the job downloads a zip with
-# dirt2_game.exe (Steam v1.1) and dirt2.ico from the URL in the repository
-# secret DIRT2_GAME_URL, and checks the exe's SHA-256 before using it.
+# The game's own files are not in this repository. The job takes dirt2_game.exe
+# (Steam v1.1) and dirt2.ico from, in this order:
+#   - a private repository (variable DIRT2_GAME_REPO, default <owner>/Dirt-2-Game)
+#     cloned with a read-only deploy key in the secret DIRT2_GAME_DEPLOY_KEY;
+#   - a zip at the URL in the secret DIRT2_GAME_URL.
+# It checks the exe's SHA-256 before using it.
 #
 # Artifacts:
 #   DiRT2-macOS.zip           DiRT2.app, ad hoc signed (right-click > Open the first time)
@@ -26,6 +29,7 @@ concurrency:
 
 env:
   GAME_EXE_SHA256: 49b1e00ea1d4bd02e633ceed63390b5cae07601333f673c4efd8d2f0eb54fe48
+  HAVE_DEPLOY_KEY: ${{ secrets.DIRT2_GAME_DEPLOY_KEY != '' }}
 
 jobs:
   build:
@@ -44,22 +48,33 @@ jobs:
       - name: Build tools
         run: brew install ninja meson glslang pkgconf || true
 
+      - name: Game files from a private repository
+        if: ${{ env.HAVE_DEPLOY_KEY == 'true' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.DIRT2_GAME_REPO || format('{0}/Dirt-2-Game', github.repository_owner) }}
+          ssh-key: ${{ secrets.DIRT2_GAME_DEPLOY_KEY }}
+          path: game-files
+          lfs: true
+
       - name: Game files
         env:
           DIRT2_GAME_URL: ${{ secrets.DIRT2_GAME_URL }}
         run: |
-          if [ -z "$DIRT2_GAME_URL" ]; then
-            echo "::error::Set the repository secret DIRT2_GAME_URL to a zip with dirt2_game.exe and dirt2.ico"
-            exit 1
+          if [ ! -d game-files ]; then
+            if [ -z "$DIRT2_GAME_URL" ]; then
+              echo "::error::Set the secret DIRT2_GAME_DEPLOY_KEY (private game repository) or DIRT2_GAME_URL (zip)"
+              exit 1
+            fi
+            mkdir -p game-files
+            curl -fsSL "$DIRT2_GAME_URL" -o "$RUNNER_TEMP/game.zip"
+            unzip -q "$RUNNER_TEMP/game.zip" -d game-files
+            rm "$RUNNER_TEMP/game.zip"
           fi
-          mkdir -p "$RUNNER_TEMP/game"
-          curl -fsSL "$DIRT2_GAME_URL" -o "$RUNNER_TEMP/game.zip"
-          unzip -q "$RUNNER_TEMP/game.zip" -d "$RUNNER_TEMP/game"
-          EXE=$(find "$RUNNER_TEMP/game" -name dirt2_game.exe | head -1)
-          [ -n "$EXE" ] || { echo "::error::dirt2_game.exe not found in the zip"; exit 1; }
+          EXE=$(find "$PWD/game-files" -name dirt2_game.exe -not -path '*/.git/*' | head -1)
+          [ -n "$EXE" ] || { echo "::error::dirt2_game.exe not found in the game files"; exit 1; }
           echo "$GAME_EXE_SHA256  $EXE" | shasum -a 256 -c --quiet || { echo "::error::dirt2_game.exe is not v1.1 (SHA-256 mismatch)"; exit 1; }
           echo "GAME_DIR=$(dirname "$EXE")" >> "$GITHUB_ENV"
-          rm "$RUNNER_TEMP/game.zip"
 
       - name: Cache keys
         id: keys
