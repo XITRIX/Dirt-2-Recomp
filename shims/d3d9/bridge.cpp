@@ -935,6 +935,49 @@ void d3d_get_adapter_display_mode(X86* c) {  // (this, adapter, D3DDISPLAYMODE*)
     c->esp += 4 * 4;
 }
 
+// Resolution menu labels: the game formats each entry as "%u x %u" in a combo
+// box method (0x005704E0: thiscall (out string, index), entries of {w, h} at
+// this+0x40). It is only reached through one vtable slot, so that slot gets a
+// host wrapper which calls the original, then re-formats the label with its
+// render-scale multiplier, e.g. "1800 x 1170 (0.5x)".
+namespace {
+constexpr uint32_t kResLabelFn = 0x005704E0, kResLabelSlot = 0x0131B6C0;
+constexpr uint32_t kGuestStrPrintf = 0x00482AE0;  // cdecl (string*, fmt, ...)
+uint32_t g_res_fmt = 0;
+
+void resolution_label(X86* c) {
+    const uint32_t self = c->ecx, out = rd32(c->esp + 4), index = rd32(c->esp + 8);
+    rt::invoke(c, kResLabelFn, {out, index}, true);  // the game's own label (and bounds checks)
+    const uint32_t list = rd32(self + 0x40), end = rd32(self + 0x44);
+    if (list && index < (end - list) / 8) {
+        const uint32_t w = rd32(list + index * 8), h = rd32(list + index * 8 + 4);
+        for (const auto& m : platform::display_modes())
+            if (m.width == w && m.height == h) {
+                char scale[16];
+                std::snprintf(scale, sizeof scale, "%g", double(m.scale));
+                const uint32_t arg = rt::heap_alloc(16, true);
+                std::memcpy(rt::host_ptr(arg), scale, std::strlen(scale) + 1);
+                rt::invoke(c, kGuestStrPrintf, {out, g_res_fmt, w, h, arg}, false);
+                rt::heap_free(arg);
+                break;
+            }
+    }
+    c->eax = out;
+    c->esp += 4 + 8;  // ret 8
+}
+}  // namespace
+
+void install_resolution_labels_impl() {
+    if (rd32(kResLabelSlot) != kResLabelFn) {
+        rt::log("d3d9: resolution label hook skipped: vtable slot 0x%08X holds 0x%08X", kResLabelSlot, rd32(kResLabelSlot));
+        return;
+    }
+    static const char fmt[] = "%u x %u (%sx)";
+    g_res_fmt = rt::heap_alloc(sizeof fmt, true);
+    std::memcpy(rt::host_ptr(g_res_fmt), fmt, sizeof fmt);
+    wr32(kResLabelSlot, rt::alloc_thunk(resolution_label));
+}
+
 void d3d_get_adapter_monitor(X86* c) {
     c->eax = 0x00010001;
     c->esp += 4 * 3;
@@ -1558,4 +1601,8 @@ STDCALL(d3d9, D3DPERF_SetOptions, 1) { return 0; }
 namespace shim {
 // Host object behind a guest D3D9 proxy (used by the D3DX shims).
 void* d3d9_host(uint32_t proxy) { return to_host(proxy); }
+}  // namespace shim
+
+namespace shim {
+void install_resolution_labels() { install_resolution_labels_impl(); }
 }  // namespace shim

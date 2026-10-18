@@ -21,6 +21,7 @@
 
 namespace shim {
 void post_message(uint32_t hwnd, uint32_t msg, uint32_t wp, uint32_t lp);
+void install_resolution_labels();
 }
 
 namespace rt {
@@ -57,6 +58,12 @@ constexpr bool kSingleWindow = false;
 static SDL_Window* g_shared_window = nullptr;
 static int g_shared_refs = 0;
 
+// The game sizes windows in pixels; SDL sizes them in points (HiDPI).
+float display_density() {
+    const SDL_DisplayMode* m = SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay());
+    return m && m->pixel_density > 0 ? m->pixel_density : 1.0f;
+}
+
 Window create_window(int width, int height, const char* title) {
     SDL_Window* w = nullptr;
     on_main([&] {
@@ -65,7 +72,9 @@ Window create_window(int width, int height, const char* title) {
             w = g_shared_window;
             return;
         }
-        w = SDL_CreateWindow(title, width, height, SDL_WINDOW_VULKAN | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
+        const float d = display_density();
+        w = SDL_CreateWindow(title, int(width / d), int(height / d),
+                             SDL_WINDOW_VULKAN | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
         if (!w) rt::log("SDL_CreateWindow failed: %s", SDL_GetError());
         if (kSingleWindow && w) {
             g_shared_window = w;
@@ -86,7 +95,10 @@ void destroy_window(Window w) {
 }
 
 void set_window_size(Window w, int width, int height) {
-    on_main([&] { SDL_SetWindowSize(static_cast<SDL_Window*>(w), width, height); });
+    on_main([&] {
+        const float d = display_density();
+        SDL_SetWindowSize(static_cast<SDL_Window*>(w), int(width / d), int(height / d));
+    });
 }
 
 void show_window(Window w, bool show) {
@@ -350,6 +362,7 @@ int main(int argc, char** argv) {
         setenv("DXVK_SHADER_CACHE_PATH", data.c_str(), 0);
         rt::set_discovery_log(data + "/recomp_discovered.txt");
         tee_stderr(data + "/dirt2.log");
+        platform::metalfx_init(data);
     }
     // SDL's GameController (MFi) driver reports some pads (Backbone One) as
     // connected but never delivers their input. Without it, Xbox/PlayStation/
@@ -388,6 +401,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (chdir(dir.c_str()) != 0) rt::log("warning: cannot chdir to %s", dir.c_str());
+    shim::install_resolution_labels();
 
     pthread_attr_t attr;
     pthread_attr_init(&attr);

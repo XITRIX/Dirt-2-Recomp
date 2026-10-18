@@ -28,5 +28,5 @@ echo "== MoltenVK ($PLATFORM)"
 
 rm -rf "$OUT" && mkdir -p "$OUT/lib"
 cp "$DD/Build/Products/$products/libMoltenVK.a" "$OUT/lib/"
-cp -R "$MVK/MoltenVK/include" "$OUT/include"
+cp -RL "$MVK/MoltenVK/include" "$OUT/include"  # dereference: the links are relative to the MoltenVK tree
 echo "MoltenVK ($PLATFORM): $OUT/lib/libMoltenVK.a"

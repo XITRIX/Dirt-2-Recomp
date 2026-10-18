@@ -1,0 +1,132 @@
+diff --git a/src/d3d9/d3d9_swapchain.cpp b/src/d3d9/d3d9_swapchain.cpp
+index d672f11..a7a490a 100644
+--- a/src/d3d9/d3d9_swapchain.cpp
++++ b/src/d3d9/d3d9_swapchain.cpp
+@@ -914,6 +914,9 @@ namespace dxvk {
+         ctx->synchronizeWsi(cSync);
+         ctx->flushCommandList(nullptr, nullptr);
+ 
++        if (getPresentHook())
++          cPresenter->pushPresentSource(cSrcView->image(), cSrcRect.extent);
++
+         cDevice->presentImage(cPresenter, cLatency, cFrameId, 0, nullptr, nullptr);
+       });
+ 
+diff --git a/src/dxvk/dxvk_presenter.cpp b/src/dxvk/dxvk_presenter.cpp
+index f93ae8d..a46f8d7 100644
+--- a/src/dxvk/dxvk_presenter.cpp
++++ b/src/dxvk/dxvk_presenter.cpp
+@@ -1,6 +1,8 @@
+ #include <algorithm>
+ 
+ #include "dxvk_device.h"
++#include <atomic>
++
+ #include "dxvk_presenter.h"
+ 
+ #include "../wsi/wsi_window.h"
+@@ -171,6 +173,21 @@ namespace dxvk {
+   }
+ 
+ 
++  namespace {
++    std::atomic<PresentHookFn> g_presentHook = { nullptr };
++  }
++
++  PresentHookFn getPresentHook() {
++    return g_presentHook.load();
++  }
++
++
++  void Presenter::pushPresentSource(const Rc<DxvkImage>& image, VkExtent2D extent) {
++    std::lock_guard lock(m_sourceMutex);
++    m_presentSources.push({ image, extent });
++  }
++
++
+   VkResult Presenter::presentImage(
+           uint64_t                frameId,
+     const Rc<DxvkLatencyTracker>& tracker,
+@@ -224,6 +241,24 @@ namespace dxvk {
+     if (m_hasIncrementalPresent && !m_presentRepaint && m_acquireStatus == VK_SUCCESS && rectCount)
+       regionInfo.pNext = const_cast<void*>(std::exchange(info.pNext, &regionInfo));
+ 
++    if (PresentHookFn hook = g_presentHook.load()) {
++      std::pair<Rc<DxvkImage>, VkExtent2D> source = { };
++
++      { std::lock_guard lock(m_sourceMutex);
++        if (!m_presentSources.empty()) {
++          source = std::move(m_presentSources.front());
++          m_presentSources.pop();
++        }
++      }
++
++      if (source.first != nullptr && m_imageIndex < m_images.size()) {
++        const auto& dst = m_images[m_imageIndex];
++        hook(m_device->handle(), m_device->queues().graphics.queueHandle,
++          source.first->handle(), source.second,
++          dst->handle(), VkExtent2D { dst->info().extent.width, dst->info().extent.height });
++      }
++    }
++
+     VkResult status = m_vkd->vkQueuePresentKHR(
+       m_device->queues().graphics.queueHandle, &info);
+ 
+@@ -1390,3 +1425,8 @@ namespace dxvk {
+   }
+ 
+ }
++
++
++extern "C" void dxvk_set_present_hook(dxvk::PresentHookFn hook) {
++  dxvk::g_presentHook.store(hook);
++}
+diff --git a/src/dxvk/dxvk_presenter.h b/src/dxvk/dxvk_presenter.h
+index f4b8a0c..acf3e08 100644
+--- a/src/dxvk/dxvk_presenter.h
++++ b/src/dxvk/dxvk_presenter.h
+@@ -78,6 +78,19 @@ namespace dxvk {
+    * more complicated aspects of Vulkan's
+    * window system integration.
+    */
++  /**
++   * \brief Host hook run just before an image is presented
++   *
++   * Called on the submission thread after the frame's command buffers
++   * were submitted and before vkQueuePresentKHR, with the front end's
++   * source image (the D3D9 back buffer) and the swap chain image. The
++   * Apple build uses it for MetalFX upscaling; may do nothing.
++   */
++  using PresentHookFn = void (*)(VkDevice device, VkQueue queue, VkImage src, VkExtent2D srcExtent,
++                                 VkImage dst, VkExtent2D dstExtent);
++
++  PresentHookFn getPresentHook();
++
+   class Presenter : public RcObject {
+ 
+   public:
+@@ -118,6 +131,14 @@ namespace dxvk {
+     VkResult acquireNextImage(
+             PresenterSync&  sync,
+             Rc<DxvkImage>&  image);
++
++    /**
++     * \brief Queues the source of the next present for the present hook
++     *
++     * One call per presented frame, from the thread that records it, when
++     * a present hook is installed.
++     */
++    void pushPresentSource(const Rc<DxvkImage>& image, VkExtent2D extent);
+     
+     /**
+      * \brief Presents current image
+@@ -284,6 +305,9 @@ namespace dxvk {
+     std::vector<Rc<DxvkImage>>  m_images;
+     std::vector<PresenterSync>  m_semaphores;
+ 
++    dxvk::mutex                 m_sourceMutex;
++    std::queue<std::pair<Rc<DxvkImage>, VkExtent2D>> m_presentSources;
++
+     std::vector<VkPresentModeKHR> m_dynamicModes;
+ 
+     VkExtent2D                  m_preferredExtent = { };

@@ -52,6 +52,15 @@ void set_game_paused(bool paused);
 void cloud_saves_start(const std::string& local_dir);
 void cloud_saves_flush();
 
+// MetalFX spatial upscaling of the frame when the render scale is below 1
+// (platform/apple/metalfx.mm). init: before the game creates its device; the
+// setting persists in <data>/metalfx.txt (default on). Unsupported devices
+// never upscale with MetalFX, and the menu row is not shown there.
+void metalfx_init(const std::string& data_dir);
+bool metalfx_supported();
+bool metalfx_enabled();
+void set_metalfx_enabled(bool on);
+
 // Asks the user to pick one of two options in a native dialog; returns 0 or 1.
 // Blocks the calling thread, which must not be the main thread.
 int choose(const std::string& title, const std::string& message, const std::string& first, const std::string& second);
