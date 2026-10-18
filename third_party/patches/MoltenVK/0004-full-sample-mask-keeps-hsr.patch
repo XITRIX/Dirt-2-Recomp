@@ -1,0 +1,16 @@
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+index 7357ff1c..b2550d73 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKPipeline.mm
+@@ -1656,7 +1656,10 @@ static void addCommonImplicitBuffersToShaderConfig(SPIRVToMSLConversionConfigura
+ #if MVK_USE_METAL_PRIVATE_API
+ 			if (!getMVKConfig().useMetalPrivateAPI) {
+ #endif
+-				if (pCreateInfo->pMultisampleState->pSampleMask && pCreateInfo->pMultisampleState->pSampleMask[0] != 0xffffffff) {
++				// A mask covering every rasterized sample is a no-op; exporting it from the
++				// shader anyway disables hidden surface removal on Apple GPUs.
++				uint32_t allSamplesMask = (1u << mvkSampleCountFromVkSampleCountFlagBits(pCreateInfo->pMultisampleState->rasterizationSamples)) - 1u;
++				if (pCreateInfo->pMultisampleState->pSampleMask && (pCreateInfo->pMultisampleState->pSampleMask[0] & allSamplesMask) != allSamplesMask) {
+ 					shaderConfig.options.mslOptions.additional_fixed_sample_mask = pCreateInfo->pMultisampleState->pSampleMask[0];
+ 				}
+ #if MVK_USE_METAL_PRIVATE_API
