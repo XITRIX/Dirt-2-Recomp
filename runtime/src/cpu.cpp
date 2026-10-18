@@ -87,7 +87,7 @@ namespace {
 
 void report_crash(const char* what, uintptr_t fault) {
     const uintptr_t base = reinterpret_cast<uintptr_t>(recomp_mem);
-    std::fprintf(stderr, "[rt] CRASH: %s at host %p", what, reinterpret_cast<void*>(fault));
+    std::fprintf(stderr, "[rt] CRASH (thread %u): %s at host %p", current_thread_id(), what, reinterpret_cast<void*>(fault));
     if (fault >= base && fault - base < (1ull << 32)) std::fprintf(stderr, " (guest 0x%08X)", uint32_t(fault - base));
     std::fprintf(stderr, "\n");
     if (X86* c = current_cpu())

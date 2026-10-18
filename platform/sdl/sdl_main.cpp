@@ -506,6 +506,19 @@ int main(int argc, char** argv) {
 #if defined(SDL_PLATFORM_SWITCH)
     if (!switch_platform::check_launch_mode()) return 1;
     setenv("DIRT2_DATA_DIR", kSwitchDataDir, 0);
+    // No environment on Horizon: <data>/env.txt holds KEY=VALUE lines (the debug
+    // switches: DIRT2_COUNT_CALLS=1, DIRT2_LOG_LOCKS=1, ...).
+    if (std::FILE* f = std::fopen((std::string(kSwitchDataDir) + "/env.txt").c_str(), "r")) {
+        char line[1024];
+        while (std::fgets(line, sizeof line, f)) {
+            std::string l = line;
+            while (!l.empty() && (l.back() == '\n' || l.back() == '\r' || l.back() == ' ')) l.pop_back();
+            const size_t eq = l.find('=');
+            if (l.empty() || l[0] == '#' || eq == std::string::npos) continue;
+            setenv(l.substr(0, eq).c_str(), l.substr(eq + 1).c_str(), 1);
+        }
+        std::fclose(f);
+    }
     if (dir.empty()) {
         dir = std::string(kSwitchDataDir) + "/Dirt 2";
         if (!std::filesystem::exists(dir + "/dirt2_game.exe")) {

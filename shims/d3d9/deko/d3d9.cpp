@@ -1,5 +1,6 @@
 // IDirect3D9 on deko3d: adapter queries, capabilities, CreateDevice, and the
 // Direct3DCreate9 the D3D9 bridge calls (shims/d3d9/bridge.cpp).
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 
@@ -9,7 +10,16 @@
 
 namespace deko {
 
+namespace {
+// Bring-up: the first few calls of each IDirect3D9 method.
+void trace(const char* what) {
+    static std::atomic<int> n{0};
+    if (n++ < 64) rt::log("deko3d: IDirect3D9::%s", what);
+}
+}  // namespace
+
 HRESULT D3D9::GetAdapterIdentifier(UINT adapter, DWORD, D3DADAPTER_IDENTIFIER9* id) {
+    trace("GetAdapterIdentifier");
     if (adapter || !id) return D3DERR_INVALIDCALL;
     std::memset(id, 0, sizeof *id);
     std::snprintf(id->Driver, sizeof id->Driver, "deko3d");
@@ -22,10 +32,12 @@ HRESULT D3D9::GetAdapterIdentifier(UINT adapter, DWORD, D3DADAPTER_IDENTIFIER9* 
 }
 
 UINT D3D9::GetAdapterModeCount(UINT adapter, D3DFORMAT) {
+    trace("GetAdapterModeCount");
     return adapter ? 0 : UINT(platform::display_modes().size());
 }
 
 HRESULT D3D9::EnumAdapterModes(UINT adapter, D3DFORMAT format, UINT mode, D3DDISPLAYMODE* out) {
+    trace("EnumAdapterModes");
     const auto& modes = platform::display_modes();
     if (adapter || !out || mode >= modes.size()) return D3DERR_INVALIDCALL;
     *out = D3DDISPLAYMODE{modes[mode].width, modes[mode].height, modes[mode].refresh, format};
@@ -33,6 +45,7 @@ HRESULT D3D9::EnumAdapterModes(UINT adapter, D3DFORMAT format, UINT mode, D3DDIS
 }
 
 HRESULT D3D9::GetAdapterDisplayMode(UINT adapter, D3DDISPLAYMODE* mode) {
+    trace("GetAdapterDisplayMode");
     if (adapter || !mode) return D3DERR_INVALIDCALL;
     int w = 1280, h = 720;
     platform::display_size(&w, &h);
@@ -41,6 +54,7 @@ HRESULT D3D9::GetAdapterDisplayMode(UINT adapter, D3DDISPLAYMODE* mode) {
 }
 
 HRESULT D3D9::CheckDeviceFormat(UINT adapter, D3DDEVTYPE, D3DFORMAT, DWORD usage, D3DRESOURCETYPE, D3DFORMAT format) {
+    trace("CheckDeviceFormat");
     if (adapter) return D3DERR_INVALIDCALL;
     const FormatInfo* f = format_info(format);
     if (!f) return D3DERR_NOTAVAILABLE;
@@ -56,6 +70,7 @@ HRESULT D3D9::CheckDeviceMultiSampleType(UINT adapter, D3DDEVTYPE, D3DFORMAT, BO
 }
 
 HRESULT D3D9::GetDeviceCaps(UINT adapter, D3DDEVTYPE, D3DCAPS9* caps) {
+    trace("GetDeviceCaps");
     if (adapter || !caps) return D3DERR_INVALIDCALL;
     fill_caps(caps);
     return D3D_OK;
@@ -63,6 +78,7 @@ HRESULT D3D9::GetDeviceCaps(UINT adapter, D3DDEVTYPE, D3DCAPS9* caps) {
 
 HRESULT D3D9::CreateDevice(UINT adapter, D3DDEVTYPE, HWND window, DWORD flags, D3DPRESENT_PARAMETERS* params,
                            IDirect3DDevice9** out) {
+    trace("CreateDevice");
     if (adapter || !params || !out) return D3DERR_INVALIDCALL;
     auto* d = new Device(this, window, flags, *params);
     if (!d->init()) {

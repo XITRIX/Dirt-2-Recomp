@@ -1432,8 +1432,10 @@ uint32_t wrap_by_iid(const GUID& iid, void* obj) {
 
 STDCALL(d3d9, Direct3DCreate9, 1) {
     IDirect3D9* d3d = Direct3DCreate9(a[0]);
-    rt::log("d3d9: Direct3DCreate9(%u) -> %p", a[0], static_cast<void*>(d3d));
-    return wrap(d3d);
+    const uint32_t proxy = wrap(d3d);
+    rt::log("d3d9: Direct3DCreate9(%u) -> %p (proxy %08X, thread %u)", a[0], static_cast<void*>(d3d), proxy,
+            rt::current_thread_id());
+    return proxy;
 }
 STDCALL(d3d9, D3DPERF_SetOptions, 1) { return 0; }
 
