@@ -160,7 +160,8 @@ const std::vector<DisplayMode>& display_modes() {
         if (h > w) std::swap(w, h);  // the game runs landscape
         std::vector<DisplayMode> out;
         for (const float s : {0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f})
-            out.push_back({(uint32_t(w * s) + 1) & ~1u, (uint32_t(h * s) + 1) & ~1u, hz, s});
+            // Multiples of 8, so the game's half/quarter/eighth-size buffers stay whole.
+            out.push_back({(uint32_t(w * s) + 7) & ~7u, (uint32_t(h * s) + 7) & ~7u, hz, s});
         rt::log("platform: render modes %ux%u x0.5 .. x2 at %u Hz", w, h, hz);
         return out;
     }();

@@ -1207,7 +1207,25 @@ HRESULT lock_rect(uint32_t proxy, uint32_t sub, uint32_t guest_lr, const D3DSURF
                   DWORD flags, LockFn&& lock, UnlockFn&& unlock) {
     D3DLOCKED_RECT lr{};
     const HRESULT hr = lock(&lr, flags);
-    if (FAILED(hr)) return hr;
+    if (FAILED(hr)) {
+        // The game does not check LockRect: it copies through pBits regardless,
+        // and a stale pointer there crashed it (writing to guest 0x2800 after a
+        // Reset on iPad). Hand it scratch memory; the matching unlock drops it.
+        static std::atomic<int> logged{0};
+        if (logged++ < 20)
+            rt::log("d3d9: LockRect %08X/%X %ux%u fmt %u pool %u usage %X flags %X failed: %08X", proxy, sub, desc.Width,
+                    desc.Height, desc.Format, desc.Pool, desc.Usage, flags, uint32_t(hr));
+        Staging s;
+        const uint32_t row = std::max<uint32_t>(16, desc.Width * 16);  // generous: up to 128-bit texels
+        shape_rect(s, desc, rect, row);
+        s.guest = rt::heap_alloc((s.slices - 1) * s.slice_pitch + (s.rows - 1) * s.row_pitch + s.row_bytes + 16, true);
+        s.commit = [](const Staging&) { return HRESULT(D3D_OK); };
+        wr32(guest_lr, s.row_pitch);
+        wr32(guest_lr + 4, s.guest);
+        std::lock_guard lk(g_mu);
+        g_locks[{proxy, sub}] = std::move(s);
+        return hr;
+    }
     Staging s;
     shape_rect(s, desc, rect, uint32_t(lr.Pitch));
     if ((flags & D3DLOCK_DISCARD) && desc.Pool != D3DPOOL_SYSTEMMEM) {
