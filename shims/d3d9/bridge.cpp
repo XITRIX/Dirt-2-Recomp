@@ -19,6 +19,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <mutex>
@@ -467,8 +468,10 @@ void d3d_create_device(X86* c) {
     HWND focus = HWND(host_window(a[3]));
     D3DPRESENT_PARAMETERS* p = pp.get();
     pp.apply_window(focus);
-    rt::log("d3d9: CreateDevice %ux%u fmt %u fullscreen %d flags 0x%X", p ? p->BackBufferWidth : 0,
-            p ? p->BackBufferHeight : 0, p ? p->BackBufferFormat : 0, pp.windowed ? 0 : 1, a[4]);
+    rt::log("d3d9: CreateDevice %ux%u fmt %u fullscreen %d flags 0x%X backbuffers %u swap %u interval 0x%X ms %u",
+            p ? p->BackBufferWidth : 0, p ? p->BackBufferHeight : 0, p ? p->BackBufferFormat : 0, pp.windowed ? 0 : 1,
+            a[4], p ? p->BackBufferCount : 0, p ? p->SwapEffect : 0, p ? p->PresentationInterval : 0,
+            p ? p->MultiSampleType : 0);
     // The game uses the device from its loader threads as well as the render
     // thread; Windows drivers tolerate that, DXVK only serialises with
     // D3DCREATE_MULTITHREADED. Without it, concurrent calls corrupt DXVK state
@@ -857,6 +860,12 @@ void capture_back_buffer(IDirect3DDevice9* dev, uint32_t frame) {
     static const uint32_t count = std::getenv("DIRT2_SCREENSHOT_COUNT") ? std::atoi(std::getenv("DIRT2_SCREENSHOT_COUNT")) : 0;
     if (!dir || !every || frame < from || frame % every) return;
     if (count && frame >= from + count * every) return;
+    static const bool made = [] {
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        return true;
+    }();
+    (void)made;
     IDirect3DSurface9* bb = nullptr;
     if (FAILED(dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &bb))) return;
     D3DSURFACE_DESC d{};
@@ -893,6 +902,13 @@ void capture_back_buffer(IDirect3DDevice9* dev, uint32_t frame) {
 }
 
 // Present(src, dst, hDestWindowOverride, dirty): the override window is ignored.
+std::string str_rect(uint32_t r) {
+    char b[64];
+    std::snprintf(b, sizeof b, "(%d,%d)-(%d,%d)", int32_t(rd32(r)), int32_t(rd32(r + 4)), int32_t(rd32(r + 8)),
+                  int32_t(rd32(r + 12)));
+    return b;
+}
+
 void dev_present(X86* c) {
     const Args a{c};
     auto* self = static_cast<IDirect3DDevice9*>(to_host(a[0]));
@@ -907,6 +923,13 @@ void dev_present(X86* c) {
         static std::map<uint32_t, uint32_t> per_thread;
         std::lock_guard lk(mu);
         ++per_thread[rt::current_thread_id()];
+        if (frame <= 40) {
+            auto rect = [&](uint32_t r) {
+                return r ? str_rect(r) : std::string("-");
+            };
+            rt::log("d3d9: Present #%u t%u caller %08X src %s dst %s hwnd 0x%X dirty %08X", frame,
+                    rt::current_thread_id(), rd32(c->esp), rect(a[1]).c_str(), rect(a[2]).c_str(), a[3], a[4]);
+        }
         if (frame % 300 == 0) {
             std::string line;
             for (auto& [t, n] : per_thread) line += " t" + std::to_string(t) + "=" + std::to_string(n);

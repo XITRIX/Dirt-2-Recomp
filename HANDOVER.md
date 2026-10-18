@@ -14,7 +14,7 @@ Run Colin McRae DiRT 2 (Steam v1.1, `dirt2_game.exe`) natively on Apple platform
 | Boot | Boots through CRT, GFWL (offline) and engine init on macOS. |
 | Frontend | 3D frontend renders in correct colour with audio. Bink intros play correctly (skipped by default). |
 | Race | Not reached yet. |
-| iOS | Builds for device and simulator from the same sources and scripts as macOS (see Build). |
+| iOS | Runs on an iPhone 15 Pro Max (A17 Pro): boots, plays the intros, renders the 3D title screen at 35-60 fps. Same sources and scripts as macOS (see Build). |
 
 Latest fixes:
 
@@ -26,7 +26,7 @@ Latest fixes:
 ## Open issues, in priority order
 
 1. **Fullscreen not retested** since the device-lost fix below; it previously crashed all of macOS. Test it windowed first, then fullscreen.
-2. **Flicker in the 3D frontend** (alternate black frames on some launches). Not rechecked since the alpha fix, which may have cured it.
+2. ~~Flicker (black frames on some launches)~~: fixed in MoltenVK, `0003-swapchain-view-follows-drawable.patch` (STATUS.md, open issue 3).
 3. **Performance:** about 15 fps in 3D scenes. Not profiled yet.
 4. Then: drive the game into a race and fix what breaks. On iOS: a touch overlay, the memory budget on a real device, and backgrounding.
 

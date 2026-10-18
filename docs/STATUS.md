@@ -11,7 +11,7 @@ Target executable: `dirt2_game.exe`, SHA-256 `49b1e00ea1d4bd02e633ceed63390b5cae
 | 3 | Headless boot on macOS to the main loop | In progress: boots through CRT, GFWL and engine init to `Direct3DCreate9` |
 | 4 | Frontend renders (DXVK d3d9 + MoltenVK), audio, input, Bink | In progress: 3D frontend and Bink videos render in correct colour with audio; open: flicker, ~15 fps in 3D scenes |
 | 5 | Playable race on macOS | |
-| 6 | Playable race on iOS | In progress: signed device build and simulator build from the same static sources; not yet run on a device. The simulator GPU lacks descriptor indexing and subgroup control, so DXVK stops at adapter selection there |
+| 6 | Playable race on iOS | In progress: runs on an iPhone 15 Pro Max (A17 Pro) to the 3D title screen at 35-60 fps; data copied into Documents. The simulator GPU lacks descriptor indexing and subgroup control, so DXVK stops at adapter selection there |
 | 7 | tvOS, visionOS, performance | |
 
 ## Analysis results (milestone 1)
@@ -163,7 +163,10 @@ Debugging aids:
    - **Fix** (`third_party/patches/SPIRV-Cross/0001-msl-mixed-compare-images.patch`): an image declared non-depth that is sampled both ways stays `texture2d`, and its comparisons are emulated (gather plus bilinear PCF, LESS_EQUAL as in D3D9; point compare for cube and 3D). All other shaders translate exactly as before.
    - Pitfall found on the way: `/usr/bin/perl` (SIP) strips `DYLD_LIBRARY_PATH`, so a test started through `perl -e alarm` loads Homebrew's MoltenVK 1.2.11 and DXVK finds no Vulkan 1.3 adapter. Set the variable inside perl (`$ENV{DYLD_LIBRARY_PATH}=...`).
 2. ~~Device lost after about 40 s~~: fixed by forcing `D3DCREATE_MULTITHREADED`.
-3. **Flicker in the 3D frontend**, reported on screen and not yet investigated. It may share a cause with 2.
+3. ~~Flicker: alternate black frames on some launches~~: fixed in MoltenVK.
+   - Measured, not guessed: a screen recording analysed per frame showed one presented image in three black on affected launches (2 of 5 launches), while every back buffer read just before Present was intact. One presenter, one thread, one back buffer: the loss was after Present.
+   - Root cause: DXVK blits into the swapchain image through an sRGB view (`BGRA8Unorm_sRGB` on a `BGRA8Unorm` image). MoltenVK therefore makes a Metal texture view of the image's texture, which for a swapchain image is the drawable current at first use, and caches it forever. CAMetalLayer hands out other drawable textures later, so frames for that image index went into a texture nobody presented.
+   - Fix (`third_party/patches/MoltenVK/0003-swapchain-view-follows-drawable.patch`): a cached view of a swapchain image is rebuilt when the drawable texture changed. 10 of 10 launches clean afterwards. Forcing vsync, synchronous submits or presenting without a command buffer did not help, which ruled out pacing.
 4. ~~Device lost again (`kIOGPUCommandBufferCallbackErrorInvalidResource`), and fullscreen launches that could take down macOS~~: fixed in MoltenVK.
    - `MTL_DEBUG_LAYER=1` asserted `notifyExternalReferencesNonZeroOnDealloc` within about 4 s: a Metal buffer or texture was freed while a submitted command buffer still used it. Under lldb, the backtrace was `DxvkSubmissionQueue::finishCmdLists` → `~DxvkBuffer` → `freeEmptyChunksInPool` → `vkDestroyBuffer` → `MVKBuffer::destroy`.
    - **Root cause:** on macOS 15+, MoltenVK keeps resources resident through one `MTLResidencySet` attached to the queue, and submits command buffers with unretained references (`needsRetain` is false when a residency set exists). `MVKDevice::removeResidency` removed the allocation and committed the set immediately, and the caller released the Metal object straight away. DXVK frees memory once *its* command list completes, while other command buffers still in flight rely on the residency set. Once the GPU touches a non-resident or freed allocation, `InvalidResource` follows, then device lost.

@@ -1,0 +1,23 @@
+diff --git a/MoltenVK/MoltenVK/GPUObjects/MVKImage.mm b/MoltenVK/MoltenVK/GPUObjects/MVKImage.mm
+index 5463d5a8..e1f48bcd 100644
+--- a/MoltenVK/MoltenVK/GPUObjects/MVKImage.mm
++++ b/MoltenVK/MoltenVK/GPUObjects/MVKImage.mm
+@@ -1843,6 +1843,18 @@ static void signalAndUntrack(const MVKSwapchainSignaler& signaler) {
+ id<MTLTexture> MVKImageViewPlane::getMTLTexture() {
+     // If we can use a Metal texture view, lazily create it, otherwise use the image texture directly.
+     if (_useMTLTextureView) {
++        // A swapchain image's texture is the current CAMetalDrawable's, which changes on
++        // every acquire. A view made on an earlier drawable would send rendering to a
++        // texture that is not presented (black frames), so rebuild it when the drawable
++        // texture changed.
++        if (_mtlTexture && dynamic_cast<MVKSwapchainImage*>(_imageView->_image)) {
++            lock_guard<mutex> lock(_imageView->_lock);
++            if (_mtlTexture && _mtlTexture.parentTexture != _imageView->_image->getMTLTexture(_planeIndex)) {
++                getDevice()->getLiveResources().remove(_mtlTexture);
++                [_mtlTexture release];
++                _mtlTexture = nil;
++            }
++        }
+         if ( !_mtlTexture && _mtlPixFmt ) {
+ 
+             // Lock and check again in case another thread created the texture view

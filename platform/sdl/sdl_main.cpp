@@ -43,17 +43,42 @@ void on_main(F&& f) {
 
 }  // namespace
 
+#if defined(SDL_PLATFORM_IOS) || defined(SDL_PLATFORM_TVOS) || defined(SDL_PLATFORM_VISIONOS)
+// One window per screen: every top-level game window (the loading splash, then
+// the main window) shares it; it goes away with the last one.
+constexpr bool kSingleWindow = true;
+#else
+constexpr bool kSingleWindow = false;
+#endif
+static SDL_Window* g_shared_window = nullptr;
+static int g_shared_refs = 0;
+
 Window create_window(int width, int height, const char* title) {
     SDL_Window* w = nullptr;
     on_main([&] {
+        if (kSingleWindow && g_shared_window) {
+            ++g_shared_refs;
+            w = g_shared_window;
+            return;
+        }
         w = SDL_CreateWindow(title, width, height, SDL_WINDOW_VULKAN | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
         if (!w) rt::log("SDL_CreateWindow failed: %s", SDL_GetError());
+        if (kSingleWindow && w) {
+            g_shared_window = w;
+            g_shared_refs = 1;
+        }
     });
     return w;
 }
 
 void destroy_window(Window w) {
-    on_main([&] { SDL_DestroyWindow(static_cast<SDL_Window*>(w)); });
+    on_main([&] {
+        if (kSingleWindow && w == g_shared_window) {
+            if (--g_shared_refs > 0) return;
+            g_shared_window = nullptr;
+        }
+        SDL_DestroyWindow(static_cast<SDL_Window*>(w));
+    });
 }
 
 void set_window_size(Window w, int width, int height) {
@@ -140,6 +165,13 @@ int main(int argc, char** argv) {
                     break;
                 }
             if (dir.empty()) {
+                // The Files app lists an app's folder only once Documents holds
+                // something: leave the instructions there.
+                if (FILE* f = std::fopen((std::string(docs) + "Copy the Dirt 2 folder here.txt").c_str(), "w")) {
+                    std::fputs("Copy the \"Dirt 2\" game folder (the one with dirt2_game.exe) into this folder, "
+                               "then start DiRT 2 again.\n", f);
+                    std::fclose(f);
+                }
                 const std::string msg = "Copy the \"Dirt 2\" game folder (the one with dirt2_game.exe) into this app's "
                                         "Documents with Finder or the Files app, then start the app again.\n\n" +
                                         std::string(docs);
@@ -168,6 +200,8 @@ int main(int argc, char** argv) {
         std::filesystem::create_directories(data, ec);
         setenv("DXVK_LOG_PATH", data.c_str(), 0);
         setenv("DXVK_STATE_CACHE_PATH", data.c_str(), 0);
+        // Defaults to $HOME/.cache, which is not writable on iOS (HOME is the container root).
+        setenv("DXVK_SHADER_CACHE_PATH", data.c_str(), 0);
         rt::set_discovery_log(data + "/recomp_discovered.txt");
     }
     // SDL's GameController (MFi) driver reports some pads (Backbone One) as
