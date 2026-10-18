@@ -31,11 +31,16 @@ bool prompt_text(const std::string& title, const std::string& message, const std
 // until the app is back in the foreground.
 void gpu_checkpoint();
 
-// Save-game sync through iCloud Drive (no-op without iCloud). start: before
-// the game runs, pulls a newer snapshot from another device into local_dir,
+// Save-game sync through iCloud Drive (no-op without iCloud). start: called on
+// the game thread before the game runs (it may ask the user, so the main thread
+// must be pumping events); pulls another device's newer snapshot into local_dir,
 // then uploads after each save. flush: uploads now (going to the background).
 void cloud_saves_start(const std::string& local_dir);
 void cloud_saves_flush();
+
+// Asks the user to pick one of two options in a native dialog; returns 0 or 1.
+// Blocks the calling thread, which must not be the main thread.
+int choose(const std::string& title, const std::string& message, const std::string& first, const std::string& second);
 
 // Uses the image at path (e.g. the game's dirt2.ico) as the application icon
 // where the platform takes it from the process (macOS without a bundle).

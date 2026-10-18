@@ -138,8 +138,13 @@ namespace {
 
 std::atomic<bool> g_guest_done{false};
 
+std::string g_saves_dir;
+
 void* game_main(void*) {
     rt::install_crash_handler();
+    // Saves sync before the game reads them (C:\Users\Player\Documents maps into
+    // the data folder). On this thread so the main thread can show a dialog.
+    platform::cloud_saves_start(g_saves_dir);
     X86* c = rt::create_main_thread();
     rt::log("entering guest at 0x%08X", recomp_image_info.entry);
     const uint32_t r = rt::invoke(c, recomp_image_info.entry, {}, true);
@@ -300,8 +305,7 @@ int main(int argc, char** argv) {
     if (std::filesystem::exists(data + "/gamecontrollerdb.txt"))
         SDL_AddGamepadMappingsFromFile((data + "/gamecontrollerdb.txt").c_str());
 
-    // Saves sync before the game reads them (C:\Users\Player\Documents maps into the data folder).
-    platform::cloud_saves_start(data + "/C/Users/Player/Documents/My Games/DiRT2/savegame");
+    g_saves_dir = data + "/C/Users/Player/Documents/My Games/DiRT2/savegame";
 
     if (!rt::mem_init()) return 1;
     std::string err;

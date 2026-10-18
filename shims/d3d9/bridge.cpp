@@ -1376,6 +1376,15 @@ void buf_lock(X86* c) {  // Lock(offset, size, void** ppbData, flags)
         if (SUCCEEDED(hr)) {
             std::lock_guard lk(g_mu);
             BufferShadow& sh = g_shadows[a[0]];
+            // Shadows are keyed by the guest proxy address, which the heap reuses
+            // once a buffer is released: the game releases a vertex buffer and
+            // creates a larger one, often at the same address. A stale, smaller
+            // shadow let its memcpy overrun into the next heap block (the new
+            // proxy, whose vtable it zeroed). Match the shadow to this buffer.
+            if (sh.guest && sh.size != d.Size && sh.locks.empty()) {
+                rt::heap_free(sh.guest);
+                sh = BufferShadow{};
+            }
             if (!sh.guest) {
                 sh.size = d.Size;
                 sh.guest = rt::heap_alloc(d.Size ? d.Size : 16, true);
