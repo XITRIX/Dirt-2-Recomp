@@ -630,12 +630,15 @@ int main(int argc, char** argv) {
     platform::set_app_icon(dir + "/dirt2.ico");
     // Community mappings shipped next to the executable, then optional user
     // additions in the data directory (later entries override earlier ones).
+    // The Switch's own controllers need none (SDL's Switch joystick driver).
+#if !defined(SDL_PLATFORM_SWITCH)
     if (const char* base = SDL_GetBasePath()) {
         const std::string db = std::string(base) + "gamecontrollerdb.txt";
         const int n = SDL_AddGamepadMappingsFromFile(db.c_str());
         if (n < 0) rt::log("gamepad mappings: cannot load %s: %s", db.c_str(), SDL_GetError());
         else rt::log("gamepad mappings: %d from %s", n, db.c_str());
     }
+#endif
     if (std::filesystem::exists(data + "/gamecontrollerdb.txt"))
         SDL_AddGamepadMappingsFromFile((data + "/gamecontrollerdb.txt").c_str());
 
