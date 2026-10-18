@@ -89,7 +89,15 @@ bool lift_program(const PeImage& img, const Disasm& dis, const Discovery& disc, 
                 for (size_t i = k * per; i < std::min(funcs.size(), (k + 1) * per); ++i) {
                     FnLifter fl(img, dis, disc, *funcs[i], lifted, part[t], resumable.count(funcs[i]->start) != 0);
                     fl.check_esp = opt.check_esp;
-                    src += fl.emit();
+                    std::string body = fl.emit();
+                    if (opt.hooks.count(funcs[i]->start)) {
+                        const std::string name = FnLifter::fn_name(funcs[i]->start);
+                        const std::string def = "void " + name + "(X86* c) {";
+                        if (const size_t at = body.find(def); at != std::string::npos)
+                            body.replace(at, def.size(), "void " + name + "_orig(X86* c);\n/* Host hook: " + name +
+                                                             " is defined by the host. */\nvoid " + name + "_orig(X86* c) {");
+                    }
+                    src += body;
                     ++part[t].functions;
                 }
                 if (!write_file(std::format("{}/gen_{:04}.c", dir, k), src)) failed = true;

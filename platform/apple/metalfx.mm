@@ -17,7 +17,6 @@
 
 #include <atomic>
 #include <cstdio>
-#include <fstream>
 #include <mutex>
 #include <string>
 
@@ -30,9 +29,8 @@ namespace platform {
 
 namespace {
 
-std::atomic<bool> g_enabled{true};
+std::atomic<bool> g_enabled{true};  // the game's graphics menu sets it (set_metalfx_enabled)
 bool g_supported = false;
-std::string g_settings;  // <data>/metalfx.txt: "1" or "0"
 
 struct Cache {
     id<MTLFXSpatialScaler> scaler = nil;
@@ -158,16 +156,13 @@ void present_hook(VkDevice device, VkQueue queue, VkImage srcImage, VkExtent2D s
 
 }  // namespace
 
-void metalfx_init(const std::string& data_dir) {
+void metalfx_init() {
     @autoreleasepool {
         id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
         if (@available(macOS 13.0, iOS 16.0, *))
             g_supported = dev && [MTLFXSpatialScalerDescriptor supportsDevice:dev];
     }
-    g_settings = data_dir + "/metalfx.txt";
-    std::string v;
-    if (std::ifstream in(g_settings); in >> v) g_enabled = v != "0";
-    rt::log("metalfx: %s, %s", g_supported ? "supported" : "not supported", g_enabled ? "on" : "off");
+    rt::log("metalfx: %s", g_supported ? "supported" : "not supported");
     if (g_supported) dxvk_set_present_hook(present_hook);
 }
 
@@ -175,8 +170,7 @@ bool metalfx_supported() { return g_supported; }
 bool metalfx_enabled() { return g_supported && g_enabled; }
 
 void set_metalfx_enabled(bool on) {
-    g_enabled = on;
-    std::ofstream(g_settings) << (on ? "1" : "0") << "\n";
+    if (g_enabled.exchange(on) == on || !g_supported) return;
     rt::log("metalfx: %s", on ? "on" : "off");
 }
 

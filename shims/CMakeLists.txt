@@ -13,6 +13,7 @@ add_library(dirt2_shims OBJECT
   xlive/xlive.cpp
   ws2_32/ws2_32.cpp
   d3d9/bridge.cpp
+  frontend/menu_patch.cpp
   audio/dsound.cpp
   input/dinput8.cpp
   input/xinput.cpp

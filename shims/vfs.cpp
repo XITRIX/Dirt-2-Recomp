@@ -19,6 +19,7 @@ std::mutex g_mu;
 std::string g_data;
 std::string g_cwd = kInstallDir;
 std::unordered_map<std::string, std::vector<std::string>> g_dirs;  // host dir -> entries
+std::unordered_map<std::string, std::string> g_overrides;          // lower-case "dir/file" -> host file
 
 std::string lower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char ch) { return std::tolower(ch); });
@@ -120,6 +121,11 @@ std::string host_path(const std::string& win) {
         root = data_dir() + "/" + full.substr(0, 1);
     }
     std::lock_guard lk(g_mu);
+    if (skip && !g_overrides.empty()) {
+        std::string rel;
+        for (size_t i = skip; i < parts.size(); ++i) rel += (rel.empty() ? "" : "/") + lower(parts[i]);
+        if (auto it = g_overrides.find(rel); it != g_overrides.end()) return it->second;
+    }
     std::string cur = root;
     bool exists = true;
     for (size_t i = skip; i < parts.size(); ++i) {
@@ -135,6 +141,11 @@ std::string host_path(const std::string& win) {
         cur += "/" + name;
     }
     return cur;
+}
+
+void set_override(const std::string& install_relative, const std::string& host_file) {
+    std::lock_guard lk(g_mu);
+    g_overrides[lower(install_relative)] = host_file;
 }
 
 void invalidate(const std::string& host_dir) {

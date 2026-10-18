@@ -102,11 +102,19 @@ Producing the shipped data:
 3. Re-run CMake (the files are picked up at configure time), build, and package: CMake copies them next to the macOS executable and into the iOS bundle; `package_macos.sh` includes them.
 4. Whenever a DXVK patch changes shader conversion or the pipeline state layout, bump `DXVK_VERSION` in `0003-pipeline-warmup.patch` (`meson.build`) and re-record: older caches and pipeline files are then ignored, and logged as such.
 
+## Render scale and MetalFX
+
+- **Resolution menu:** the game's own Resolution row lists native ×0.5, ×0.75, ×1, ×1.25, ×1.5 and ×2. Sizes are multiples of 8 and each label shows its multiplier, e.g. "2704 x 1760 (0.75x)". The modes come from `platform::display_modes()`; the bridge serves them through `EnumAdapterModes`, and the label hook is at vtable slot 0x0131B6C0 in `bridge.cpp`.
+- **MetalFX:** below ×1, `platform/apple/metalfx.mm` upscales each frame into the drawable with `MTLFXSpatialScaler`. It runs from a DXVK present hook (`dxvk/0002-present-hook.patch`).
+- **METALFX row in Graphics:** this is the game's DX11-only ambient occlusion row (item_23, `pc_gfx_dao`), which the DX9 path hides. `shims/frontend/menu_patch.cpp` shows it under Multisampling, with Off/On options, through VFS overrides (`vfs::set_override`). The patched files are `system/states.bin`, `hardware_settings_options.xml` and `hardware_settings_config.xml`, written to `<data>/overlay`; the game folder is never touched. The value is saved as `<dynamic_ambient_occ enabled>`, which the DX9 renderer never reads, and `sdl_main.cpp` watches it. On devices without MetalFX the row stays hidden.
+- **Row title:** the game shows a string id missing from the language file as `<id>`. The lookup at 0x01161960 is therefore hooked (`tools/recomp/config/hooks.txt`, `recomp lift --hooks`) to answer `lng_metalfx_combo_title`.
+- **Menu data:** `tools/scripts/states_bin.py dump <states.bin> id=rv_graphics_options` prints the compiled menu XML, and `roundtrip` checks the encoder. In `states.bin`, a row's place is its slot number (`glyph`, `IBScreenGenericData index`, `IBGlyphLink`). `itemflow` holds the pad order, one id per line, and the game splits it on line breaks.
+
 ## Layout
 
 | Path | Contents |
 |---|---|
-| `tools/recomp` | Lifter (Zydis; C emitter, SSE/x87, SEH landing pads, `--entries`, `--check-esp`) |
+| `tools/recomp` | Lifter (Zydis; C emitter, SSE/x87, SEH landing pads, `--entries`, `--hooks`, `--check-esp`) |
 | `runtime/` | 4 GB guest address space, threads/TEB/TLS, dispatch, SEH, `RECOMP_TSO` |
 | `shims/` | One folder per DLL. Key files: `d3d9/bridge.cpp` (guest COM proxies to DXVK), `d3dx9/`, `kernel32/sync.cpp`, `video/bink*.cpp` (FFmpeg) |
 | `platform/sdl` | SDL3 host: window and events on the main thread |

@@ -53,10 +53,10 @@ void cloud_saves_start(const std::string& local_dir);
 void cloud_saves_flush();
 
 // MetalFX spatial upscaling of the frame when the render scale is below 1
-// (platform/apple/metalfx.mm). init: before the game creates its device; the
-// setting persists in <data>/metalfx.txt (default on). Unsupported devices
-// never upscale with MetalFX, and the menu row is not shown there.
-void metalfx_init(const std::string& data_dir);
+// (platform/apple/metalfx.mm). init: before the game creates its device. The
+// setting is the game's graphics menu row (shims/frontend/menu_patch.cpp),
+// default on. Unsupported devices never upscale with MetalFX and get no row.
+void metalfx_init();
 bool metalfx_supported();
 bool metalfx_enabled();
 void set_metalfx_enabled(bool on);

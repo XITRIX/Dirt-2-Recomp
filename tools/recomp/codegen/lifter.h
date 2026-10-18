@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <map>
+#include <set>
 #include <string>
 
 #include "analysis/discovery.h"
@@ -14,6 +15,10 @@ struct LiftOptions {
     bool include_dead = false;     // lift unreferenced (gap-scanned) functions too
     bool check_esp = false;        // debug: report functions whose ret sees a different esp than entry
     size_t funcs_per_file = 300;
+    // Functions the host replaces: the lifted body is emitted as f_XXXXXXXX_orig
+    // (declared in its own file only) and the host defines f_XXXXXXXX, which may
+    // call it. funcs.h and every caller stay unchanged.
+    std::set<uint32_t> hooks;
 };
 
 struct LiftStats {

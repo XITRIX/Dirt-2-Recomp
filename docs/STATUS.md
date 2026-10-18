@@ -200,7 +200,7 @@ Debug switches:
 ## Run
 
 ```bash
-./build/macos-arm64/tools/recomp/recomp lift "<game dir>/dirt2_game.exe" --out generated --entries tools/recomp/config/entries.txt
+./build/macos-arm64/tools/recomp/recomp lift "<game dir>/dirt2_game.exe" --out generated --entries tools/recomp/config/entries.txt --hooks tools/recomp/config/hooks.txt
 cmake --preset macos-arm64 && cmake --build build/macos-arm64
 ./build/macos-arm64/dirt2 --game "<game dir>"
 ```

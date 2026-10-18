@@ -22,6 +22,8 @@
 namespace shim {
 void post_message(uint32_t hwnd, uint32_t msg, uint32_t wp, uint32_t lp);
 void install_resolution_labels();
+void install_menu_patches(bool metalfx_row);
+int read_metalfx_setting(const std::string& path);
 }
 
 namespace rt {
@@ -225,12 +227,39 @@ void normalise_resolution(const std::string& path) {
     }
 }
 
+// MetalFX on/off is the graphics menu's MetalFX row, saved in the game's
+// hardware settings (shims/frontend/menu_patch.cpp).
+void read_metalfx_setting(const std::string& path) {
+    if (const int on = shim::read_metalfx_setting(path); on >= 0) platform::set_metalfx_enabled(on != 0);
+}
+
+// The game writes its settings when they are applied; checked once a second.
+void watch_metalfx_setting(std::string path) {
+    std::thread([path] {
+        std::filesystem::file_time_type seen{};
+        for (;;) {
+            std::error_code ec;
+            const auto t = std::filesystem::last_write_time(path, ec);
+            if (!ec && t != seen) {
+                seen = t;
+                read_metalfx_setting(path);
+            }
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+    }).detach();
+}
+
 void* game_main(void*) {
     rt::install_crash_handler();
     // Saves sync before the game reads them (C:\Users\Player\Documents maps into
     // the data folder). On this thread so the main thread can show a dialog.
     platform::cloud_saves_start(g_saves_dir);
     normalise_resolution(g_hw_config);
+    if (platform::metalfx_supported()) {
+        read_metalfx_setting(g_hw_config);
+        rt::log("metalfx: %s", platform::metalfx_enabled() ? "on" : "off");
+        watch_metalfx_setting(g_hw_config);
+    }
     X86* c = rt::create_main_thread();
     rt::log("entering guest at 0x%08X", recomp_image_info.entry);
     const uint32_t r = rt::invoke(c, recomp_image_info.entry, {}, true);
@@ -416,7 +445,7 @@ int main(int argc, char** argv) {
         setenv("DXVK_SHADER_CACHE_PATH", data.c_str(), 0);
         rt::set_discovery_log(data + "/recomp_discovered.txt");
         tee_stderr(data + "/dirt2.log");
-        platform::metalfx_init(data);
+        platform::metalfx_init();
         setup_pipeline_warmup(data);
     }
     // SDL's GameController (MFi) driver reports some pads (Backbone One) as
@@ -457,6 +486,7 @@ int main(int argc, char** argv) {
     }
     if (chdir(dir.c_str()) != 0) rt::log("warning: cannot chdir to %s", dir.c_str());
     shim::install_resolution_labels();
+    shim::install_menu_patches(platform::metalfx_supported());
 
     pthread_attr_t attr;
     pthread_attr_init(&attr);

@@ -20,6 +20,9 @@ std::string data_dir();
 std::string full_path(const std::string& win);
 // Host path for a Windows path; existing components resolved case-insensitively.
 std::string host_path(const std::string& win);
+// Serves host_file in place of a game-folder file ("system/states.bin"), so
+// patched copies never touch the game folder.
+void set_override(const std::string& install_relative, const std::string& host_file);
 // Notifies the case cache that a directory's contents changed.
 void invalidate(const std::string& host_dir);
 

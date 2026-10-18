@@ -1,7 +1,7 @@
 // recomp: static recompiler for dirt2_game.exe.
 //
 //   recomp analyze <exe> [--out <dir>]
-//   recomp lift <exe> [--out <dir>] [--include-dead] [--entries <file>]
+//   recomp lift <exe> [--out <dir>] [--include-dead] [--entries <file>] [--hooks <file>]
 //   recomp disasm <exe> <hex addr> [count]
 #include <chrono>
 #include <cstdio>
@@ -28,10 +28,11 @@ int main(int argc, char** argv) {
     std::string out = "generated";
     bool include_dead = false;
     bool check_esp = false;
-    std::vector<std::string> entry_files;
+    std::vector<std::string> entry_files, hook_files;
     for (int i = 3; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--out") && i + 1 < argc) out = argv[++i];
         else if (!std::strcmp(argv[i], "--entries") && i + 1 < argc) entry_files.push_back(argv[++i]);
+        else if (!std::strcmp(argv[i], "--hooks") && i + 1 < argc) hook_files.push_back(argv[++i]);
         else if (!std::strcmp(argv[i], "--include-dead")) include_dead = true;
         else if (!std::strcmp(argv[i], "--check-esp")) check_esp = true;
     }
@@ -116,6 +117,13 @@ int main(int argc, char** argv) {
         lo.out_dir = out;
         lo.include_dead = include_dead;
         lo.check_esp = check_esp;
+        for (const std::string& path : hook_files)  // same format as --entries
+            if (FILE* f = std::fopen(path.c_str(), "r")) {
+                char buf[64];
+                while (std::fgets(buf, sizeof buf, f))
+                    if (buf[0] != '#' && std::strlen(buf) > 1) lo.hooks.insert(uint32_t(std::strtoul(buf, nullptr, 16)));
+                std::fclose(f);
+            }
         LiftStats ls;
         if (!lift_program(*img, dis, disc, lo, ls, err)) {
             std::fprintf(stderr, "error: %s\n", err.c_str());
