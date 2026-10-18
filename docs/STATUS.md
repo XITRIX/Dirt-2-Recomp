@@ -109,7 +109,7 @@ Debugging aids:
 
 **Stack:** game → guest COM bridge (`shims/d3d9`) → DXVK 3.1.1 d3d9 (native, SDL3 WSI) → MoltenVK 1.4.1 → Metal.
 
-- DXVK and MoltenVK are pinned submodules. The Apple changes are in `third_party/patches` and applied by `tools/scripts/apply_patches.sh`; `tools/scripts/build_graphics.sh` builds both.
+- DXVK and MoltenVK are pinned, pristine submodules. The Apple changes are in `third_party/patches`, applied to copies in `build/src` by `tools/scripts/prepare_sources.sh`; `tools/scripts/build_graphics.sh` builds both.
 - DXVK patches:
   - Darwin build fixes.
   - Vulkan and SDL resolved from the process, so static linking on iOS works.
