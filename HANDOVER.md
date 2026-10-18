@@ -46,6 +46,7 @@ Per-platform outputs never overlap, so platforms can build at the same time. Pla
 | `~/Library/Caches/Dirt2Recomp/xcode/` | Xcode derived data (must not live in `~/Documents`, see Pitfalls) |
 
 ```bash
+git clone --recurse-submodules <repo> && cd Dirt2   # DXVK has nested submodules
 tools/scripts/build_deps.sh macos iphoneos iphonesimulator      # libraries
 tools/scripts/build_graphics.sh macos iphoneos iphonesimulator  # MoltenVK + DXVK
 
@@ -106,4 +107,4 @@ tools/scripts/package_ios.sh device          # signs, writes build/package/iphon
 
 - Linear history on `main`: no merge commits. Rebase or recommit, and amend your own unpushed commits.
 - Commit milestone by milestone with the findings in the message, and keep STATUS.md current.
-- Nothing is pushed yet. The submodules show as modified because the patches are applied in place; the patch files are the source of truth.
+- Third-party changes live only as patches in `third_party/patches/` (see its README); the submodules stay on upstream commits and are marked `ignore = dirty`. Never commit inside a submodule.
