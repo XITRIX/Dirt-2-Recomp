@@ -63,7 +63,7 @@ tools/scripts/package_ios.sh device          # signs, writes build/package/iphon
 - The game on iOS reads its data from the app's Documents folder (copy the `Dirt 2` folder in with Finder or the Files app). In the simulator, `SIMCTL_CHILD_DIRT2_GAME_DIR=<mac path>` points it at the Mac's copy.
 - Device signing uses team `D59DHVRS87` and bundle id `com.daniilvinogradov.dirt2recomp` (override with `DIRT2_TEAM`, `DIRT2_BUNDLE_ID`). The profile must carry `extended-virtual-addressing` (the 4 GB guest space) and `increased-memory-limit`; if none is installed, `package_ios.sh` has Xcode create one through a stub project.
 - Re-lift after lifter changes: `tools/scripts/relift.sh`. It lifts with `--include-dead`; without it, races crash with `unknown target` on gap-scan functions.
-- Patches: `tools/scripts/apply_patches.sh` applies `third_party/patches/<name>/` to `third_party/<name>` or MoltenVK's `External/<name>`. It is idempotent.
+- Patches: `tools/scripts/prepare_sources.sh` exports each submodule to `build/src/<name>` and applies `third_party/patches/<name>/` there (MoltenVK's fetched dependencies too).
 - MoltenVK's externals (SPIRV-Cross, SPIRV-Tools) are one multi-platform xcframework at a path MoltenVK's project hard-codes. `build_mvk_externals.sh` builds it for all platforms at once, under a lock, and only when the SPIRV-Cross patch changes; per-platform MoltenVK builds only read it. MoltenVK's own `make` and `Package/` folder are not used. Do not rerun `fetchDependencies` on an existing checkout: it resets the External sources and drops the patch.
 - Game data (11.5 GB) is never committed. Saves, config and DXVK logs go to `~/Library/Application Support/Dirt2Recomp` on macOS and the app container's Library on iOS (override with `DIRT2_DATA_DIR`).
 
@@ -107,4 +107,4 @@ tools/scripts/package_ios.sh device          # signs, writes build/package/iphon
 
 - Linear history on `main`: no merge commits. Rebase or recommit, and amend your own unpushed commits.
 - Commit milestone by milestone with the findings in the message, and keep STATUS.md current.
-- Third-party changes live only as patches in `third_party/patches/` (see its README); the submodules stay on upstream commits and are marked `ignore = dirty`. Never commit inside a submodule.
+- Third-party changes live only as patches in `third_party/patches/` (see its README). The submodules stay pristine; `prepare_sources.sh` builds patched copies in `build/src`, and every build reads from there. Never edit or commit inside `third_party/`.

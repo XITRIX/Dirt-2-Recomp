@@ -1,5 +1,6 @@
 #!/bin/bash
-# Builds the graphics stack per platform, with the project's patches applied:
+# Builds the graphics stack per platform from the patched copies in build/src
+# (prepare_sources.sh; the submodules stay as upstream):
 #   MoltenVK (static)          -> build/moltenvk/<platform>   (build_moltenvk.sh)
 #   DXVK native d3d9 (static)  -> build/dxvk/<platform>/libdxvk_d3d9.a, one archive
 #                                 with DXVK's internal libraries merged in
@@ -12,7 +13,7 @@ cd "$(dirname "$0")/../.."
 ROOT=$PWD
 MIN_IOS=16.0
 
-tools/scripts/apply_patches.sh > /dev/null
+tools/scripts/prepare_sources.sh
 
 for PLATFORM in ${*:-macos}; do
     tools/scripts/build_moltenvk.sh "$PLATFORM"
@@ -54,7 +55,7 @@ EOF
             ;;
         *) echo "unknown platform $PLATFORM" >&2; exit 1 ;;
     esac
-    [ -d "$BLD" ] || (cd third_party/dxvk && meson setup "$BLD" "${MESON_ARGS[@]}")
+    [ -d "$BLD" ] || (cd build/src/dxvk && meson setup "$BLD" "${MESON_ARGS[@]}")
     ninja -C "$BLD"
     # One archive for the app: d3d9 plus every internal static library it uses.
     find "$BLD" -name '*.a' ! -path "$BLD/libdxvk_d3d9.a" -print0 | xargs -0 libtool -static -no_warning_for_no_symbols \

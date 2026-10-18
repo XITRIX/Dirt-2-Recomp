@@ -11,7 +11,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT=$PWD
-MVK=$ROOT/third_party/MoltenVK
+MVK=$ROOT/build/src/MoltenVK  # patched copy (prepare_sources.sh)
 DD=${DIRT2_XCODE_DD:-$HOME/Library/Caches/Dirt2Recomp/xcode}/mvk-externals
 OUT=$MVK/External/build/Release
 STAMP=$OUT/.dirt2-stamp
@@ -21,8 +21,7 @@ mkdir -p "$ROOT/build"
 until mkdir "$LOCK" 2>/dev/null; do sleep 2; done
 trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
 
-[ -d "$MVK/External/SPIRV-Cross" ] || (cd "$MVK" && ./fetchDependencies --none)
-tools/scripts/apply_patches.sh > /dev/null
+tools/scripts/prepare_sources.sh
 
 want=$(cat third_party/patches/SPIRV-Cross/*.patch | shasum | cut -d' ' -f1)
 if [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$want" ]; then

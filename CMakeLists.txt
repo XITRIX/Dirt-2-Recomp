@@ -63,7 +63,7 @@ endif()
 
 # Graphics: DXVK native d3d9 on MoltenVK, both static (build_graphics.sh).
 # DXVK finds vkGetInstanceProcAddr and SDL's functions in the process.
-set(DIRT2_DXVK_DIR "${CMAKE_SOURCE_DIR}/third_party/dxvk")
+set(DIRT2_DXVK_DIR "${CMAKE_SOURCE_DIR}/build/src/dxvk")  # patched copy (prepare_sources.sh)
 set(DIRT2_DXVK_BUILD_DIR "${CMAKE_SOURCE_DIR}/build/dxvk/${DIRT2_PLATFORM}" CACHE PATH "DXVK meson build directory")
 set(DIRT2_MOLTENVK_LIB_DIR "${CMAKE_SOURCE_DIR}/build/moltenvk/${DIRT2_PLATFORM}/lib" CACHE PATH "Folder with libMoltenVK.a")
 add_library(dxvk_d3d9 STATIC IMPORTED)
@@ -125,7 +125,7 @@ if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
   endif()
   # Looked up in the process at run time, so the linker must keep them: Vulkan's
   # entry points (DXVK, SDL) and the SDL functions DXVK's SDL3 WSI resolves
-  # (third_party/dxvk/src/wsi/sdl3/wsi_platform_sdl3.cpp).
+  # (build/src/dxvk/src/wsi/sdl3/wsi_platform_sdl3.cpp).
   foreach(sym vkGetInstanceProcAddr vkGetDeviceProcAddr
       SDL_GetClosestFullscreenDisplayMode SDL_GetCurrentDisplayMode SDL_GetDesktopDisplayMode SDL_GetDisplayBounds
       SDL_GetDisplayForWindow SDL_GetDisplayUsableBounds SDL_GetDisplays SDL_GetError SDL_GetFullscreenDisplayModes

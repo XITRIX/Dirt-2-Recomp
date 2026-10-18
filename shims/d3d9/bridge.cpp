@@ -1373,6 +1373,29 @@ void buf_lock(X86* c) {  // Lock(offset, size, void** ppbData, flags)
         self->GetDesc(&d);
         void* host = nullptr;
         hr = self->Lock(a[1], a[2], &host, a[4]);
+        if (FAILED(hr)) {
+            // The game never checks Lock: it memcpys into *ppbData regardless, and
+            // a stale pointer there has overwritten its own buffer objects (seen on
+            // iOS going to the background). Hand it scratch memory instead; the
+            // matching Unlock copies nothing.
+            static std::atomic<int> logged{0};
+            if (logged++ < 20)
+                rt::log("d3d9: buffer Lock(offset %u, size %u, flags %X) on %u-byte buffer failed: %08X (caller %08X)", a[1],
+                        a[2], a[4], d.Size, uint32_t(hr), rd32(c->esp));
+            std::lock_guard lk(g_mu);
+            BufferShadow& sh = g_shadows[a[0]];
+            if (sh.guest && sh.size != d.Size && sh.locks.empty()) {
+                rt::heap_free(sh.guest);
+                sh = BufferShadow{};
+            }
+            if (!sh.guest) {
+                sh.size = d.Size;
+                sh.guest = rt::heap_alloc(d.Size ? d.Size : 16, true);
+            }
+            const uint32_t off = std::min(a[1], sh.size);
+            if (a[3]) wr32(a[3], sh.guest + off);
+            sh.locks.push_back({off, 0, nullptr, true});  // nothing to copy back
+        }
         if (SUCCEEDED(hr)) {
             std::lock_guard lk(g_mu);
             BufferShadow& sh = g_shadows[a[0]];
@@ -1415,6 +1438,11 @@ void buf_unlock(X86* c) {
         if (it != g_shadows.end() && !it->second.locks.empty()) {
             const auto l = it->second.locks.back();
             it->second.locks.pop_back();
+            if (!l.host) {  // a failed Lock (scratch memory): the host buffer is not locked
+                c->eax = uint32_t(D3D_OK);
+                c->esp += 8;
+                return;
+            }
             if (!l.readonly) std::memcpy(l.host, rt::host_ptr(it->second.guest + l.offset), l.size);
         }
     }

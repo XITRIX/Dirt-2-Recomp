@@ -1,8 +1,6 @@
 [submodule "third_party/dxvk"]
 	path = third_party/dxvk
 	url = https://github.com/doitsujin/dxvk.git
-	ignore = dirty
 [submodule "third_party/MoltenVK"]
 	path = third_party/MoltenVK
 	url = https://github.com/KhronosGroup/MoltenVK.git
-	ignore = dirty

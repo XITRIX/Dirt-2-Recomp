@@ -1,10 +1,11 @@
 # Third-party patches
 
-The submodules stay on unmodified upstream commits; every change we need is a
-patch here, applied in place by `tools/scripts/apply_patches.sh` (idempotent,
-called by the build scripts). `third_party/patches/<name>/` targets
-`third_party/<name>`, or MoltenVK's fetched dependency
-`third_party/MoltenVK/External/<name>`.
+The submodules stay pristine upstream checkouts. `tools/scripts/prepare_sources.sh`
+(run by the build scripts) exports each one's committed tree to
+`build/src/<name>` and applies the patches there; MoltenVK's fetched
+dependencies (`build/src/MoltenVK/External/<name>`) are patched the same way.
+All builds read from `build/src`. A copy is rebuilt when its submodule commit
+or patches change, and never while it holds edits that are not in a patch.
 
 | Upstream | Pinned at | Patch | What it does |
 |---|---|---|---|
@@ -15,10 +16,8 @@ called by the build scripts). `third_party/patches/<name>/` targets
 | | | `MoltenVK/0004-full-sample-mask-keeps-hsr.patch` | Do not export a full sample mask from shaders (keeps hidden surface removal on Apple GPUs) |
 | SPIRV-Cross | MoltenVK's pin (`adec7acb`) | `SPIRV-Cross/0001-msl-mixed-compare-images.patch` | Images sampled both plainly and with depth compare stay `texture2d`; compares emulated (green video, wrong alpha) |
 
-To change a patch: edit the submodule tree, then regenerate the file with
-`git -C <tree> diff -- <files> > third_party/patches/<name>/<patch>`. Check
-that the patches still reproduce the trees from a clean checkout before
-committing (each must apply to the pinned commit in order).
-
-The submodules are marked `ignore = dirty` in `.gitmodules`: their working
-trees are always patched, and the patch files are the source of truth.
+To change a patch: edit the copy in `build/src/<name>` (a small git repo with
+`upstream` and `patched` tags), then regenerate the file with
+`git -C build/src/<name> diff upstream -- <files> > third_party/patches/<name>/<patch>`
+(for MoltenVK's dependencies the copy is a real clone, same tags). Never edit or
+commit inside `third_party/`.

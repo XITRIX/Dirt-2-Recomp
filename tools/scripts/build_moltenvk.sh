@@ -9,7 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT=$PWD
 PLATFORM=${1:?platform: macos, iphoneos or iphonesimulator}
-MVK=$ROOT/third_party/MoltenVK
+MVK=$ROOT/build/src/MoltenVK  # patched copy (prepare_sources.sh)
 DD=${DIRT2_XCODE_DD:-$HOME/Library/Caches/Dirt2Recomp/xcode}/moltenvk-$PLATFORM
 OUT=$ROOT/build/moltenvk/$PLATFORM
 
@@ -20,6 +20,7 @@ case $PLATFORM in
     *) echo "unknown platform $PLATFORM" >&2; exit 1 ;;
 esac
 
+tools/scripts/prepare_sources.sh
 tools/scripts/build_mvk_externals.sh
 echo "== MoltenVK ($PLATFORM)"
 (cd "$MVK" && xcodebuild -project MoltenVK/MoltenVK.xcodeproj -scheme "$scheme" \
