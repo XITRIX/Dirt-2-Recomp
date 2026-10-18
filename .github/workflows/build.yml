@@ -2,7 +2,7 @@
 #
 # The game's own files are not in this repository. The job takes dirt2_game.exe
 # (Steam v1.1) and dirt2.ico from, in this order:
-#   - a private repository (variable DIRT2_GAME_REPO, default <owner>/Dirt-2-Game)
+#   - a private repository (variable DIRT2_GAME_REPO, default XITRIX/Dirt2-_recomp_private_repo)
 #     cloned with a read-only deploy key in the secret DIRT2_GAME_DEPLOY_KEY;
 #   - a zip at the URL in the secret DIRT2_GAME_URL.
 # It checks the exe's SHA-256 before using it.
@@ -52,7 +52,7 @@ jobs:
         if: ${{ env.HAVE_DEPLOY_KEY == 'true' }}
         uses: actions/checkout@v4
         with:
-          repository: ${{ vars.DIRT2_GAME_REPO || format('{0}/Dirt-2-Game', github.repository_owner) }}
+          repository: ${{ vars.DIRT2_GAME_REPO || 'XITRIX/Dirt2-_recomp_private_repo' }}
           ssh-key: ${{ secrets.DIRT2_GAME_DEPLOY_KEY }}
           path: game-files
           lfs: true

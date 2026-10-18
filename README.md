@@ -116,7 +116,7 @@ xcrun devicectl device install app --device <device id> build/ios/dirt2.app
 
 The game files aren't in this repository. CI takes `dirt2_game.exe` (v1.1; the job checks its SHA-256) and `dirt2.ico` from a **private repository** of your own:
 
-1. Create a private repository, by default `<you>/Dirt-2-Game`, containing just those two files (any folder layout).
+1. Create a private repository containing just those two files (any folder layout). The workflow defaults to `XITRIX/Dirt2-_recomp_private_repo`; for another name set the variable `DIRT2_GAME_REPO` (step 4).
 2. Create a key pair:
 
    ```bash
