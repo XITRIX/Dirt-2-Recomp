@@ -37,7 +37,7 @@ for PLATFORM in ${*:-macos}; do
     WORK=$ROOT/build/dxmt/work-$PLATFORM
     CROSS=$ROOT/build/dxmt/$PLATFORM.cross
     mkdir -p "$ROOT/build/dxmt"
-    cat > "$CROSS" <<EOF
+    cat > "$CROSS.new" <<EOF
 [binaries]
 c = ['xcrun', '--sdk', '$XSDK', 'clang', '-target', '$TRIPLE', '-isysroot', '$SYSROOT']
 cpp = ['xcrun', '--sdk', '$XSDK', 'clang++', '-target', '$TRIPLE', '-isysroot', '$SYSROOT']
@@ -53,6 +53,8 @@ cpu_family = 'aarch64'
 cpu = 'arm64'
 endian = 'little'
 EOF
+    # Replaced only on a change: a newer cross file makes meson reconfigure.
+    cmp -s "$CROSS.new" "$CROSS" && rm "$CROSS.new" || mv "$CROSS.new" "$CROSS"
     echo "== DXMT for $PLATFORM"
     if [ ! -f "$WORK/build.ninja" ]; then
         "$MESON" setup "$WORK" build/src/dxmt --cross-file "$CROSS" --buildtype=release --prefix="$OUT" \

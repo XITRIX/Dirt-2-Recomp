@@ -22,6 +22,14 @@ esac
 
 tools/scripts/prepare_sources.sh
 tools/scripts/build_mvk_externals.sh
+# Up to date when the output was built from the current patched copy (its
+# stamp: submodule commit and patches); the Xcode derived data may be gone (CI).
+STAMP=$OUT/.dirt2-stamp
+want="$(cat "$MVK/.dirt2-stamp") $(xcodebuild -version | tr '\n' ' ')"
+if [ -f "$OUT/lib/libMoltenVK.a" ] && [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$want" ]; then
+    echo "== MoltenVK ($PLATFORM): up to date"
+    exit 0
+fi
 echo "== MoltenVK ($PLATFORM)"
 (cd "$MVK" && xcodebuild -project MoltenVK/MoltenVK.xcodeproj -scheme "$scheme" \
     -destination "generic/platform=$dest" -configuration Release -derivedDataPath "$DD" -quiet build)
@@ -29,4 +37,5 @@ echo "== MoltenVK ($PLATFORM)"
 rm -rf "$OUT" && mkdir -p "$OUT/lib"
 cp "$DD/Build/Products/$products/libMoltenVK.a" "$OUT/lib/"
 cp -RL "$MVK/MoltenVK/include" "$OUT/include"  # dereference: the links are relative to the MoltenVK tree
+echo "$want" > "$STAMP"
 echo "MoltenVK ($PLATFORM): $OUT/lib/libMoltenVK.a"

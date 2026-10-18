@@ -31,7 +31,7 @@ for PLATFORM in ${*:-macos}; do
             SYSROOT=$(xcrun --sdk "$XSDK" --show-sdk-path)
             CROSS=$ROOT/build/dxvk/$PLATFORM.cross
             mkdir -p "$ROOT/build/dxvk"
-            cat > "$CROSS" <<EOF
+            cat > "$CROSS.new" <<EOF
 [binaries]
 c = ['xcrun', '--sdk', '$XSDK', 'clang', '-target', '$TRIPLE', '-isysroot', '$SYSROOT']
 cpp = ['xcrun', '--sdk', '$XSDK', 'clang++', '-target', '$TRIPLE', '-isysroot', '$SYSROOT']
@@ -51,6 +51,8 @@ cpu_family = 'aarch64'
 cpu = 'arm64'
 endian = 'little'
 EOF
+            # Replaced only on a change: a newer cross file makes meson reconfigure.
+            cmp -s "$CROSS.new" "$CROSS" && rm "$CROSS.new" || mv "$CROSS.new" "$CROSS"
             MESON_ARGS+=(--cross-file "$CROSS")
             ;;
         *) echo "unknown platform $PLATFORM" >&2; exit 1 ;;

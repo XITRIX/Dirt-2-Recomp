@@ -14,7 +14,8 @@
 #                             increased memory limit; iCloud optional)
 #
 # The library builds (deps, MoltenVK/DXVK, LLVM, DXMT) take about an hour and
-# are cached, keyed on their scripts, patches and submodule commits.
+# are cached, keyed on their scripts, patches and submodule commits; they are
+# saved as soon as they are built. The game's own compile goes through ccache.
 name: Build
 
 on:
@@ -30,6 +31,10 @@ concurrency:
 env:
   GAME_EXE_SHA256: 49b1e00ea1d4bd02e633ceed63390b5cae07601333f673c4efd8d2f0eb54fe48
   HAVE_DEPLOY_KEY: ${{ secrets.DIRT2_GAME_DEPLOY_KEY != '' }}
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_BASEDIR: ${{ github.workspace }}
+  CCACHE_COMPILERCHECK: content
+  CCACHE_MAXSIZE: 4G
 
 jobs:
   build:
@@ -46,7 +51,7 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-version
 
       - name: Build tools
-        run: brew install ninja meson glslang pkgconf || true
+        run: brew install ninja meson glslang pkgconf ccache || true
 
       - name: Game files from a private repository
         if: ${{ env.HAVE_DEPLOY_KEY == 'true' }}
@@ -82,16 +87,21 @@ jobs:
           echo "deps=${{ hashFiles('tools/scripts/build_deps.sh') }}" >> "$GITHUB_OUTPUT"
           echo "llvm=${{ hashFiles('tools/scripts/build_llvm.sh') }}" >> "$GITHUB_OUTPUT"
           subs=$(git submodule status --recursive | shasum | cut -d' ' -f1)
+          echo "xcode=$(xcodebuild -version | shasum | cut -c1-12)" >> "$GITHUB_OUTPUT"
           echo "graphics=$subs-${{ hashFiles('third_party/patches/**', 'tools/scripts/prepare_sources.sh', 'tools/scripts/build_graphics.sh', 'tools/scripts/build_moltenvk.sh', 'tools/scripts/build_mvk_externals.sh', 'tools/scripts/build_dxmt.sh', 'tools/scripts/build_llvm.sh') }}" >> "$GITHUB_OUTPUT"
 
-      - name: Cache libraries
-        uses: actions/cache@v4
+      # Restored here and saved right after the library builds, so a later
+      # failure or a cancelled run does not throw the hour of work away.
+      - name: Restore libraries
+        id: cache-deps
+        uses: actions/cache/restore@v4
         with:
           path: build/deps
           key: deps-${{ steps.keys.outputs.deps }}
 
-      - name: Cache LLVM
-        uses: actions/cache@v4
+      - name: Restore LLVM
+        id: cache-llvm
+        uses: actions/cache/restore@v4
         with:
           path: |
             build/llvm/macos
@@ -99,8 +109,9 @@ jobs:
             build/llvm/work-macos/bin/llvm-tblgen
           key: llvm-${{ steps.keys.outputs.llvm }}
 
-      - name: Cache graphics stack
-        uses: actions/cache@v4
+      - name: Restore graphics stack
+        id: cache-graphics
+        uses: actions/cache/restore@v4
         with:
           path: |
             build/src
@@ -117,8 +128,49 @@ jobs:
           tools/scripts/build_llvm.sh macos iphoneos
           tools/scripts/build_dxmt.sh macos iphoneos
 
+      - name: Save libraries
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/deps
+          key: deps-${{ steps.keys.outputs.deps }}
+
+      - name: Save LLVM
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build/llvm/macos
+            build/llvm/iphoneos
+            build/llvm/work-macos/bin/llvm-tblgen
+          key: llvm-${{ steps.keys.outputs.llvm }}
+
+      - name: Save graphics stack
+        if: steps.cache-graphics.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build/src
+            build/moltenvk
+            build/dxvk
+            build/dxmt
+            build/tools
+          key: graphics-${{ steps.keys.outputs.graphics }}
+
+      # The game's own code (the lifted C is most of the compile time) goes
+      # through ccache (CMakeLists.txt picks it up from PATH). One entry per
+      # run, restored from the newest one; old entries age out.
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-${{ steps.keys.outputs.xcode }}-${{ github.run_id }}
+          restore-keys: ccache-${{ steps.keys.outputs.xcode }}-
+
       - name: Recompile the game
+        id: recomp
         run: |
+          ccache -z
           cmake --preset macos-arm64 -DDIRT2_GAME_DIR="$GAME_DIR"
           cmake --build build/macos-arm64 --target recomp
           ./build/macos-arm64/tools/recomp/recomp lift "$GAME_DIR/dirt2_game.exe" --out generated \
@@ -135,6 +187,17 @@ jobs:
           cmake --preset ios -DDIRT2_GAME_DIR="$GAME_DIR"
           cmake --build build/ios
           tools/scripts/package_ios.sh unsigned
+
+      - name: Compiler cache statistics
+        if: always() && steps.recomp.outcome != 'skipped'
+        run: ccache -s
+
+      - name: Save compiler cache
+        if: always() && steps.recomp.outcome != 'skipped'
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ccache-${{ steps.keys.outputs.xcode }}-${{ github.run_id }}
 
       - uses: actions/upload-artifact@v4
         with:
