@@ -111,17 +111,26 @@ namespace {
 std::mutex g_bg_mu;
 std::condition_variable g_bg_cv;
 bool g_background = false, g_parked = false;
+bool g_paused = false;  // set_game_paused: a dialog the game must wait for
 }  // namespace
 
 void gpu_checkpoint() {
     std::unique_lock lk(g_bg_mu);
-    if (!g_background) return;
-    rt::log("platform: render thread paused while in the background");
+    if (!g_background && !g_paused) return;
+    rt::log("platform: render thread paused (%s)", g_background ? "background" : "dialog");
     g_parked = true;
     g_bg_cv.notify_all();
-    g_bg_cv.wait(lk, [] { return !g_background; });
+    g_bg_cv.wait(lk, [] { return !g_background && !g_paused; });
     g_parked = false;
     rt::log("platform: render thread resumed");
+}
+
+void set_game_paused(bool paused) {
+    {
+        std::lock_guard lk(g_bg_mu);
+        g_paused = paused;
+    }
+    g_bg_cv.notify_all();
 }
 
 void display_size(int* width, int* height) {

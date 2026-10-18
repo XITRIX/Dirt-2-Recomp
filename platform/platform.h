@@ -31,6 +31,10 @@ bool prompt_text(const std::string& title, const std::string& message, const std
 // until the app is back in the foreground.
 void gpu_checkpoint();
 
+// Holds the game (its render thread, at the next Present) while paused, e.g.
+// while the user answers a dialog the game must not run past.
+void set_game_paused(bool paused);
+
 // Save-game sync through iCloud Drive (no-op without iCloud). start: called on
 // the game thread before the game runs (it may ask the user, so the main thread
 // must be pumping events); pulls another device's newer snapshot into local_dir,

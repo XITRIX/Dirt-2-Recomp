@@ -135,6 +135,7 @@ if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
     target_link_options(dirt2 PRIVATE "-Wl,-u,_${sym}")
   endforeach()
   set_source_files_properties(platform/apple/text_prompt.mm platform/apple/cloud_saves.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+  target_link_libraries(dirt2 PRIVATE "-framework CloudKit")
   target_link_libraries(dirt2 PRIVATE dirt2_shims dirt2_gen recomp_runtime dxvk_d3d9 SDL3::SDL3)
   # Community gamepad mappings, loaded from next to the executable at startup.
   add_custom_command(TARGET dirt2 POST_BUILD

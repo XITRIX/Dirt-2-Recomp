@@ -1,23 +1,26 @@
-// Save-game sync through iCloud Drive (the app's ubiquity container, hidden
-// from the Files app).
+// Save-game sync through CloudKit (the user's private database).
 //
 // The savegame folder is one consistent set of files, so it travels as one
-// snapshot file (Saves/snapshot.pack: a header with the save time and source
-// device, then the files). One file moves through iCloud atomically; a folder
-// could arrive half-updated on the other device.
+// snapshot (a header with the save time and source device, then the files) in
+// a single record, Save/"snapshot": fields time, device, and the packed folder
+// as an asset. CloudKit answers authoritatively: the record exists, does not
+// exist, or the request failed (state unknown). iCloud Drive could not: on a
+// freshly installed device its index said "no file" before it had synced.
 //
 // Rules (each device remembers the snapshot time it last pulled or pushed):
-//   - Nothing is uploaded unless iCloud's state is known (NSMetadataQuery has
-//     gathered), and never over a snapshot this device has not seen: another
-//     device's newer progress is never overwritten.
+//   - Nothing is uploaded while the state is unknown, and never over a
+//     snapshot this device has not seen; the save also carries the record's
+//     change tag, so the server rejects a concurrent overwrite.
 //   - At launch, before the game reads its saves: if only the cloud changed
 //     since the last sync (a new device has no saves at all), its snapshot is
 //     pulled; if both changed, the user chooses. Replaced saves go to
 //     savegame.bak.
 //   - After the game writes a save (files quiet for 2 s), on going to the
 //     background and at exit, local changes are uploaded.
-// Without iCloud (signed out, simulator, macOS without an app bundle) this is a no-op.
+// Without an iCloud account (or entitlement: simulator, macOS without an app
+// bundle) this is a no-op.
 #include <TargetConditionals.h>
+#import <CloudKit/CloudKit.h>
 #import <Foundation/Foundation.h>
 #if TARGET_OS_IPHONE
 #import <UIKit/UIKit.h>
@@ -46,17 +49,16 @@ namespace {
 
 constexpr const char* kMagic = "DIRT2SAVE1";
 
-std::mutex g_mu;           // one sync operation at a time
-fs::path g_local;          // .../savegame
-NSURL* g_container = nil;  // iCloud container root
+std::mutex g_mu;                 // one sync operation at a time
+fs::path g_local;                // .../savegame
+CKDatabase* g_db = nil;          // private database of the app's container
+CKRecord* g_record = nil;        // last fetched snapshot record (its change tag guards the next save)
 double g_synced = 0;       // snapshot time last pulled or pushed by this device
 std::atomic<bool> g_enabled{false};
+bool g_playing = false;          // the game is running (conflicts pause it and ask)
 
 NSString* ns(const std::string& s) { return [NSString stringWithUTF8String:s.c_str()] ?: @""; }
 
-NSURL* pack_url() {
-    return [[g_container URLByAppendingPathComponent:@"Saves" isDirectory:YES] URLByAppendingPathComponent:@"snapshot.pack"];
-}
 
 std::string device_name() {
 #if TARGET_OS_IPHONE
@@ -91,9 +93,9 @@ double newest_mtime(const fs::path& dir) {
     return t;
 }
 
-// Format 2 (snapshot.pack); the record of format 1 (a folder plus snapshot.txt)
-// is ignored, so every device uploads or pulls the new format once.
-fs::path state_file() { return g_local.parent_path() / "savegame.cloud2"; }
+// The records of earlier iCloud Drive versions (savegame.cloud, .cloud2) are
+// ignored, so every device uploads or pulls the CloudKit snapshot once.
+fs::path state_file() { return g_local.parent_path() / "savegame.cloudkit"; }
 void save_state() { std::ofstream(state_file()) << std::fixed << g_synced << "\n"; }
 void load_state() {
     std::ifstream in(state_file());
@@ -143,87 +145,80 @@ bool parse_pack(const std::string& blob, Snapshot& s, bool header_only) {
     return true;
 }
 
-// ---- iCloud access ----
+// ---- CloudKit ----
 
-// What iCloud's index says about the snapshot: known == false when the index
-// could not be gathered in time (then nothing may be uploaded).
-struct CloudState {
-    bool known = false;
-    bool exists = false;
-};
+CKRecordID* record_id() { return [[CKRecordID alloc] initWithRecordName:@"snapshot"]; }
 
-CloudState query_cloud(double timeout) {
-    __block CloudState st;
-    __block bool finished = false;
-    NSMetadataQuery* q = [[NSMetadataQuery alloc] init];
-    q.searchScopes = @[ NSMetadataQueryUbiquitousDataScope ];
-    q.predicate = [NSPredicate predicateWithFormat:@"%K == %@", NSMetadataItemFSNameKey, @"snapshot.pack"];
-    NSOperationQueue* queue = [[NSOperationQueue alloc] init];
-    q.operationQueue = queue;
-    id token = [NSNotificationCenter.defaultCenter addObserverForName:NSMetadataQueryDidFinishGatheringNotification
-                                                               object:q
-                                                                queue:queue
-                                                           usingBlock:^(NSNotification*) {
-                                                               [q disableUpdates];
-                                                               st.known = true;
-                                                               st.exists = q.resultCount > 0;
-                                                               finished = true;
-                                                           }];
-    [queue addOperationWithBlock:^{ [q startQuery]; }];
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(timeout);
-    while (!finished && std::chrono::steady_clock::now() < deadline)
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    [queue addOperationWithBlock:^{ [q stopQuery]; }];
-    [queue waitUntilAllOperationsAreFinished];
-    [NSNotificationCenter.defaultCenter removeObserver:token];
-    return st;
-}
+enum class Fetch { Found, Missing, Unknown };
 
-// Downloads the snapshot (if needed) and reads it.
-bool read_pack(std::string& blob, double timeout) {
-    NSURL* url = pack_url();
-    NSFileManager* fm = NSFileManager.defaultManager;
-    [fm startDownloadingUbiquitousItemAtURL:url error:nil];
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(timeout);
-    for (;;) {
-        [url removeAllCachedResourceValues];
-        NSString* status = nil;
-        [url getResourceValue:&status forKey:NSURLUbiquitousItemDownloadingStatusKey error:nil];
-        if ([status isEqualToString:NSURLUbiquitousItemDownloadingStatusCurrent]) break;
-        if (std::chrono::steady_clock::now() > deadline) return false;
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+// Fetches the snapshot record (with its asset) from the server.
+Fetch fetch_record(CKRecord* __strong& out, double timeout) {
+    __block CKRecord* rec = nil;
+    __block NSError* error = nil;
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    [g_db fetchRecordWithID:record_id()
+          completionHandler:^(CKRecord* r, NSError* e) {
+              rec = r;
+              error = e;
+              dispatch_semaphore_signal(done);
+          }];
+    if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, int64_t(timeout * NSEC_PER_SEC))) != 0) {
+        rt::log("cloud saves: iCloud did not answer in time");
+        return Fetch::Unknown;
     }
-    __block bool ok = false;
-    __block std::string data;
-    NSError* err = nil;
-    [[[NSFileCoordinator alloc] initWithFilePresenter:nil]
-        coordinateReadingItemAtURL:url
-                           options:0
-                             error:&err
-                        byAccessor:^(NSURL* u) {
-                            NSData* d = [NSData dataWithContentsOfURL:u];
-                            if (d) data.assign(static_cast<const char*>(d.bytes), d.length), ok = true;
-                        }];
-    blob = std::move(data);
-    return ok;
+    if (rec) {
+        out = rec;
+        return Fetch::Found;
+    }
+    if (error.code == CKErrorUnknownItem) return Fetch::Missing;
+    rt::log("cloud saves: iCloud request failed: %s", error.localizedDescription.UTF8String ?: "?");
+    return Fetch::Unknown;
 }
 
-bool write_pack(const std::string& blob) {
-    NSURL* url = pack_url();
-    [NSFileManager.defaultManager createDirectoryAtURL:url.URLByDeletingLastPathComponent
-                           withIntermediateDirectories:YES
-                                            attributes:nil
-                                                 error:nil];
-    __block bool ok = false;
-    NSError* err = nil;
-    NSData* d = [NSData dataWithBytes:blob.data() length:blob.size()];
-    [[[NSFileCoordinator alloc] initWithFilePresenter:nil]
-        coordinateWritingItemAtURL:url
-                           options:NSFileCoordinatorWritingForReplacing
-                             error:&err
-                        byAccessor:^(NSURL* u) { ok = [d writeToURL:u atomically:YES]; }];
-    if (!ok) rt::log("cloud saves: upload failed: %s", err.localizedDescription.UTF8String ?: "write failed");
-    return ok;
+bool record_snapshot(CKRecord* rec, Snapshot& s, bool with_files) {
+    CKAsset* asset = rec[@"data"];
+    NSData* d = asset.fileURL ? [NSData dataWithContentsOfURL:asset.fileURL] : nil;
+    if (!d) return false;
+    const std::string blob(static_cast<const char*>(d.bytes), d.length);
+    return parse_pack(blob, s, !with_files);
+}
+
+// Saves the snapshot; rec is the last fetched record (nil when none exists),
+// whose change tag makes the server reject an overwrite of a newer version.
+bool save_record(CKRecord* rec, const std::string& blob, double t) {
+    if (!rec) rec = [[CKRecord alloc] initWithRecordType:@"Save" recordID:record_id()];
+    NSURL* file = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"dirt2-snapshot.pack"]];
+    [[NSData dataWithBytes:blob.data() length:blob.size()] writeToURL:file atomically:YES];
+    rec[@"data"] = [[CKAsset alloc] initWithFileURL:file];
+    rec[@"time"] = @(t);
+    rec[@"device"] = ns(device_name());
+    __block CKRecord* saved = nil;
+    __block NSError* error = nil;
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    CKModifyRecordsOperation* op = [[CKModifyRecordsOperation alloc] initWithRecordsToSave:@[ rec ] recordIDsToDelete:nil];
+    op.savePolicy = CKRecordSaveIfServerRecordUnchanged;
+    op.qualityOfService = NSQualityOfServiceUserInitiated;
+    op.modifyRecordsCompletionBlock = ^(NSArray<CKRecord*>* records, NSArray<CKRecordID*>*, NSError* e) {
+        saved = records.firstObject;
+        // A per-record failure arrives wrapped in CKErrorPartialFailure.
+        NSError* item = e.code == CKErrorPartialFailure ? e.userInfo[CKPartialErrorsByItemIDKey][record_id()] : nil;
+        error = item ?: e;
+        dispatch_semaphore_signal(done);
+    };
+    [g_db addOperation:op];
+    if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC)) != 0) {
+        rt::log("cloud saves: upload timed out");
+        return false;
+    }
+    if (error || !saved) {
+        if (error.code == CKErrorServerRecordChanged)
+            rt::log("cloud saves: another device saved first; not overwriting it");
+        else
+            rt::log("cloud saves: upload failed: %s", error.localizedDescription.UTF8String ?: "?");
+        return false;
+    }
+    g_record = saved;
+    return true;
 }
 
 // Replaces the local saves with the snapshot; the old ones go to savegame.bak.
@@ -250,30 +245,56 @@ bool apply_snapshot(const Snapshot& s) {
     return true;
 }
 
-// Uploads local changes, unless iCloud's state is unknown or holds a snapshot
+void push_locked(bool force);
+
+// During play: another device saved since this device last synced (Steam's
+// "cloud out of sync"). The game is paused until the user decides.
+void conflict_during_play_locked(CKRecord* rec) {
+    static double asked = 0;  // ask once per conflicting snapshot
+    const double t = [rec[@"time"] doubleValue];
+    if (t == asked) return;
+    asked = t;
+    Snapshot s;
+    if (!record_snapshot(rec, s, true)) return;
+    platform::set_game_paused(true);
+    const std::string msg = "Your " + s.device + " saved progress to iCloud (" + when(s.time) +
+                            ") that this device has not loaded.\nThis device's save is from " +
+                            when(newest_mtime(g_local)) + ".\n\nThe one you do not use is kept as savegame.bak.";
+    const int pick = platform::choose("Cloud save conflict", msg, "Keep this device's save", "Use iCloud save");
+    if (pick == 0) {
+        push_locked(true);
+        platform::set_game_paused(false);
+        return;
+    }
+    // The game holds its save in memory: put the iCloud one in place and close,
+    // so the next launch loads it (iOS apps cannot relaunch themselves).
+    apply_snapshot(s);
+    platform::choose("DiRT 2", "The iCloud save is in place. The game will close now; open it again to continue from it.",
+                     "Close", "Close");
+    std::_Exit(0);
+}
+
+// Uploads local changes, unless the cloud state is unknown or holds a snapshot
 // this device has not seen (force: the user chose this device's saves).
-void push_locked(bool force = false) {
+void push_locked(bool force) {
     const double local = newest_mtime(g_local);
     if (local == 0 || local <= g_synced) return;
-    const CloudState st = query_cloud(10);
-    if (!st.known) {
+    CKRecord* rec = nil;
+    const Fetch f = fetch_record(rec, 20);
+    if (f == Fetch::Unknown) {
         rt::log("cloud saves: iCloud state unknown, upload postponed");
         return;
     }
-    if (st.exists && !force) {
-        std::string blob;
-        Snapshot s;
-        if (!read_pack(blob, 10) || !parse_pack(blob, s, true)) {
-            rt::log("cloud saves: cannot read the iCloud snapshot, upload postponed");
-            return;
-        }
-        if (s.time > g_synced) {
-            rt::log("cloud saves: %s saved since this device last synced; not uploading over it (resolved at next launch)",
-                    s.device.c_str());
+    if (f == Fetch::Found && !force) {
+        const double t = [rec[@"time"] doubleValue];
+        if (t > g_synced) {
+            rt::log("cloud saves: %s saved since this device last synced; not uploading over it",
+                    [rec[@"device"] UTF8String] ?: "another device");
+            if (g_playing) conflict_during_play_locked(rec);
             return;
         }
     }
-    if (!write_pack(pack_folder(g_local, local))) return;
+    if (!save_record(rec, pack_folder(g_local, local), local)) return;
     g_synced = local;
     save_state();
     rt::log("cloud saves: uploaded the save from %s", when(local).c_str());
@@ -283,19 +304,20 @@ void push_locked(bool force = false) {
 void reconcile_locked() {
     const double local = newest_mtime(g_local);
     const bool local_changed = local > g_synced;
-    const CloudState st = query_cloud(15);
-    if (!st.known) {
+    CKRecord* rec = nil;
+    const Fetch f = fetch_record(rec, 20);
+    if (f == Fetch::Unknown) {
         rt::log("cloud saves: iCloud state unknown at launch, using local saves (no upload until known)");
         return;
     }
-    if (!st.exists) {
+    if (f == Fetch::Missing) {
         rt::log("cloud saves: no iCloud save yet");
         return;
     }
-    std::string blob;
+    g_record = rec;
     Snapshot s;
-    if (!read_pack(blob, 20) || !parse_pack(blob, s, false)) {
-        rt::log("cloud saves: iCloud save did not download, using local saves");
+    if (!record_snapshot(rec, s, true)) {
+        rt::log("cloud saves: iCloud save unreadable, using local saves");
         return;
     }
     rt::log("cloud saves: iCloud save from %s (%s), local %s, last synced %s", s.device.c_str(), when(s.time).c_str(),
@@ -308,7 +330,7 @@ void reconcile_locked() {
     // Both sides have progress the other has not seen: the user decides.
     const std::string msg = "iCloud has a save from " + s.device + " (" + when(s.time) + ").\nThis device has a save from " +
                             when(local) + ".\n\nThe one you do not use is kept as savegame.bak.";
-    const int pick = platform::choose("DiRT 2: two different saves", msg, "Use iCloud save", "Keep this device's save");
+    const int pick = platform::choose("Cloud save conflict", msg, "Use iCloud save", "Keep this device's save");
     if (pick == 0) apply_snapshot(s);
     else push_locked(true);
 }
@@ -328,7 +350,7 @@ void watch() {
         // A save is several files: wait until they have been quiet for 2 s.
         if (t > g_synced && now - changed_at >= std::chrono::seconds(2)) {
             std::lock_guard lk(g_mu);
-            push_locked();
+            push_locked(false);
         }
     }
 }
@@ -337,12 +359,25 @@ void watch() {
 
 void cloud_saves_start(const std::string& local_dir) {
     g_local = local_dir;
-    NSURL* container = [NSFileManager.defaultManager URLForUbiquityContainerIdentifier:nil];
-    if (!container) {
-        rt::log("cloud saves: iCloud Drive not available, saves stay on this device");
+    // CloudKit needs the entitlement (absent: simulator builds, the bare macOS
+    // executable) and a signed-in iCloud account.
+    if (![NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleIdentifier"]) {
+        rt::log("cloud saves: no app bundle, saves stay on this device");
         return;
     }
-    g_container = container;
+    CKContainer* container = [CKContainer containerWithIdentifier:@"iCloud.com.daniilvinogradov.dirt2recomp"];
+    __block CKAccountStatus status = CKAccountStatusCouldNotDetermine;
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    [container accountStatusWithCompletionHandler:^(CKAccountStatus st, NSError*) {
+        status = st;
+        dispatch_semaphore_signal(done);
+    }];
+    dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC));
+    if (status != CKAccountStatusAvailable) {
+        rt::log("cloud saves: no iCloud account available (%ld), saves stay on this device", long(status));
+        return;
+    }
+    g_db = container.privateCloudDatabase;
     g_enabled = true;
     {
         std::lock_guard lk(g_mu);
@@ -350,11 +385,12 @@ void cloud_saves_start(const std::string& local_dir) {
         std::error_code ec;
         fs::create_directories(g_local, ec);
         reconcile_locked();
+        g_playing = true;
     }
     std::thread([] {
         {
             std::lock_guard lk(g_mu);
-            push_locked();
+            push_locked(false);
         }
         watch();
     }).detach();
@@ -365,7 +401,7 @@ void cloud_saves_flush() {
     if (!g_enabled) return;
     auto push = [] {
         std::lock_guard lk(g_mu);
-        push_locked();
+        push_locked(false);
     };
 #if TARGET_OS_IPHONE
     if (NSThread.isMainThread) {
