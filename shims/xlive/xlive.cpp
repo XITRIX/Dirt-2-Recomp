@@ -168,8 +168,11 @@ STDCALL_ORD(xlive, 5216, 8) {
     rt::log("XShowKeyboardUI(\"%s\", \"%s\", default \"%s\", %u chars)", title.c_str(), message.c_str(),
             initial.c_str(), cch);
     auto run = [=] {
+        // DIRT2_TEXT_INPUT answers without a dialog (scripted test runs; "" keeps the default).
         std::string text;
-        const bool ok = platform::prompt_text(title, message, initial, text);
+        const char* scripted = std::getenv("DIRT2_TEXT_INPUT");
+        const bool ok = scripted ? (text = *scripted ? scripted : initial, true)
+                                 : platform::prompt_text(title, message, initial, text);
         if (ok && out && cch) {
             std::u16string w = to_utf16(text);
             if (w.size() > cch - 1) w.resize(cch - 1);

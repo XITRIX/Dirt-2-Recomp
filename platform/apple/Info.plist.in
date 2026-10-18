@@ -49,6 +49,9 @@
 	<true/>
 	<key>GCSupportsGameMode</key>
 	<true/>
+	<!-- ProMotion: allow up to 120 Hz (iPhone otherwise caps third-party apps at 60). -->
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>MinimumOSVersion</key>
