@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <cstdlib>
 #include <map>
@@ -123,6 +124,13 @@ bool prepare_swap_chain(uint32_t gdesc, DXGI_SWAP_CHAIN_DESC& d, SwapInfo& info)
     platform::show_window(info.window, true);
     d.OutputWindow = HWND(platform::metal_layer(info.window));
     if (!d.OutputWindow) return false;
+    // 0 means the window's size; DXMT's native (headless) build would use 1024x1024.
+    if (!d.BufferDesc.Width || !d.BufferDesc.Height) {
+        int w = 0, h = 0;
+        platform::drawable_size(info.window, &w, &h);
+        if (!d.BufferDesc.Width) d.BufferDesc.Width = uint32_t(w);
+        if (!d.BufferDesc.Height) d.BufferDesc.Height = uint32_t(h);
+    }
     rt::log("d3d11: swap chain %ux%u format %u, %u buffers, %s", d.BufferDesc.Width, d.BufferDesc.Height,
             uint32_t(d.BufferDesc.Format), d.BufferCount, info.fullscreen ? "fullscreen" : "windowed");
     return true;
@@ -168,6 +176,7 @@ void swap_get_desc(X86* c);
 void swap_present(X86* c);
 void swap_set_fullscreen_state(X86* c);
 void swap_get_fullscreen_state(X86* c);
+void swap_resize_buffers(X86* c);
 void adapter_get_desc(X86* c);
 void adapter1_get_desc1(X86* c);
 void output_get_desc(X86* c);
@@ -184,6 +193,7 @@ OVERRIDE(IDXGISwapChain, GetDesc, swap_get_desc)
 OVERRIDE(IDXGISwapChain, Present, swap_present)
 OVERRIDE(IDXGISwapChain, SetFullscreenState, swap_set_fullscreen_state)
 OVERRIDE(IDXGISwapChain, GetFullscreenState, swap_get_fullscreen_state)
+OVERRIDE(IDXGISwapChain, ResizeBuffers, swap_resize_buffers)
 OVERRIDE(IDXGIAdapter, GetDesc, adapter_get_desc)
 OVERRIDE(IDXGIAdapter1, GetDesc1, adapter1_get_desc1)
 OVERRIDE(IDXGIOutput, GetDesc, output_get_desc)
@@ -306,14 +316,51 @@ void ctx_map(X86* c) {
             sh.write = type != D3D11_MAP_READ;
             if (type == D3D11_MAP_READ || type == D3D11_MAP_READ_WRITE)
                 std::memcpy(rt::host_ptr(sh.guest), m.pData, size);
+            // The game reads its scene luminance back through a ring of 1x1 RGBA32F
+            // staging textures (16 bytes, from 00FAF55C). A non-finite or negative
+            // value there (an HDR edge case on some track spots) sent the auto
+            // exposure swinging for seconds: the game gets the last good value
+            // instead, and anomalies are logged.
+            if (type == D3D11_MAP_READ && size == 16) {
+                static float last[4] = {0, 0, 0, 0};
+                static bool have = false;
+                static std::atomic<int> logged{0};
+                float* g = reinterpret_cast<float*>(rt::host_ptr(sh.guest));
+                bool bad = false, jump = false;
+                for (int k = 0; k < 4; ++k) {
+                    if (!std::isfinite(g[k]) || g[k] < 0) bad = true;
+                    else if (have && last[k] > 1e-6f && (g[k] > last[k] * 8 || g[k] < last[k] / 8)) jump = true;
+                }
+                if ((bad || jump) && logged++ < 40)
+                    rt::log("d3d11: luminance readback %s: %g %g %g %g (last %g %g %g %g)", bad ? "invalid, replaced" : "jump",
+                            g[0], g[1], g[2], g[3], last[0], last[1], last[2], last[3]);
+                if (bad && have) std::memcpy(g, last, 16);
+                else if (!bad) std::memcpy(last, g, 16), have = true;
+            }
+            // DIRT2_LOG_MAP: reads of small resources (luminance readback) with their values.
+            static const bool log_map = std::getenv("DIRT2_LOG_MAP") != nullptr;
+            if (log_map && type != D3D11_MAP_WRITE_DISCARD && type != D3D11_MAP_WRITE_NO_OVERWRITE && size <= 4096) {
+                static std::atomic<uint32_t> n{0};
+                if (n++ % 30 == 0) {
+                    const float* f = static_cast<const float*>(m.pData);
+                    rt::log("d3d11: Map(%08X sub %u type %u flags %X) %u bytes from %08X: %g %g %g %g", a[1], sub, type,
+                            a[4], size, rd32(c->esp), f[0], f[1], f[2], f[3]);
+                }
+            }
             if (out) {
                 wr32(out, sh.guest);
                 wr32(out + 4, m.RowPitch);
                 wr32(out + 8, m.DepthPitch);
             }
-        } else if (hr != DXGI_ERROR_WAS_STILL_DRAWING) {
+        } else {
+            static std::atomic<uint32_t> still{0};
             static std::atomic<int> logged{0};
-            if (logged++ < 20) rt::log("d3d11: Map(sub %u, type %u) failed: %08X", sub, type, uint32_t(hr));
+            if (hr == DXGI_ERROR_WAS_STILL_DRAWING) {
+                if (std::getenv("DIRT2_LOG_MAP") && still++ % 30 == 0)
+                    rt::log("d3d11: Map(%08X) still drawing (%u times)", a[1], still.load());
+            } else if (logged++ < 20) {
+                rt::log("d3d11: Map(sub %u, type %u) failed: %08X", sub, type, uint32_t(hr));
+            }
         }
     }
     if (FAILED(hr) && out) wr32(out, 0);
@@ -574,6 +621,30 @@ void swap_set_fullscreen_state(X86* c) {
     update_upscale_target(a[0], true);
     c->eax = uint32_t(S_OK);
     c->esp += 4 * 4;
+}
+
+// ResizeBuffers(count, width, height, format, flags): 0 means the window's
+// size, which DXMT's native (headless) build answers with 1024x1024.
+void swap_resize_buffers(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<IDXGISwapChain*>(to_host(a[0]));
+    uint32_t w = a[2], h = a[3];
+    if (self && (!w || !h)) {
+        platform::Window win = nullptr;
+        {
+            std::lock_guard lk(g_mu);
+            if (auto it = g_swaps.find(a[0]); it != g_swaps.end()) win = it->second.window;
+        }
+        int dw = 0, dh = 0;
+        if (win) platform::drawable_size(win, &dw, &dh);
+        if (!w) w = uint32_t(dw);
+        if (!h) h = uint32_t(dh);
+    }
+    const HRESULT hr = self ? self->ResizeBuffers(a[1], w, h, DXGI_FORMAT(a[4]), a[5]) : E_INVALIDARG;
+    rt::log("d3d11: ResizeBuffers(%u, %ux%u -> %ux%u, format %u) -> %08X", a[1], a[2], a[3], w, h, a[4], uint32_t(hr));
+    update_upscale_target(a[0], true);
+    c->eax = uint32_t(hr);
+    c->esp += 4 * 7;
 }
 
 void swap_get_fullscreen_state(X86* c) {

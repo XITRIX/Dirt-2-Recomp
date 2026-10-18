@@ -194,6 +194,7 @@ Debug switches:
 | `DIRT2_JOYSTICK_MFI=1` | Re-enable SDL's GameController (MFi) joystick driver |
 | `DIRT2_LOG_CS` | Log each InitializeCriticalSection with its caller |
 | `DIRT2_PLAY_VIDEOS=1` / `=0` | Also play the start-up logo stings / skip every video (default: logos skipped, the rest plays) |
+| `DIRT2_LOG_MAP` | DX11: reads of small mapped resources (the luminance readback) with their values, every 30th |
 | `DIRT2_RENDERER=dx11` | Run the game's DX11 renderer through DXMT (default `dx9`, DXVK) |
 | `DIRT2_DUMP_HLSL=<dir>` | DX11 path: save the HLSL of run-time `D3DCompile` calls not served by the immediate-mode shaders |
 | `DXMT_LOG_LEVEL`, `DXMT_LOG_PATH` | DXMT's own log |
