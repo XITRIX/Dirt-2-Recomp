@@ -66,6 +66,16 @@
       }
     },
     {
+      "name": "switch",
+      "inherits": "base",
+      "toolchainFile": "/opt/devkitpro/cmake/Switch.cmake",
+      "environment": { "DEVKITPRO": "/opt/devkitpro" },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "DIRT2_BUILD_TOOLS": "OFF"
+      }
+    },
+    {
       "name": "linux-x64",
       "inherits": "base",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
@@ -76,7 +86,8 @@
     { "name": "macos-debug", "configurePreset": "macos-debug" },
     { "name": "macos-tests", "configurePreset": "macos-tests" },
     { "name": "ios", "configurePreset": "ios" },
-    { "name": "ios-sim", "configurePreset": "ios-sim" }
+    { "name": "ios-sim", "configurePreset": "ios-sim" },
+    { "name": "switch", "configurePreset": "switch" }
   ],
   "testPresets": [
     { "name": "macos-tests", "configurePreset": "macos-tests", "output": { "outputOnFailure": true } }

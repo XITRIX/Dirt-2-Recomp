@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <cctype>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -170,7 +171,17 @@ uint32_t do_io(uint32_t h, uint32_t buf, uint32_t n, uint32_t done_out, uint32_t
     ssize_t r;
     if (ov) {
         const off_t off = off_t(rd32(ov + 8)) | (off_t(rd32(ov + 12)) << 32);
+#if defined(__SWITCH__)
+        // libnx has no pread/pwrite: seek there and back under the file's lock,
+        // so the position the sequential path uses is kept.
+        std::lock_guard lk(f->mu);
+        const off_t pos = ::lseek(f->fd, 0, SEEK_CUR);
+        r = ::lseek(f->fd, off, SEEK_SET) < 0 ? -1
+            : write ? ::write(f->fd, rt::host_ptr(buf), n) : ::read(f->fd, rt::host_ptr(buf), n);
+        ::lseek(f->fd, pos, SEEK_SET);
+#else
         r = write ? ::pwrite(f->fd, rt::host_ptr(buf), n, off) : ::pread(f->fd, rt::host_ptr(buf), n, off);
+#endif
     } else {
         std::lock_guard lk(f->mu);
         r = write ? ::write(f->fd, rt::host_ptr(buf), n) : ::read(f->fd, rt::host_ptr(buf), n);
@@ -208,14 +219,37 @@ uint32_t do_io(uint32_t h, uint32_t buf, uint32_t n, uint32_t done_out, uint32_t
     return 1;
 }
 
+// struct stat's timestamps: Darwin names them st_*timespec, POSIX st_*tim.
+#if defined(__APPLE__)
+#define ST_CTIME(st) (st).st_ctimespec
+#define ST_ATIME(st) (st).st_atimespec
+#define ST_MTIME(st) (st).st_mtimespec
+#else
+#define ST_CTIME(st) (st).st_ctim
+#define ST_ATIME(st) (st).st_atim
+#define ST_MTIME(st) (st).st_mtim
+#endif
+
+// Windows wildcard match, ignoring case (newlib's fnmatch has no FNM_CASEFOLD).
+bool match_name(const std::string& pattern, const char* name) {
+#if defined(FNM_CASEFOLD)
+    return fnmatch(pattern.c_str(), name, FNM_CASEFOLD) == 0;
+#else
+    std::string p = pattern, n = name;
+    for (char& c : p) c = char(std::tolower(static_cast<unsigned char>(c)));
+    for (char& c : n) c = char(std::tolower(static_cast<unsigned char>(c)));
+    return fnmatch(p.c_str(), n.c_str(), 0) == 0;
+#endif
+}
+
 void fill_find_data(uint32_t d, const std::string& dir, const std::string& name, bool wide) {
     std::memset(rt::host_ptr(d), 0, wide ? 592 : 320);
     struct stat st{};
     stat((dir + "/" + name).c_str(), &st);
     wr32(d + 0, attrs_of(st));
-    filetime_from(d + 4, st.st_ctimespec);
-    filetime_from(d + 12, st.st_atimespec);
-    filetime_from(d + 20, st.st_mtimespec);
+    filetime_from(d + 4, ST_CTIME(st));
+    filetime_from(d + 12, ST_ATIME(st));
+    filetime_from(d + 20, ST_MTIME(st));
     wr32(d + 28, uint32_t(uint64_t(st.st_size) >> 32));
     wr32(d + 32, uint32_t(st.st_size));
     if (wide) copy_out_w(d + 44, 260, name);
@@ -230,7 +264,7 @@ uint32_t find_first(const std::string& pattern_win, uint32_t data, bool wide) {
     f->host_dir = vfs::host_path(dir_win.size() == 2 ? dir_win + "\\" : dir_win);
     if (DIR* d = opendir(f->host_dir.c_str())) {
         while (dirent* e = readdir(d))
-            if (fnmatch(pat.c_str(), e->d_name, FNM_CASEFOLD) == 0 || pat == "*.*" || pat == "*") f->names.emplace_back(e->d_name);
+            if (match_name(pat, e->d_name) || pat == "*.*" || pat == "*") f->names.emplace_back(e->d_name);
         closedir(d);
     }
     if (f->names.empty()) {
@@ -343,14 +377,14 @@ STDCALL(kernel32, GetFileInformationByHandle, 2) {
     const uint32_t d = a[1];
     std::memset(rt::host_ptr(d), 0, 52);
     wr32(d + 0, attrs_of(st));
-    filetime_from(d + 4, st.st_ctimespec);
-    filetime_from(d + 12, st.st_atimespec);
-    filetime_from(d + 20, st.st_mtimespec);
+    filetime_from(d + 4, ST_CTIME(st));
+    filetime_from(d + 12, ST_ATIME(st));
+    filetime_from(d + 20, ST_MTIME(st));
     wr32(d + 28, 0x1234);  // volume serial
     wr32(d + 32, uint32_t(uint64_t(st.st_size) >> 32));
     wr32(d + 36, uint32_t(st.st_size));
     wr32(d + 40, 1);
-    wr32(d + 44, uint32_t(st.st_ino >> 32));
+    wr32(d + 44, uint32_t(uint64_t(st.st_ino) >> 32));
     wr32(d + 48, uint32_t(st.st_ino));
     return 1;
 }
@@ -367,9 +401,9 @@ STDCALL(kernel32, GetFileAttributesExA, 3) {
     }
     const uint32_t d = a[2];
     wr32(d + 0, attrs_of(st));
-    filetime_from(d + 4, st.st_ctimespec);
-    filetime_from(d + 12, st.st_atimespec);
-    filetime_from(d + 20, st.st_mtimespec);
+    filetime_from(d + 4, ST_CTIME(st));
+    filetime_from(d + 12, ST_ATIME(st));
+    filetime_from(d + 20, ST_MTIME(st));
     wr32(d + 28, uint32_t(uint64_t(st.st_size) >> 32));
     wr32(d + 32, uint32_t(st.st_size));
     return 1;

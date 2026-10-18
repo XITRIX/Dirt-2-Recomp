@@ -8,13 +8,32 @@
 #include <ctime>
 #include <mutex>
 #include <unordered_map>
+#include <unistd.h>
+#if defined(__SWITCH__)
+#include <switch.h>
+#else
 #include <execinfo.h>
 #include <signal.h>
-#include <unistd.h>
+#endif
 
 #include "recomp/host.h"
 
 namespace rt {
+
+namespace {
+
+// Host backtrace to stderr (none on Horizon: crashes go through libnx's exception hook).
+void host_backtrace(int depth) {
+#if defined(__SWITCH__)
+    (void)depth;
+#else
+    void* frames[48];
+    const int n = backtrace(frames, std::min(depth, 48));
+    backtrace_symbols_fd(frames, n, 2);
+#endif
+}
+
+}  // namespace
 
 void log(const char* fmt, ...) {
     // One fprintf per line, with a millisecond timestamp since start, so lines
@@ -56,9 +75,7 @@ void fatal(const char* fmt, ...) {
         for (int k = 0; k < 24; ++k) std::fprintf(stderr, "%s%08X", k % 8 ? " " : "\n    ", rd32(c->esp + 4 * k));
         std::fprintf(stderr, "\n");
     }
-    void* frames[32];
-    const int n = backtrace(frames, 32);
-    backtrace_symbols_fd(frames, n, 2);
+    host_backtrace(32);
     dump_watch();
     std::fflush(stderr);
     // Let a stderr tee (the log file on iOS) write the lines above before the process dies.
@@ -68,25 +85,56 @@ void fatal(const char* fmt, ...) {
 
 namespace {
 
-void crash_handler(int sig, siginfo_t* info, void*) {
-    const uintptr_t fault = reinterpret_cast<uintptr_t>(info->si_addr);
+void report_crash(const char* what, uintptr_t fault) {
     const uintptr_t base = reinterpret_cast<uintptr_t>(recomp_mem);
-    std::fprintf(stderr, "[rt] CRASH: signal %d at host %p", sig, info->si_addr);
+    std::fprintf(stderr, "[rt] CRASH: %s at host %p", what, reinterpret_cast<void*>(fault));
     if (fault >= base && fault - base < (1ull << 32)) std::fprintf(stderr, " (guest 0x%08X)", uint32_t(fault - base));
     std::fprintf(stderr, "\n");
     if (X86* c = current_cpu())
         std::fprintf(stderr, "  eax=%08X ecx=%08X edx=%08X ebx=%08X esp=%08X ebp=%08X esi=%08X edi=%08X\n", c->eax,
                      c->ecx, c->edx, c->ebx, c->esp, c->ebp, c->esi, c->edi);
-    void* frames[48];
-    const int n = backtrace(frames, 48);
-    backtrace_symbols_fd(frames, n, 2);
+    host_backtrace(48);
     dump_watch();
+    std::fflush(stderr);
+}
+
+#if !defined(__SWITCH__)
+void crash_handler(int sig, siginfo_t* info, void*) {
+    char what[32];
+    std::snprintf(what, sizeof what, "signal %d", sig);
+    report_crash(what, reinterpret_cast<uintptr_t>(info->si_addr));
     _exit(128 + sig);
 }
+#endif
 
 }  // namespace
 
+}  // namespace rt
+
+#if defined(__SWITCH__)
+// libnx calls this for a CPU exception in any thread (abort, data/instruction
+// abort, alignment). pc and lr are logged relative to the ELF's load address,
+// so `aarch64-none-elf-addr2line -e dirt2.elf <offset>` names them.
+extern "C" {
+alignas(16) u8 __nx_exception_stack[0x10000];
+u64 __nx_exception_stack_size = sizeof(__nx_exception_stack);
+extern char __start__[];  // libnx crt0: start of the loaded image
+
+void __libnx_exception_handler(ThreadExceptionDump* ctx) {
+    char what[96];
+    std::snprintf(what, sizeof what, "exception %u, pc +0x%llX lr +0x%llX", ctx->error_desc,
+                  (unsigned long long)(ctx->pc.x - u64(__start__)), (unsigned long long)(ctx->lr.x - u64(__start__)));
+    rt::report_crash(what, uintptr_t(ctx->far.x));
+    svcSleepThread(300'000'000);  // let the log reach the SD card
+    svcExitProcess();
+}
+}
+#endif
+
+namespace rt {
+
 void install_crash_handler() {
+#if !defined(__SWITCH__)  // Horizon: __libnx_exception_handler above
     static char altstack[1 << 16];
     stack_t ss{};
     ss.ss_sp = altstack;
@@ -96,6 +144,7 @@ void install_crash_handler() {
     sa.sa_sigaction = crash_handler;
     sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
     for (int s : {SIGSEGV, SIGBUS, SIGILL, SIGFPE}) sigaction(s, &sa, nullptr);
+#endif
 }
 
 }  // namespace rt

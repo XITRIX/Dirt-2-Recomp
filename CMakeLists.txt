@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.25)
-project(Dirt2Recomp LANGUAGES C CXX OBJCXX)
+project(Dirt2Recomp LANGUAGES C CXX)
+if(APPLE)
+  enable_language(OBJCXX)
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -15,7 +18,7 @@ endif()
 set(DIRT2_GAME_DIR "${CMAKE_SOURCE_DIR}/Colin McRae DiRT 2 (v.1.1) [Steam-Rip]/Dirt 2"
     CACHE PATH "Folder containing dirt2_game.exe and the game data")
 
-# The lifter is a host tool. When cross-compiling (iOS/tvOS/visionOS) it is
+# The lifter is a host tool. When cross-compiling (iOS/tvOS/visionOS/Switch) it is
 # built by a separate host preset and its output in generated/ is consumed.
 option(DIRT2_BUILD_TOOLS "Build the host-side recompiler" ON)
 
@@ -35,8 +38,12 @@ endif()
 # Third-party libraries: built from pinned sources as static libraries, the
 # same way on every platform (tools/scripts/build_deps.sh, build_graphics.sh).
 # Each platform's inputs live in build/<component>/<platform>:
-# macos, iphoneos, iphonesimulator. Nothing is taken from the host system.
-if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+# macos, iphoneos, iphonesimulator, switch. Nothing is taken from the host system
+# (on Switch, devkitPro's libnx and portlibs are the platform SDK).
+if(NINTENDO_SWITCH)
+  set(DIRT2_SWITCH ON)
+  set(DIRT2_PLATFORM switch)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   set(DIRT2_IOS ON)
   if(CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
     set(DIRT2_PLATFORM iphonesimulator)
@@ -46,13 +53,24 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
 elseif(APPLE)
   set(DIRT2_PLATFORM macos)
 else()
-  message(FATAL_ERROR "Only Apple platforms are wired up so far")
+  message(FATAL_ERROR "Unsupported platform: Apple (macOS, iOS) and Nintendo Switch are wired up")
 endif()
 set(DIRT2_DEPS_DIR "${CMAKE_SOURCE_DIR}/build/deps/${DIRT2_PLATFORM}" CACHE PATH "build_deps.sh output prefix")
 set(SDL3_DIR "${DIRT2_DEPS_DIR}/lib/cmake/SDL3")
 set(OpenAL_DIR "${DIRT2_DEPS_DIR}/lib/cmake/OpenAL")
 set(ENV{PKG_CONFIG_LIBDIR} "${DIRT2_DEPS_DIR}/lib/pkgconfig")
 set(ENV{PKG_CONFIG_PATH} "")
+if(DIRT2_SWITCH)
+  # devkitPro's pkg-config wrapper only sees its portlibs: use the host's
+  # pkg-config on our libraries, with the portlibs after them.
+  find_program(DIRT2_HOST_PKG_CONFIG pkg-config NO_CMAKE_FIND_ROOT_PATH REQUIRED)
+  set(PKG_CONFIG_EXECUTABLE "${DIRT2_HOST_PKG_CONFIG}" CACHE FILEPATH "" FORCE)
+  set(ENV{PKG_CONFIG_LIBDIR} "${DIRT2_DEPS_DIR}/lib/pkgconfig:${DEVKITPRO}/portlibs/switch/lib/pkgconfig")
+  # libnx's switch.specs reads DEVKITPRO when linking; a build started without
+  # it in the environment (the preset sets it for configure only) still links.
+  set(CMAKE_C_LINKER_LAUNCHER ${CMAKE_COMMAND} -E env "DEVKITPRO=${DEVKITPRO}")
+  set(CMAKE_CXX_LINKER_LAUNCHER ${CMAKE_COMMAND} -E env "DEVKITPRO=${DEVKITPRO}")
+endif()
 
 find_package(Threads REQUIRED)  # static OpenAL Soft links Threads::Threads
 find_package(SDL3 REQUIRED CONFIG)
@@ -64,6 +82,14 @@ endif()
 # Graphics: DXVK native d3d9 on MoltenVK, both static (build_graphics.sh).
 # DXVK finds vkGetInstanceProcAddr and SDL's functions in the process.
 set(DIRT2_DXVK_DIR "${CMAKE_SOURCE_DIR}/build/src/dxvk")  # patched copy (prepare_sources.sh)
+if(DIRT2_SWITCH)
+  # Switch, Gate 0 (headless boot): the D3D9 bridge compiles against DXVK's
+  # headers only; platform/switch provides a Direct3DCreate9 that stops there.
+  add_library(dxvk_d3d9 INTERFACE)
+  target_include_directories(dxvk_d3d9 INTERFACE
+    "${DIRT2_DXVK_DIR}/include/native/directx" "${DIRT2_DXVK_DIR}/include/native/windows")
+  set(DIRT2_HAVE_DXMT OFF)
+else()
 set(DIRT2_DXVK_BUILD_DIR "${CMAKE_SOURCE_DIR}/build/dxvk/${DIRT2_PLATFORM}" CACHE PATH "DXVK meson build directory")
 set(DIRT2_MOLTENVK_LIB_DIR "${CMAKE_SOURCE_DIR}/build/moltenvk/${DIRT2_PLATFORM}/lib" CACHE PATH "Folder with libMoltenVK.a")
 add_library(dxvk_d3d9 STATIC IMPORTED)
@@ -103,6 +129,7 @@ else()
   message(STATUS "DXMT not built for ${DIRT2_PLATFORM} (tools/scripts/build_dxmt.sh): DX11 renderer disabled")
   set(DIRT2_HAVE_DXMT OFF)
 endif()
+endif()  # not DIRT2_SWITCH
 
 add_subdirectory(runtime)
 add_subdirectory(shims)
@@ -129,6 +156,9 @@ if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
     target_compile_definitions(dirt2_gen PRIVATE RECOMP_TSO=1)
   endif()
 
+  if(DIRT2_SWITCH)
+    include(platform/switch/switch.cmake)
+  else()
   if(DIRT2_IOS)
     # App bundle; signing with entitlements is done by tools/scripts/package_ios.sh.
     set(DIRT2_BUNDLE_ID "com.daniilvinogradov.dirt2recomp" CACHE STRING "iOS bundle identifier")
@@ -198,6 +228,7 @@ if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
     add_custom_command(TARGET dirt2 POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy_directory "${DIRT2_PIPELINE_DATA_DIR}/dxmt" $<TARGET_FILE_DIR:dirt2>/dxmt)
   endif()
+  endif()  # Apple
 else()
   message(STATUS "generated/sources.txt not found: run 'recomp lift' to enable the dirt2 target")
 endif()

@@ -31,7 +31,11 @@ void recomp_frame_leave(RecompFrame* f);
 /* Resumes at a label of an active frame; returns only if none owns it. */
 void recomp_resume_at(uint32_t target);
 
-#ifdef __APPLE__
+#if defined(__SWITCH__)
+/* newlib maps _setjmp to sigsetjmp; Horizon has no signal mask to save anyway. */
+#define RECOMP_SETJMP(jb) setjmp(jb)
+#define RECOMP_LONGJMP(jb, v) longjmp(jb, v)
+#elif defined(__APPLE__)
 #define RECOMP_SETJMP(jb) _setjmp(jb)
 #define RECOMP_LONGJMP(jb, v) _longjmp(jb, v)
 #else

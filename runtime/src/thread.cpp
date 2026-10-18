@@ -32,7 +32,13 @@ struct Thread {
 namespace {
 
 constexpr uint32_t kTebSize = 0x1000;
-constexpr size_t kHostStack = 64u << 20;  // guest call depth maps onto the host stack
+// Guest call depth maps onto the host stack. Horizon commits a thread's whole
+// stack up front (from the heap), so guest threads get less there.
+#if defined(__SWITCH__)
+constexpr size_t kHostStack = 16u << 20;
+#else
+constexpr size_t kHostStack = 64u << 20;
+#endif
 
 thread_local Thread* t_cur = nullptr;
 std::atomic<uint32_t> g_next_id{0x100};
@@ -97,6 +103,8 @@ void* thread_main(void* arg) {
         std::snprintf(name, sizeof name, "guest %08X", t->entry);
 #if defined(__APPLE__)
         pthread_setname_np(name);
+#elif defined(__SWITCH__)
+        (void)name;  // newlib only declares pthread_setname_np for _GNU_SOURCE; not worth it here
 #else
         pthread_setname_np(pthread_self(), name);
 #endif

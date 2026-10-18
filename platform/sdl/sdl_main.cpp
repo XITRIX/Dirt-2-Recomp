@@ -28,6 +28,13 @@ void install_menu_patches(bool metalfx_row);
 int read_metalfx_setting(const std::string& path);
 }
 
+#if defined(SDL_PLATFORM_SWITCH)
+namespace switch_platform {
+bool check_launch_mode();
+void report_missing_game(const std::string& dir);
+}  // namespace switch_platform
+#endif
+
 namespace rt {
 namespace {
 std::string g_game_dir;
@@ -52,7 +59,8 @@ void on_main(F&& f) {
 
 }  // namespace
 
-#if defined(SDL_PLATFORM_IOS) || defined(SDL_PLATFORM_TVOS) || defined(SDL_PLATFORM_VISIONOS)
+#if defined(SDL_PLATFORM_IOS) || defined(SDL_PLATFORM_TVOS) || defined(SDL_PLATFORM_VISIONOS) || \
+    defined(SDL_PLATFORM_SWITCH)
 // One window per screen: every top-level game window (the loading splash, then
 // the main window) shares it; it goes away with the last one.
 constexpr bool kSingleWindow = true;
@@ -77,7 +85,12 @@ Window create_window(int width, int height, const char* title) {
             return;
         }
         const float d = display_density();
+#if defined(SDL_PLATFORM_SWITCH)
+        // Gate 0: no GPU backend, and SDL is built without Vulkan (a Vulkan window would fail).
+        const SDL_WindowFlags api = 0;
+#else
         const SDL_WindowFlags api = renderer() == Renderer::DX11 ? SDL_WINDOW_METAL : SDL_WINDOW_VULKAN;
+#endif
         w = SDL_CreateWindow(title, int(width / d), int(height / d),
                              api | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
         if (!w) rt::log("SDL_CreateWindow failed: %s", SDL_GetError());
@@ -279,7 +292,12 @@ void watch_metalfx_setting(std::string path) {
 }
 
 void* game_main(void*) {
+#if defined(__APPLE__)
     pthread_setname_np("game main");
+#elif defined(__SWITCH__)
+#else
+    pthread_setname_np(pthread_self(), "game main");
+#endif
     rt::install_crash_handler();
     // Saves sync before the game reads them (C:\Users\Player\Documents maps into
     // the data folder). On this thread so the main thread can show a dialog.
@@ -302,6 +320,13 @@ void* game_main(void*) {
 // registers, DXVK) into <data>/dirt2.log as well: on iOS the console is gone
 // unless a debugger is attached.
 void tee_stderr(const std::string& path) {
+#if defined(SDL_PLATFORM_SWITCH)
+    // No console and no pipes on Horizon: stderr goes straight to the file
+    // (line buffered, so a crash keeps everything before it).
+    std::rename(path.c_str(), (path.substr(0, path.size() - 4) + ".prev.log").c_str());
+    if (std::freopen(path.c_str(), "w", stderr)) std::setvbuf(stderr, nullptr, _IOLBF, 0);
+    return;
+#endif
     int fds[2];
     const int console = dup(STDERR_FILENO);
     // Keep the previous run's log: a crash is often only looked at after a relaunch.
@@ -467,12 +492,28 @@ void setup_pipeline_warmup(const std::string& data) {
 
 }  // namespace
 
+#if defined(SDL_PLATFORM_SWITCH)
+// Everything lives on the SD card: the game in sdmc:/switch/dirt2/Dirt 2, our
+// data (log, saves, settings) in sdmc:/switch/dirt2.
+constexpr const char* kSwitchDataDir = "sdmc:/switch/dirt2";
+#endif
+
 int main(int argc, char** argv) {
     std::string dir;
     if (const char* e = std::getenv("DIRT2_GAME_DIR")) dir = e;
     for (int i = 1; i + 1 < argc; ++i)
         if (!std::strcmp(argv[i], "--game")) dir = argv[++i];
-#if defined(SDL_PLATFORM_IOS) || defined(SDL_PLATFORM_TVOS) || defined(SDL_PLATFORM_VISIONOS)
+#if defined(SDL_PLATFORM_SWITCH)
+    if (!switch_platform::check_launch_mode()) return 1;
+    setenv("DIRT2_DATA_DIR", kSwitchDataDir, 0);
+    if (dir.empty()) {
+        dir = std::string(kSwitchDataDir) + "/Dirt 2";
+        if (!std::filesystem::exists(dir + "/dirt2_game.exe")) {
+            switch_platform::report_missing_game(dir);
+            return 2;
+        }
+    }
+#elif defined(SDL_PLATFORM_IOS) || defined(SDL_PLATFORM_TVOS) || defined(SDL_PLATFORM_VISIONOS)
     // The game data is copied into the app's Documents folder (Finder or the
     // Files app): either the "Dirt 2" folder itself or its contents.
     if (dir.empty())
@@ -613,7 +654,12 @@ int main(int argc, char** argv) {
 
     pthread_attr_t attr;
     pthread_attr_init(&attr);
+    // Guest call depth nests host frames. Horizon commits the whole stack up front.
+#if defined(SDL_PLATFORM_SWITCH)
+    pthread_attr_setstacksize(&attr, 64u << 20);
+#else
     pthread_attr_setstacksize(&attr, 256u << 20);
+#endif
     pthread_t th;
     pthread_create(&th, &attr, game_main, nullptr);
 

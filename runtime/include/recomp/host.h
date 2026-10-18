@@ -22,6 +22,8 @@ bool vm_free(uint32_t addr, uint32_t size, bool release);
 // Information about the region containing addr, for VirtualQuery.
 struct VmInfo { uint32_t base, alloc_base, size; bool committed, free; };
 VmInfo vm_query(uint32_t addr);
+// Host memory backing committed guest pages (Horizon, where commits are real); 0 elsewhere.
+uint64_t committed_bytes();
 
 inline uint8_t* host_ptr(uint32_t a) { return recomp_mem + a; }
 inline const char* host_str(uint32_t a) { return a ? reinterpret_cast<const char*>(recomp_mem + a) : nullptr; }

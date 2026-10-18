@@ -2,6 +2,7 @@
 // update services, which no longer exist, so the network reports itself down.
 // Byte-order helpers and address parsing are real.
 #include <arpa/inet.h>
+#include <sys/socket.h>
 
 #include "../shim.h"
 

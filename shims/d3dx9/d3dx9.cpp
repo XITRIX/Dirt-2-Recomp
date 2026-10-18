@@ -6,6 +6,7 @@
 // precompiled shader packs.
 #include <d3d9.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <mutex>
 #include <string>
