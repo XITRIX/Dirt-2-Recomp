@@ -3,6 +3,7 @@
 // since guest call depth nests host frames.
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
+#include <SDL3/SDL_metal.h>
 #include <pthread.h>
 #include <unistd.h>
 
@@ -14,6 +15,7 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <thread>
 
 #include "../platform.h"
@@ -75,8 +77,9 @@ Window create_window(int width, int height, const char* title) {
             return;
         }
         const float d = display_density();
+        const SDL_WindowFlags api = renderer() == Renderer::DX11 ? SDL_WINDOW_METAL : SDL_WINDOW_VULKAN;
         w = SDL_CreateWindow(title, int(width / d), int(height / d),
-                             SDL_WINDOW_VULKAN | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
+                             api | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
         if (!w) rt::log("SDL_CreateWindow failed: %s", SDL_GetError());
         if (kSingleWindow && w) {
             g_shared_window = w;
@@ -84,6 +87,28 @@ Window create_window(int width, int height, const char* title) {
         }
     });
     return w;
+}
+
+Renderer renderer() {
+    static const Renderer r = [] {
+        const char* e = std::getenv("DIRT2_RENDERER");
+        return e && std::strcmp(e, "dx11") == 0 ? Renderer::DX11 : Renderer::DX9;
+    }();
+    return r;
+}
+
+void* metal_layer(Window w) {
+    static std::mutex mu;
+    static std::unordered_map<Window, SDL_MetalView> views;
+    std::lock_guard lk(mu);
+    SDL_MetalView& v = views[w];
+    void* layer = nullptr;
+    on_main([&] {
+        if (!v) v = SDL_Metal_CreateView(static_cast<SDL_Window*>(w));
+        if (!v) rt::log("SDL_Metal_CreateView failed: %s", SDL_GetError());
+        else layer = SDL_Metal_GetLayer(v);
+    });
+    return layer;
 }
 
 void destroy_window(Window w) {

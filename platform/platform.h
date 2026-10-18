@@ -18,6 +18,14 @@ void drawable_size(Window w, int* width, int* height);
 // Borderless desktop fullscreen (never an exclusive display-mode switch).
 void set_fullscreen(Window w, bool fullscreen);
 
+// Which of the game's renderers runs: DX9 (DXVK on MoltenVK) or DX11 (DXMT on
+// Metal). DIRT2_RENDERER=dx9|dx11; DX9 until the DX11 path reaches parity.
+enum class Renderer { DX9, DX11 };
+Renderer renderer();
+// The CAMetalLayer of a window's Metal view, created on first use (DX11 path:
+// DXMT presents into it).
+void* metal_layer(Window w);
+
 // Display size in pixels, for GetSystemMetrics / EnumDisplaySettings.
 void display_size(int* width, int* height);
 

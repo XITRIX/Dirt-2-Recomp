@@ -8,6 +8,7 @@
 #include <thread>
 
 #include "../shim.h"
+#include "../../platform/platform.h"
 #include "../vfs.h"
 
 using namespace shim;
@@ -32,6 +33,7 @@ const Module kModules[] = {
     {"openal32.dll", 0x6E000000}, {"binkw32.dll", 0x6D000000}, {"xlive.dll", 0x6C000000},
     {"ddraw.dll", 0x73760000}, {"imagehlp.dll", 0x76C90000}, {"crypt32.dll", 0x77AA0000},
     {"wintrust.dll", 0x76C30000}, {"dbghelp.dll", 0x59A60000}, {"psapi.dll", 0x76BF0000}, {"vorbisfile.dll", 0x6A000000},
+    {"d3d11.dll", 0x69800000}, {"dxgi.dll", 0x69900000},
 };
 
 std::string lower(std::string s) {
@@ -127,9 +129,11 @@ STDCALL(kernel32, GetModuleFileNameA, 3) {
 STDCALL(kernel32, GetModuleFileNameW, 3) { return copy_out_w(a[1], a[2], kExePath); }
 STDCALL(kernel32, LoadLibraryA, 1) {
     const std::string key = module_key(a.str(0));
-    // No D3D10/11 path: refusing these makes the game select its D3D9 renderer.
-    if (key == "d3d11.dll" || key == "dxgi.dll" || key == "d3d10.dll" || key == "d3d10_1.dll") {
-        rt::log("LoadLibraryA(%s): refused (D3D9 only)", a.str(0));
+    // Refusing these makes the game select its D3D9 renderer; the DX11 path
+    // (DIRT2_RENDERER=dx11) gets d3d11.dll and dxgi.dll from shims/d3d11.
+    const bool dx11 = platform::renderer() == platform::Renderer::DX11;
+    if ((!dx11 && (key == "d3d11.dll" || key == "dxgi.dll")) || key == "d3d10.dll" || key == "d3d10_1.dll") {
+        rt::log("LoadLibraryA(%s): refused (D3D9 renderer)", a.str(0));
         set_last_error(ERROR_MOD_NOT_FOUND);
         return 0;
     }

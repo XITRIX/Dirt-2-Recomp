@@ -192,6 +192,9 @@ Debug switches:
 | `DIRT2_SCREENSHOT_DIR` | Back-buffer capture |
 | `DIRT2_INPUT_TRACE` | First XInput call per pad/result and every pad state change |
 | `DIRT2_JOYSTICK_MFI=1` | Re-enable SDL's GameController (MFi) joystick driver |
+| `DIRT2_RENDERER=dx11` | Run the game's DX11 renderer through DXMT (default `dx9`, DXVK) |
+| `DIRT2_DUMP_HLSL=<dir>` | DX11 path: save the HLSL of run-time `D3DCompile` calls not served by the immediate-mode shaders |
+| `DXMT_LOG_LEVEL`, `DXMT_LOG_PATH` | DXMT's own log |
 | `DXVK_PIPELINE_TIMING=1` | Log each pipeline compiled at a draw, with its time (stutter) |
 | `DXVK_PIPELINE_RECORD=` / `DXVK_PIPELINE_WARMUP=` | Empty: stop recording pipelines / skip the warm-up (HANDOVER.md, Pipeline warm-up) |
 

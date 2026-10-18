@@ -1,0 +1,699 @@
+// Direct3D 11 / DXGI bridge: the game's 32-bit COM calls -> DXMT (native,
+// libdxmt-native) on Metal. The DX11 renderer runs with DIRT2_RENDERER=dx11.
+//
+// The generic machinery (proxies, Arg<>, interface arrays, IID outs) is
+// shims/com/bridge_core.h; vtables.inc is generated from DXMT's own headers
+// (tools/scripts/gen_d3d11_vtables.py). Hand-written here are the methods
+// taking structs laid out differently in the 32-bit guest (pointers, SIZE_T,
+// HWND) and Map/Unmap, which hand the game guest-memory shadows.
+#include <d3d11.h>
+#include <dxgi.h>
+
+#include <algorithm>
+#include <chrono>
+#include <filesystem>
+#include <cstdlib>
+#include <map>
+#include <vector>
+
+#include "../../platform/platform.h"
+#include "../shim.h"
+
+namespace shim {
+void* host_window(uint32_t hwnd);
+}
+
+using namespace shim;
+
+namespace {
+
+constexpr const char* kBridge = "d3d11";
+constexpr uint32_t kProxyMagic = 0x42313144;  // "D11B"
+constexpr HRESULT kInvalidCall = E_INVALIDARG;
+
+// Distinct objects: one host pointer is never two of these at once. DXGI
+// interfaces are views of D3D11 objects (a texture is also an IDXGISurface),
+// so they are not leaves.
+bool is_leaf_name(const char* name) {
+    static const char* const leaves[] = {
+        "ID3D11Buffer",          "ID3D11Texture1D",       "ID3D11Texture2D",         "ID3D11Texture3D",
+        "ID3D11ShaderResourceView", "ID3D11RenderTargetView", "ID3D11DepthStencilView", "ID3D11UnorderedAccessView",
+        "ID3D11VertexShader",    "ID3D11PixelShader",     "ID3D11HullShader",        "ID3D11DomainShader",
+        "ID3D11GeometryShader",  "ID3D11ComputeShader",   "ID3D11InputLayout",       "ID3D11BlendState",
+        "ID3D11DepthStencilState", "ID3D11RasterizerState", "ID3D11SamplerState",    "ID3D11Query",
+        "ID3D11Predicate",       "ID3D11Counter"};
+    for (const char* n : leaves)
+        if (std::strcmp(name, n) == 0) return true;
+    return false;
+}
+
+template <typename I>
+uint32_t wrap(I* p);
+uint32_t wrap_by_iid(const GUID& iid, void* obj);
+void on_release(uint32_t proxy);
+
+#include "../com/bridge_core.h"
+
+// ---------------------------------------------------------------------------
+// Guest layouts of the structs that differ (32-bit pointers, SIZE_T, HWND)
+// ---------------------------------------------------------------------------
+
+// DXGI_SWAP_CHAIN_DESC: 15 dwords; OutputWindow (a guest HWND) at +44.
+void scd_in(uint32_t g, DXGI_SWAP_CHAIN_DESC& d) {
+    d.BufferDesc.Width = rd32(g + 0);
+    d.BufferDesc.Height = rd32(g + 4);
+    d.BufferDesc.RefreshRate.Numerator = rd32(g + 8);
+    d.BufferDesc.RefreshRate.Denominator = rd32(g + 12);
+    d.BufferDesc.Format = DXGI_FORMAT(rd32(g + 16));
+    d.BufferDesc.ScanlineOrdering = DXGI_MODE_SCANLINE_ORDER(rd32(g + 20));
+    d.BufferDesc.Scaling = DXGI_MODE_SCALING(rd32(g + 24));
+    d.SampleDesc.Count = rd32(g + 28);
+    d.SampleDesc.Quality = rd32(g + 32);
+    d.BufferUsage = rd32(g + 36);
+    d.BufferCount = rd32(g + 40);
+    d.OutputWindow = nullptr;
+    d.Windowed = WINBOOL(rd32(g + 48));
+    d.SwapEffect = DXGI_SWAP_EFFECT(rd32(g + 52));
+    d.Flags = rd32(g + 56);
+}
+void scd_out(uint32_t g, const DXGI_SWAP_CHAIN_DESC& d, uint32_t guest_hwnd) {
+    const uint32_t v[15] = {d.BufferDesc.Width, d.BufferDesc.Height, d.BufferDesc.RefreshRate.Numerator,
+                            d.BufferDesc.RefreshRate.Denominator, uint32_t(d.BufferDesc.Format),
+                            uint32_t(d.BufferDesc.ScanlineOrdering), uint32_t(d.BufferDesc.Scaling), d.SampleDesc.Count,
+                            d.SampleDesc.Quality, d.BufferUsage, d.BufferCount, guest_hwnd, uint32_t(d.Windowed),
+                            uint32_t(d.SwapEffect), d.Flags};
+    for (int i = 0; i < 15; ++i) wr32(g + 4 * i, v[i]);
+}
+
+// Per swap chain: the game's HWND, its host window, and the fullscreen state the
+// game asked for (presentation is always a window; fullscreen is borderless).
+struct SwapInfo {
+    uint32_t guest_hwnd = 0;
+    platform::Window window = nullptr;
+    bool fullscreen = false;
+};
+std::map<uint32_t, SwapInfo> g_swaps;  // swap chain proxy -> info
+
+// Converts a guest swap-chain description into the host one: OutputWindow is
+// the window's CAMetalLayer (dxmt/0001-native-hwnd-is-metal-layer.patch).
+// Exclusive fullscreen becomes borderless desktop fullscreen; DIRT2_WINDOWED=1
+// keeps a window sized to the buffers.
+bool prepare_swap_chain(uint32_t gdesc, DXGI_SWAP_CHAIN_DESC& d, SwapInfo& info) {
+    scd_in(gdesc, d);
+    info.guest_hwnd = rd32(gdesc + 44);
+    info.window = host_window(info.guest_hwnd);
+    if (!info.window) {
+        rt::log("d3d11: swap chain for unknown HWND %08X", info.guest_hwnd);
+        return false;
+    }
+    info.fullscreen = !d.Windowed;
+    d.Windowed = TRUE;
+    static const bool force_windowed = std::getenv("DIRT2_WINDOWED") != nullptr;
+    if (info.fullscreen && !force_windowed) {
+        platform::set_fullscreen(info.window, true);
+    } else {
+        platform::set_fullscreen(info.window, false);
+        if (d.BufferDesc.Width && d.BufferDesc.Height)
+            platform::set_window_size(info.window, int(d.BufferDesc.Width), int(d.BufferDesc.Height));
+    }
+    platform::show_window(info.window, true);
+    d.OutputWindow = HWND(platform::metal_layer(info.window));
+    if (!d.OutputWindow) return false;
+    rt::log("d3d11: swap chain %ux%u format %u, %u buffers, %s", d.BufferDesc.Width, d.BufferDesc.Height,
+            uint32_t(d.BufferDesc.Format), d.BufferCount, info.fullscreen ? "fullscreen" : "windowed");
+    return true;
+}
+
+// D3D11_SUBRESOURCE_DATA[n]: {pSysMem, SysMemPitch, SysMemSlicePitch}, 12 bytes each.
+std::vector<D3D11_SUBRESOURCE_DATA> init_data(uint32_t g, uint32_t n) {
+    std::vector<D3D11_SUBRESOURCE_DATA> v;
+    if (!g) return v;
+    v.resize(n);
+    for (uint32_t i = 0; i < n; ++i) {
+        const uint32_t p = rd32(g + 12 * i);
+        v[i].pSysMem = p ? rt::host_ptr(p) : nullptr;
+        v[i].SysMemPitch = rd32(g + 12 * i + 4);
+        v[i].SysMemSlicePitch = rd32(g + 12 * i + 8);
+    }
+    return v;
+}
+
+uint32_t mip_count(uint32_t mips, uint32_t w, uint32_t h = 1, uint32_t d = 1) {
+    if (mips) return mips;
+    uint32_t n = 1;
+    for (uint32_t m = std::max({w, h, d}); m > 1; m >>= 1) ++n;
+    return n;
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// Overrides
+// ---------------------------------------------------------------------------
+namespace {
+
+void dev_create_buffer(X86* c);
+void dev_create_texture1d(X86* c);
+void dev_create_texture2d(X86* c);
+void dev_create_texture3d(X86* c);
+void dev_create_input_layout(X86* c);
+void ctx_map(X86* c);
+void ctx_unmap(X86* c);
+void factory_create_swap_chain(X86* c);
+void swap_get_desc(X86* c);
+void swap_present(X86* c);
+void swap_set_fullscreen_state(X86* c);
+void swap_get_fullscreen_state(X86* c);
+void adapter_get_desc(X86* c);
+void adapter1_get_desc1(X86* c);
+void output_get_desc(X86* c);
+
+OVERRIDE(ID3D11Device, CreateBuffer, dev_create_buffer)
+OVERRIDE(ID3D11Device, CreateTexture1D, dev_create_texture1d)
+OVERRIDE(ID3D11Device, CreateTexture2D, dev_create_texture2d)
+OVERRIDE(ID3D11Device, CreateTexture3D, dev_create_texture3d)
+OVERRIDE(ID3D11Device, CreateInputLayout, dev_create_input_layout)
+OVERRIDE(ID3D11DeviceContext, Map, ctx_map)
+OVERRIDE(ID3D11DeviceContext, Unmap, ctx_unmap)
+OVERRIDE(IDXGIFactory, CreateSwapChain, factory_create_swap_chain)
+OVERRIDE(IDXGISwapChain, GetDesc, swap_get_desc)
+OVERRIDE(IDXGISwapChain, Present, swap_present)
+OVERRIDE(IDXGISwapChain, SetFullscreenState, swap_set_fullscreen_state)
+OVERRIDE(IDXGISwapChain, GetFullscreenState, swap_get_fullscreen_state)
+OVERRIDE(IDXGIAdapter, GetDesc, adapter_get_desc)
+OVERRIDE(IDXGIAdapter1, GetDesc1, adapter1_get_desc1)
+OVERRIDE(IDXGIOutput, GetDesc, output_get_desc)
+
+// IUnknown itself (QueryInterface for IID_IUnknown).
+const recomp_fn vt_IUnknown[] = {&QI<IUnknown>, &AddRefB<IUnknown>, &ReleaseB<IUnknown>};
+template <>
+const VTableDesc& vtable_desc<IUnknown>() {
+    static const VTableDesc d{"IUnknown", vt_IUnknown, 3};
+    return d;
+}
+
+#include "vtables.inc"
+
+// Most-derived wrapping for the resource base interface.
+template <typename I>
+uint32_t wrap(I* p) {
+    if (!p) return 0;
+    if constexpr (std::is_same_v<I, ID3D11Resource>) {
+        D3D11_RESOURCE_DIMENSION dim = D3D11_RESOURCE_DIMENSION_UNKNOWN;
+        p->GetType(&dim);
+        switch (dim) {
+            case D3D11_RESOURCE_DIMENSION_BUFFER: return wrap_with(p, vtable_desc<ID3D11Buffer>());
+            case D3D11_RESOURCE_DIMENSION_TEXTURE1D: return wrap_with(p, vtable_desc<ID3D11Texture1D>());
+            case D3D11_RESOURCE_DIMENSION_TEXTURE2D: return wrap_with(p, vtable_desc<ID3D11Texture2D>());
+            case D3D11_RESOURCE_DIMENSION_TEXTURE3D: return wrap_with(p, vtable_desc<ID3D11Texture3D>());
+            default: break;
+        }
+    }
+    return wrap_with(p, vtable_desc<I>());
+}
+
+uint32_t wrap_by_iid(const GUID& iid, void* obj) {
+#define TRY_IID(I) \
+    if (iid == __uuidof(I)) return wrap(static_cast<I*>(obj));
+    BRIDGE_INTERFACES(TRY_IID)
+    TRY_IID(IUnknown)
+#undef TRY_IID
+    rt::log("d3d11: QueryInterface for an interface without a bridge vtable");
+    return wrap(static_cast<IUnknown*>(obj));
+}
+
+// ---- Map/Unmap: guest shadows ----
+//
+// The game writes through the pointer Map returns, so it must be guest memory.
+// Each (resource, subresource) keeps a persistent guest shadow: WRITE_DISCARD
+// and NO_OVERWRITE maps write into it and Unmap copies it to the host mapping
+// (the shadow keeps earlier contents, as NO_OVERWRITE expects); READ maps copy
+// the host data in first.
+struct MapShadow {
+    uint32_t guest = 0, size = 0;
+    void* host = nullptr;  // host mapping while mapped
+    bool write = false;
+};
+std::map<std::pair<uint32_t, uint32_t>, MapShadow> g_maps;
+
+void on_release(uint32_t proxy) {
+    std::lock_guard lk(g_mu);
+    for (auto it = g_maps.lower_bound({proxy, 0}); it != g_maps.end() && it->first.first == proxy;) {
+        rt::heap_free(it->second.guest);
+        it = g_maps.erase(it);
+    }
+    g_swaps.erase(proxy);
+}
+
+// Bytes the game may touch in a mapped subresource.
+uint32_t mapped_size(ID3D11Resource* r, UINT sub, const D3D11_MAPPED_SUBRESOURCE& m) {
+    D3D11_RESOURCE_DIMENSION dim;
+    r->GetType(&dim);
+    switch (dim) {
+        case D3D11_RESOURCE_DIMENSION_BUFFER: {
+            D3D11_BUFFER_DESC d;
+            static_cast<ID3D11Buffer*>(r)->GetDesc(&d);
+            return d.ByteWidth;
+        }
+        case D3D11_RESOURCE_DIMENSION_TEXTURE3D: {
+            D3D11_TEXTURE3D_DESC d;
+            static_cast<ID3D11Texture3D*>(r)->GetDesc(&d);
+            const uint32_t mip = sub % mip_count(d.MipLevels, d.Width, d.Height, d.Depth);
+            return m.DepthPitch * std::max(1u, d.Depth >> mip);
+        }
+        case D3D11_RESOURCE_DIMENSION_TEXTURE2D: {
+            D3D11_TEXTURE2D_DESC d;
+            static_cast<ID3D11Texture2D*>(r)->GetDesc(&d);
+            const uint32_t mip = sub % mip_count(d.MipLevels, d.Width, d.Height);
+            uint32_t rows = std::max(1u, d.Height >> mip);
+            const bool block = (d.Format >= DXGI_FORMAT_BC1_TYPELESS && d.Format <= DXGI_FORMAT_BC5_SNORM) ||
+                               (d.Format >= DXGI_FORMAT_BC6H_TYPELESS && d.Format <= DXGI_FORMAT_BC7_UNORM_SRGB);
+            if (block) rows = (rows + 3) / 4;
+            return std::max(m.DepthPitch, m.RowPitch * rows);
+        }
+        default:
+            return std::max(m.DepthPitch, m.RowPitch);
+    }
+}
+
+// Map(resource, subresource, type, flags, D3D11_MAPPED_SUBRESOURCE*)
+void ctx_map(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<ID3D11DeviceContext*>(to_host(a[0]));
+    auto* res = static_cast<ID3D11Resource*>(to_host(a[1]));
+    const uint32_t sub = a[2], type = a[3], out = a[5];
+    HRESULT hr = E_INVALIDARG;
+    if (self && res) {
+        D3D11_MAPPED_SUBRESOURCE m{};
+        hr = self->Map(res, sub, D3D11_MAP(type), a[4], &m);
+        if (SUCCEEDED(hr)) {
+            std::lock_guard lk(g_mu);
+            MapShadow& sh = g_maps[{a[1], sub}];
+            const uint32_t size = mapped_size(res, sub, m);
+            if (sh.guest && sh.size < size) {
+                rt::heap_free(sh.guest);
+                sh = MapShadow{};
+            }
+            if (!sh.guest) {
+                sh.guest = rt::heap_alloc(std::max(size, 16u), true);
+                sh.size = size;
+            }
+            sh.host = m.pData;
+            sh.write = type != D3D11_MAP_READ;
+            if (type == D3D11_MAP_READ || type == D3D11_MAP_READ_WRITE)
+                std::memcpy(rt::host_ptr(sh.guest), m.pData, size);
+            if (out) {
+                wr32(out, sh.guest);
+                wr32(out + 4, m.RowPitch);
+                wr32(out + 8, m.DepthPitch);
+            }
+        } else if (hr != DXGI_ERROR_WAS_STILL_DRAWING) {
+            static std::atomic<int> logged{0};
+            if (logged++ < 20) rt::log("d3d11: Map(sub %u, type %u) failed: %08X", sub, type, uint32_t(hr));
+        }
+    }
+    if (FAILED(hr) && out) wr32(out, 0);
+    c->eax = uint32_t(hr);
+    c->esp += 4 * 7;
+}
+
+// Unmap(resource, subresource)
+void ctx_unmap(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<ID3D11DeviceContext*>(to_host(a[0]));
+    auto* res = static_cast<ID3D11Resource*>(to_host(a[1]));
+    if (self && res) {
+        {
+            std::lock_guard lk(g_mu);
+            auto it = g_maps.find({a[1], a[2]});
+            if (it != g_maps.end() && it->second.host) {
+                if (it->second.write) std::memcpy(it->second.host, rt::host_ptr(it->second.guest), it->second.size);
+                it->second.host = nullptr;
+            }
+        }
+        self->Unmap(res, a[2]);
+    }
+    c->esp += 4 * 4;
+}
+
+// ---- creation with initial data ----
+
+// CreateBuffer(desc, init, **buffer)
+void dev_create_buffer(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<ID3D11Device*>(to_host(a[0]));
+    const auto* desc = a.ptr<D3D11_BUFFER_DESC>(1);
+    auto init = init_data(a[2], 1);
+    ID3D11Buffer* b = nullptr;
+    const HRESULT hr = self && desc ? self->CreateBuffer(desc, init.empty() ? nullptr : init.data(), a[3] ? &b : nullptr)
+                                    : E_INVALIDARG;
+    if (FAILED(hr)) rt::log("d3d11: CreateBuffer(%u bytes, bind %X) failed: %08X", desc ? desc->ByteWidth : 0,
+                            desc ? desc->BindFlags : 0, uint32_t(hr));
+    if (a[3]) wr32(a[3], wrap(b));
+    c->eax = uint32_t(hr);
+    c->esp += 4 * 5;
+}
+
+template <typename Desc, typename Tex, HRESULT (STDMETHODCALLTYPE ID3D11Device::*Create)(const Desc*, const D3D11_SUBRESOURCE_DATA*, Tex**)>
+void create_texture(X86* c, uint32_t subresources) {
+    const Args a{c};
+    auto* self = static_cast<ID3D11Device*>(to_host(a[0]));
+    const auto* desc = a.ptr<Desc>(1);
+    auto init = init_data(a[2], subresources);
+    Tex* t = nullptr;
+    const HRESULT hr =
+        self && desc ? (self->*Create)(desc, init.empty() ? nullptr : init.data(), a[3] ? &t : nullptr) : E_INVALIDARG;
+    if (FAILED(hr) && desc) {
+        uint32_t h = 0;
+        if constexpr (requires { desc->Height; }) h = desc->Height;
+        rt::log("d3d11: CreateTexture(%ux%u, %u mips, format %u, usage %u, bind %X, cpu %X, misc %X, %zu init) failed: %08X",
+                desc->Width, h, desc->MipLevels, uint32_t(desc->Format), uint32_t(desc->Usage), desc->BindFlags,
+                desc->CPUAccessFlags, desc->MiscFlags, init.size(), uint32_t(hr));
+    }
+    if (a[3]) wr32(a[3], wrap(t));
+    c->eax = uint32_t(hr);
+    c->esp += 4 * 5;
+}
+
+void dev_create_texture1d(X86* c) {
+    const auto* d = Args{c}.ptr<D3D11_TEXTURE1D_DESC>(1);
+    create_texture<D3D11_TEXTURE1D_DESC, ID3D11Texture1D, &ID3D11Device::CreateTexture1D>(
+        c, d ? mip_count(d->MipLevels, d->Width) * d->ArraySize : 0);
+}
+void dev_create_texture2d(X86* c) {
+    const auto* d = Args{c}.ptr<D3D11_TEXTURE2D_DESC>(1);
+    create_texture<D3D11_TEXTURE2D_DESC, ID3D11Texture2D, &ID3D11Device::CreateTexture2D>(
+        c, d ? mip_count(d->MipLevels, d->Width, d->Height) * d->ArraySize : 0);
+}
+void dev_create_texture3d(X86* c) {
+    const auto* d = Args{c}.ptr<D3D11_TEXTURE3D_DESC>(1);
+    create_texture<D3D11_TEXTURE3D_DESC, ID3D11Texture3D, &ID3D11Device::CreateTexture3D>(
+        c, d ? mip_count(d->MipLevels, d->Width, d->Height, d->Depth) : 0);
+}
+
+// CreateInputLayout(descs, n, bytecode, length, **layout): 28-byte guest elements.
+void dev_create_input_layout(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<ID3D11Device*>(to_host(a[0]));
+    const uint32_t g = a[1], n = a[2];
+    std::vector<D3D11_INPUT_ELEMENT_DESC> v(n);
+    for (uint32_t i = 0; i < n; ++i) {
+        const uint32_t e = g + 28 * i;
+        v[i].SemanticName = rt::host_str(rd32(e));
+        v[i].SemanticIndex = rd32(e + 4);
+        v[i].Format = DXGI_FORMAT(rd32(e + 8));
+        v[i].InputSlot = rd32(e + 12);
+        v[i].AlignedByteOffset = rd32(e + 16);
+        v[i].InputSlotClass = D3D11_INPUT_CLASSIFICATION(rd32(e + 20));
+        v[i].InstanceDataStepRate = rd32(e + 24);
+    }
+    ID3D11InputLayout* l = nullptr;
+    const HRESULT hr = self ? self->CreateInputLayout(v.data(), n, a[3] ? rt::host_ptr(a[3]) : nullptr, a[4],
+                                                      a[5] ? &l : nullptr)
+                            : E_INVALIDARG;
+    if (FAILED(hr)) rt::log("d3d11: CreateInputLayout(%u elements) failed: %08X", n, uint32_t(hr));
+    if (a[5]) wr32(a[5], wrap(l));
+    c->eax = uint32_t(hr);
+    c->esp += 4 * 7;
+}
+
+// ---- DXGI ----
+
+// IDXGIFactory::CreateSwapChain(device, desc, **swapchain)
+void factory_create_swap_chain(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<IDXGIFactory*>(to_host(a[0]));
+    IUnknown* dev = to_host(a[1]);
+    DXGI_SWAP_CHAIN_DESC d{};
+    SwapInfo info;
+    IDXGISwapChain* sc = nullptr;
+    HRESULT hr = E_INVALIDARG;
+    if (self && dev && a[2] && prepare_swap_chain(a[2], d, info)) hr = self->CreateSwapChain(dev, &d, &sc);
+    if (FAILED(hr)) rt::log("d3d11: CreateSwapChain failed: %08X", uint32_t(hr));
+    const uint32_t p = wrap(sc);
+    if (p) {
+        std::lock_guard lk(g_mu);
+        g_swaps[p] = info;
+    }
+    if (a[3]) wr32(a[3], p);
+    c->eax = uint32_t(hr);
+    c->esp += 4 * 5;
+}
+
+void swap_get_desc(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<IDXGISwapChain*>(to_host(a[0]));
+    DXGI_SWAP_CHAIN_DESC d{};
+    const HRESULT hr = self && a[1] ? self->GetDesc(&d) : E_INVALIDARG;
+    if (SUCCEEDED(hr)) {
+        std::lock_guard lk(g_mu);
+        const SwapInfo& info = g_swaps[a[0]];
+        d.Windowed = !info.fullscreen;
+        scd_out(a[1], d, info.guest_hwnd);
+    }
+    c->eax = uint32_t(hr);
+    c->esp += 4 * 3;
+}
+
+// DIRT2_SCREENSHOT_DIR (+ _EVERY, _FROM, _COUNT): the back buffer as a BMP,
+// as the D3D9 bridge does, so both renderers' scripted runs can be compared.
+void capture(IDXGISwapChain* sc, uint32_t frame) {
+    static const char* dir = std::getenv("DIRT2_SCREENSHOT_DIR");
+    static const uint32_t every = std::getenv("DIRT2_SCREENSHOT_EVERY") ? std::atoi(std::getenv("DIRT2_SCREENSHOT_EVERY")) : 120;
+    static const uint32_t from = std::getenv("DIRT2_SCREENSHOT_FROM") ? std::atoi(std::getenv("DIRT2_SCREENSHOT_FROM")) : 0;
+    static const uint32_t count = std::getenv("DIRT2_SCREENSHOT_COUNT") ? std::atoi(std::getenv("DIRT2_SCREENSHOT_COUNT")) : 0;
+    if (!dir || !every || frame < from || frame % every || (count && (frame - from) / every >= count)) return;
+    static bool made = false;
+    if (!made) {
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        made = true;
+    }
+    ID3D11Texture2D* bb = nullptr;
+    if (FAILED(sc->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&bb))) || !bb) return;
+    ID3D11Device* dev = nullptr;
+    bb->GetDevice(&dev);
+    ID3D11DeviceContext* ctx = nullptr;
+    dev->GetImmediateContext(&ctx);
+    D3D11_TEXTURE2D_DESC d{};
+    bb->GetDesc(&d);
+    d.Usage = D3D11_USAGE_STAGING, d.BindFlags = 0, d.CPUAccessFlags = D3D11_CPU_ACCESS_READ, d.MiscFlags = 0;
+    d.SampleDesc = {1, 0};
+    ID3D11Texture2D* st = nullptr;
+    D3D11_MAPPED_SUBRESOURCE m{};
+    if (SUCCEEDED(dev->CreateTexture2D(&d, nullptr, &st))) {
+        ctx->CopyResource(st, bb);
+        if (SUCCEEDED(ctx->Map(st, 0, D3D11_MAP_READ, 0, &m))) {
+            char path[512];
+            std::snprintf(path, sizeof path, "%s/frame_%06u.bmp", dir, frame);
+            if (FILE* f = std::fopen(path, "wb")) {
+                const uint32_t row = d.Width * 4, size = row * d.Height;
+                uint8_t hdr[54] = {'B', 'M'};
+                auto put32 = [&](int off, uint32_t v) { std::memcpy(hdr + off, &v, 4); };
+                put32(2, 54 + size); put32(10, 54); put32(14, 40); put32(18, d.Width);
+                put32(22, uint32_t(-int32_t(d.Height)));  // top-down
+                hdr[26] = 1; hdr[28] = 32; put32(34, size);
+                std::fwrite(hdr, 1, 54, f);
+                const bool rgba = d.Format == DXGI_FORMAT_R8G8B8A8_UNORM || d.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+                std::vector<uint8_t> line(row);
+                for (uint32_t y = 0; y < d.Height; ++y) {
+                    std::memcpy(line.data(), static_cast<const uint8_t*>(m.pData) + y * m.RowPitch, row);
+                    for (uint32_t x = 0; x < d.Width; ++x) {
+                        if (rgba) std::swap(line[4 * x], line[4 * x + 2]);
+                        line[4 * x + 3] = 0xFF;
+                    }
+                    std::fwrite(line.data(), 1, row, f);
+                }
+                std::fclose(f);
+                rt::log("d3d11: saved %s (%ux%u fmt %u)", path, d.Width, d.Height, uint32_t(d.Format));
+            }
+            ctx->Unmap(st, 0);
+        }
+        st->Release();
+    }
+    ctx->Release();
+    dev->Release();
+    bb->Release();
+}
+
+// Present(sync interval, flags): the render thread parks here in the background.
+void swap_present(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<IDXGISwapChain*>(to_host(a[0]));
+    platform::gpu_checkpoint();
+    static uint32_t frames = 0;
+    if (self) capture(self, ++frames);
+    const HRESULT hr = self ? self->Present(a[1], a[2]) : E_INVALIDARG;
+    static uint32_t n = 0;
+    static auto t0 = std::chrono::steady_clock::now();
+    if (++n % 300 == 0) {
+        const auto t = std::chrono::steady_clock::now();
+        rt::log("d3d11: %u presents, %.1f fps", n, 300.0 / std::chrono::duration<double>(t - t0).count());
+        t0 = t;
+    }
+    c->eax = uint32_t(hr);
+    c->esp += 4 * 4;
+}
+
+// Fullscreen is borderless desktop fullscreen on the swap chain's window.
+void swap_set_fullscreen_state(X86* c) {
+    const Args a{c};
+    platform::Window w = nullptr;
+    {
+        std::lock_guard lk(g_mu);
+        SwapInfo& info = g_swaps[a[0]];
+        info.fullscreen = a[1] != 0;
+        w = info.window;
+    }
+    static const bool force_windowed = std::getenv("DIRT2_WINDOWED") != nullptr;
+    if (w && !force_windowed) platform::set_fullscreen(w, a[1] != 0);
+    c->eax = uint32_t(S_OK);
+    c->esp += 4 * 4;
+}
+
+void swap_get_fullscreen_state(X86* c) {
+    const Args a{c};
+    bool fs;
+    {
+        std::lock_guard lk(g_mu);
+        fs = g_swaps[a[0]].fullscreen;
+    }
+    if (a[1]) wr32(a[1], fs ? 1 : 0);
+    if (a[2]) wr32(a[2], 0);
+    c->eax = uint32_t(S_OK);
+    c->esp += 4 * 4;
+}
+
+// DXGI_ADAPTER_DESC: Description[128] WCHAR, 4 ids, 3 SIZE_T (4 bytes in the guest), LUID.
+void adapter_desc_out(uint32_t g, const DXGI_ADAPTER_DESC& d) {
+    std::memcpy(rt::host_ptr(g), d.Description, 256);
+    wr32(g + 256, d.VendorId);
+    wr32(g + 260, d.DeviceId);
+    wr32(g + 264, d.SubSysId);
+    wr32(g + 268, d.Revision);
+    auto mb = [](SIZE_T v) { return uint32_t(std::min<SIZE_T>(v, 0x7FF00000)); };  // a 32-bit game reads 32 bits
+    wr32(g + 272, mb(d.DedicatedVideoMemory));
+    wr32(g + 276, mb(d.DedicatedSystemMemory));
+    wr32(g + 280, mb(d.SharedSystemMemory));
+    wr32(g + 284, d.AdapterLuid.LowPart);
+    wr32(g + 288, uint32_t(d.AdapterLuid.HighPart));
+}
+
+void adapter_get_desc(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<IDXGIAdapter*>(to_host(a[0]));
+    DXGI_ADAPTER_DESC d{};
+    const HRESULT hr = self && a[1] ? self->GetDesc(&d) : E_INVALIDARG;
+    if (SUCCEEDED(hr)) adapter_desc_out(a[1], d);
+    c->eax = uint32_t(hr);
+    c->esp += 4 * 3;
+}
+
+void adapter1_get_desc1(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<IDXGIAdapter1*>(to_host(a[0]));
+    DXGI_ADAPTER_DESC1 d{};
+    const HRESULT hr = self && a[1] ? self->GetDesc1(&d) : E_INVALIDARG;
+    if (SUCCEEDED(hr)) {
+        DXGI_ADAPTER_DESC d0{};
+        std::memcpy(d0.Description, d.Description, sizeof d0.Description);
+        d0.VendorId = d.VendorId, d0.DeviceId = d.DeviceId, d0.SubSysId = d.SubSysId, d0.Revision = d.Revision;
+        d0.DedicatedVideoMemory = d.DedicatedVideoMemory, d0.DedicatedSystemMemory = d.DedicatedSystemMemory;
+        d0.SharedSystemMemory = d.SharedSystemMemory, d0.AdapterLuid = d.AdapterLuid;
+        adapter_desc_out(a[1], d0);
+        wr32(a[1] + 292, d.Flags);
+    }
+    c->eax = uint32_t(hr);
+    c->esp += 4 * 3;
+}
+
+// DXGI_OUTPUT_DESC: DeviceName[32] WCHAR, RECT, BOOL, rotation, HMONITOR (a guest handle).
+void output_get_desc(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<IDXGIOutput*>(to_host(a[0]));
+    DXGI_OUTPUT_DESC d{};
+    const HRESULT hr = self && a[1] ? self->GetDesc(&d) : E_INVALIDARG;
+    if (SUCCEEDED(hr)) {
+        const uint32_t g = a[1];
+        std::memcpy(rt::host_ptr(g), d.DeviceName, 64);
+        wr32(g + 64, uint32_t(d.DesktopCoordinates.left));
+        wr32(g + 68, uint32_t(d.DesktopCoordinates.top));
+        wr32(g + 72, uint32_t(d.DesktopCoordinates.right));
+        wr32(g + 76, uint32_t(d.DesktopCoordinates.bottom));
+        wr32(g + 80, uint32_t(d.AttachedToDesktop));
+        wr32(g + 84, uint32_t(d.Rotation));
+        wr32(g + 88, 0x00010001);  // the monitor handle user32 hands out
+    }
+    c->eax = uint32_t(hr);
+    c->esp += 4 * 3;
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// Exports
+// ---------------------------------------------------------------------------
+
+// D3D11CreateDeviceAndSwapChain(adapter, driver, software, flags, levels, nlevels,
+//                               sdk, swapdesc, **swapchain, **device, *level, **context)
+STDCALL(d3d11, D3D11CreateDeviceAndSwapChain, 12) {
+    IDXGIAdapter* adapter = static_cast<IDXGIAdapter*>(to_host(a[0]));
+    const auto* levels = a.ptr<const D3D_FEATURE_LEVEL>(4);
+    DXGI_SWAP_CHAIN_DESC d{};
+    SwapInfo info;
+    const bool swap = a[7] && a[8];
+    if (swap && !prepare_swap_chain(a[7], d, info)) return uint32_t(E_INVALIDARG);
+    IDXGISwapChain* sc = nullptr;
+    ID3D11Device* dev = nullptr;
+    ID3D11DeviceContext* ctx = nullptr;
+    D3D_FEATURE_LEVEL level{};
+    const HRESULT hr = D3D11CreateDeviceAndSwapChain(adapter, D3D_DRIVER_TYPE(a[1]), nullptr, a[3], levels, a[5], a[6],
+                                                     swap ? &d : nullptr, swap ? &sc : nullptr, a[9] ? &dev : nullptr,
+                                                     &level, a[11] ? &ctx : nullptr);
+    rt::log("d3d11: D3D11CreateDeviceAndSwapChain(driver %u, flags %X, %u levels) -> %08X, level %X", a[1], a[3], a[5],
+            uint32_t(hr), uint32_t(level));
+    if (a[8]) {
+        const uint32_t p = wrap(sc);
+        if (p) {
+            std::lock_guard lk(g_mu);
+            g_swaps[p] = info;
+        }
+        wr32(a[8], p);
+    }
+    if (a[9]) wr32(a[9], wrap(dev));
+    if (a[10]) wr32(a[10], uint32_t(level));
+    if (a[11]) wr32(a[11], wrap(ctx));
+    return uint32_t(hr);
+}
+
+// D3D11CreateDevice(adapter, driver, software, flags, levels, nlevels, sdk, **device, *level, **context)
+STDCALL(d3d11, D3D11CreateDevice, 10) {
+    IDXGIAdapter* adapter = static_cast<IDXGIAdapter*>(to_host(a[0]));
+    ID3D11Device* dev = nullptr;
+    ID3D11DeviceContext* ctx = nullptr;
+    D3D_FEATURE_LEVEL level{};
+    const HRESULT hr = D3D11CreateDevice(adapter, D3D_DRIVER_TYPE(a[1]), nullptr, a[3], a.ptr<const D3D_FEATURE_LEVEL>(4),
+                                         a[5], a[6], a[7] ? &dev : nullptr, &level, a[9] ? &ctx : nullptr);
+    rt::log("d3d11: D3D11CreateDevice -> %08X, level %X", uint32_t(hr), uint32_t(level));
+    if (a[7]) wr32(a[7], wrap(dev));
+    if (a[8]) wr32(a[8], uint32_t(level));
+    if (a[9]) wr32(a[9], wrap(ctx));
+    return uint32_t(hr);
+}
+
+// CreateDXGIFactory(riid, **factory)
+STDCALL(dxgi, CreateDXGIFactory, 2) {
+    const GUID& iid = *reinterpret_cast<const GUID*>(rt::host_ptr(a[0]));
+    void* f = nullptr;
+    const HRESULT hr = CreateDXGIFactory(iid, &f);
+    rt::log("dxgi: CreateDXGIFactory -> %08X", uint32_t(hr));
+    if (a[1]) wr32(a[1], SUCCEEDED(hr) ? wrap_by_iid(iid, f) : 0);
+    return uint32_t(hr);
+}
+STDCALL(dxgi, CreateDXGIFactory1, 2) {
+    const GUID& iid = *reinterpret_cast<const GUID*>(rt::host_ptr(a[0]));
+    void* f = nullptr;
+    const HRESULT hr = CreateDXGIFactory1(iid, &f);
+    if (a[1]) wr32(a[1], SUCCEEDED(hr) ? wrap_by_iid(iid, f) : 0);
+    return uint32_t(hr);
+}

@@ -114,7 +114,13 @@ The plan is to run the game's own DX11 renderer through DXMT (utmapp/dxmt fork, 
   - **Shader census** (`extract_dxbc.py` → `build/dxbc_census.md`): 2,768 SM 5.0 blobs, 1,109 unique. 14 hull and 42 domain shaders, all tri domains with `fractional_odd` partitioning. No isoline domains, no geometry shaders, no stream output.
   - **Conversion** (`airconv_census.py` → `build/airconv_census.md`): all 1,109 unique blobs convert and load in Metal.
   - The one DXMT gap that applies: fractional tessellation factors are rounded to integers, so tessellated detail steps instead of morphing.
-- **Next: Phase 1,** the d3d11/dxgi bridge and the DX11 frontend on macOS.
+- **Phase 1 (bridge, frontend on macOS): working.** `DIRT2_RENDERER=dx11` runs the game's DX11 renderer through DXMT. The frontend, menus and the attract-mode race render correctly, at 110–250 fps in the menus on an M1 Max. The default stays `dx9` until the race parity checks in Phase 2.
+  - `shims/com/bridge_core.h`: the COM bridge core, shared with the D3D9 bridge.
+  - `shims/d3d11/bridge.cpp`: DXGI/D3D11 proxies and hand-written overrides. The swap chain's `HWND` becomes the window's `CAMetalLayer` (`dxmt/0001`). Initial data, input layouts and adapter/output descriptors are converted. `Map`/`Unmap` use guest shadows.
+  - `shims/d3d11/reflect.cpp`: `D3DReflect` in the d3dcompiler_42 layout, built in guest memory from RDEF, ISGN/OSGN and STAT.
+  - `shims/d3d11/compiler.cpp` with `tools/scripts/dxbc_immediate.py`: `D3DCompile` serves generated SM 5.0 DXBC for the engine's 8 immediate-mode shaders, the only HLSL the game compiles at run time.
+  - **Known:** one 0×0 texture fails to create at start-up. That is the game's own request, and D3D11 rejects it on Windows too.
+- **Next: Phase 2** (races and parity on macOS) and **Phase 3** (iOS presentation: DXMT's iOS build has no swap chain).
 
 ## Render scale and MetalFX
 

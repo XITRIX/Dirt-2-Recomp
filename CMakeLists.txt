@@ -83,6 +83,22 @@ foreach(fw ${_mvk_frameworks})
 endforeach()
 set_property(TARGET dxvk_d3d9 APPEND PROPERTY INTERFACE_LINK_LIBRARIES moltenvk)
 
+# DX11 renderer: DXMT (D3D11 -> Metal), one libdxmt-native image per platform
+# (build_llvm.sh, build_dxmt.sh). LGPL, so it stays a separate dynamic library
+# (an embedded framework in the app); optional until the DX11 path is the default.
+set(DIRT2_DXMT_SRC_DIR "${CMAKE_SOURCE_DIR}/build/src/dxmt")  # patched copy (prepare_sources.sh)
+set(DIRT2_DXMT_DIR "${CMAKE_SOURCE_DIR}/build/dxmt/${DIRT2_PLATFORM}" CACHE PATH "DXMT install prefix")
+if(EXISTS "${DIRT2_DXMT_DIR}/lib/libdxmt-native.dylib")
+  add_library(dxmt SHARED IMPORTED)
+  set_target_properties(dxmt PROPERTIES
+    IMPORTED_LOCATION "${DIRT2_DXMT_DIR}/lib/libdxmt-native.dylib"
+    INTERFACE_INCLUDE_DIRECTORIES "${DIRT2_DXMT_SRC_DIR}/include/native/directx;${DIRT2_DXMT_SRC_DIR}/include/native/windows")
+  set(DIRT2_HAVE_DXMT ON)
+else()
+  message(STATUS "DXMT not built for ${DIRT2_PLATFORM} (tools/scripts/build_dxmt.sh): DX11 renderer disabled")
+  set(DIRT2_HAVE_DXMT OFF)
+endif()
+
 add_subdirectory(runtime)
 add_subdirectory(shims)
 
@@ -138,6 +154,10 @@ if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
   target_link_libraries(dirt2 PRIVATE "-framework CloudKit" "-weak_framework MetalFX")
   target_include_directories(dirt2 PRIVATE "${DIRT2_MOLTENVK_LIB_DIR}/../include")
   target_link_libraries(dirt2 PRIVATE dirt2_shims dirt2_gen recomp_runtime dxvk_d3d9 SDL3::SDL3)
+  if(DIRT2_HAVE_DXMT)
+    # Object libraries' objects do not pass through other object libraries.
+    target_link_libraries(dirt2 PRIVATE dirt2_shims_d3d11)
+  endif()
   # Community gamepad mappings, loaded from next to the executable at startup.
   add_custom_command(TARGET dirt2 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different

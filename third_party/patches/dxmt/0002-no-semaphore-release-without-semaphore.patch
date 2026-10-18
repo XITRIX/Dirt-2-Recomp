@@ -1,0 +1,22 @@
+diff --git a/src/d3d11/d3d11_swapchain.cpp b/src/d3d11/d3d11_swapchain.cpp
+index 4be71ce..c66abbc 100644
+--- a/src/d3d11/d3d11_swapchain.cpp
++++ b/src/d3d11/d3d11_swapchain.cpp
+@@ -800,7 +800,7 @@ public:
+         scaler_info.output_height = upscaled->height();
+         ctx.upscale(backbuffer, upscaled, scaler);
+         ctx.present(upscaled, presenter, vsync_duration, state.metadata);
+-        ReleaseSemaphore(present_semaphore_, 1, nullptr);
++        if (present_semaphore_) ReleaseSemaphore(present_semaphore_, 1, nullptr);  // none in native builds
+         this->UpdateStatistics(ctx.queue().statistics, ctx.currentFrameId());
+       });
+     } else {
+@@ -810,7 +810,7 @@ public:
+         backbuffer = backbuffer_->texture()
+       ](ArgumentEncodingContext &ctx) mutable {
+         ctx.present(backbuffer, presenter, vsync_duration, state.metadata);
+-        ReleaseSemaphore(present_semaphore_, 1, nullptr);
++        if (present_semaphore_) ReleaseSemaphore(present_semaphore_, 1, nullptr);  // none in native builds
+         this->UpdateStatistics(ctx.queue().statistics, ctx.currentFrameId());
+       });
+     }

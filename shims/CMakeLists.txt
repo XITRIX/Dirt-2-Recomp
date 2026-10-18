@@ -14,6 +14,8 @@ add_library(dirt2_shims OBJECT
   ws2_32/ws2_32.cpp
   d3d9/bridge.cpp
   frontend/menu_patch.cpp
+  d3d11/reflect.cpp
+  d3d11/compiler.cpp
   audio/dsound.cpp
   input/dinput8.cpp
   input/xinput.cpp
@@ -43,3 +45,13 @@ endforeach()
 target_include_directories(dirt2_shims PUBLIC ${VORBISFILE_STATIC_INCLUDE_DIRS} ${FFMPEG_STATIC_INCLUDE_DIRS})
 target_link_libraries(dirt2_shims PUBLIC recomp_runtime dxvk_d3d9 SDL3::SDL3 OpenAL::OpenAL ${_deps_ldflags})
 target_compile_options(dirt2_shims PRIVATE -Wall -Wno-unused-parameter -Wno-unused-function)
+
+# The D3D11/DXGI bridge compiles against DXMT's headers only: DXVK's include
+# path has its own d3d11.h, and both declare IUnknown.
+if(DIRT2_HAVE_DXMT)
+  add_library(dirt2_shims_d3d11 OBJECT d3d11/bridge.cpp)
+  target_compile_definitions(dirt2_shims_d3d11 PRIVATE NOMINMAX _WIN32_WINNT=0xa00)
+  target_include_directories(dirt2_shims_d3d11 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(dirt2_shims_d3d11 PUBLIC recomp_runtime dxmt)
+  target_compile_options(dirt2_shims_d3d11 PRIVATE -Wall -Wno-unused-parameter -Wno-unused-function)
+endif()

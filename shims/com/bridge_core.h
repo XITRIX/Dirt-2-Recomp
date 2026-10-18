@@ -201,6 +201,23 @@ struct Arg<const GUID&> {
     void done() {}
 };
 
+// Interface arrays the generator found no count for, and structs by value:
+// no generic conversion (the method becomes a logging stub unless overridden).
+template <typename I>
+struct Arg<I* const*, std::enable_if_t<is_interface_v<I>>> {
+    static constexpr bool unsafe = true;
+    uint32_t s;
+    I* const* get() const { return nullptr; }
+    void done() {}
+};
+template <typename T>
+struct Arg<T, std::enable_if_t<std::is_class_v<T>>> {
+    static constexpr bool unsafe = true;
+    uint32_t s;
+    T get() const { return T{}; }
+    void done() {}
+};
+
 // Pointers to data laid out alike: guest memory used in place.
 template <typename T>
 struct Arg<T*, std::enable_if_t<!is_interface_v<T> && !std::is_pointer_v<T> && !custom_arg<std::remove_cv_t<T>>::value>> {
