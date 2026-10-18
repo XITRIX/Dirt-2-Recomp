@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace platform {
 
@@ -19,6 +20,15 @@ void set_fullscreen(Window w, bool fullscreen);
 
 // Display size in pixels, for GetSystemMetrics / EnumDisplaySettings.
 void display_size(int* width, int* height);
+
+// The modes offered to the game (its Resolution menu): the display's native
+// pixel size scaled by the render-scale factors, smallest first. Below 1 the
+// frame is upscaled (MetalFX when enabled), above 1 it is supersampled.
+struct DisplayMode {
+    uint32_t width, height, refresh;
+    float scale;
+};
+const std::vector<DisplayMode>& display_modes();
 
 // Asks the user for a line of text in a native dialog (the system keyboard on
 // iOS). Blocks the calling thread, which must not be the main thread. Returns

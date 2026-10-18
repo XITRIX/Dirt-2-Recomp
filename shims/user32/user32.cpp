@@ -158,11 +158,7 @@ void write_rect(uint32_t r, int32_t l, int32_t t, int32_t rr, int32_t b) {
     wr32(r + 12, uint32_t(b));
 }
 
-struct Mode {
-    uint32_t w, h, hz;
-};
-const Mode kModes[] = {{800, 600, 60}, {1024, 768, 60}, {1280, 720, 60}, {1280, 800, 60},
-                       {1366, 768, 60}, {1600, 900, 60}, {1920, 1080, 60}};
+
 
 }  // namespace
 
@@ -335,18 +331,25 @@ STDCALL(user32, GetSystemMetrics, 1) {
 }
 STDCALL(user32, EnumDisplaySettingsA, 3) {
     const uint32_t mode = a[1], d = a[2];
-    const Mode* m;
-    if (mode == 0xFFFFFFFF || mode == 0xFFFFFFFE) m = &kModes[std::size(kModes) - 1];  // current / registry
-    else if (mode < std::size(kModes)) m = &kModes[mode];
-    else return 0;
+    const auto& modes = platform::display_modes();
+    const platform::DisplayMode* m;
+    if (mode == 0xFFFFFFFF || mode == 0xFFFFFFFE) {  // current / registry: native (x1)
+        m = &modes[0];
+        for (const auto& x : modes)
+            if (x.scale == 1.0f) m = &x;
+    } else if (mode < modes.size()) {
+        m = &modes[mode];
+    } else {
+        return 0;
+    }
     std::memset(rt::host_ptr(d + 32), 0, 124);
     copy_out(d, 32, "\\\\.\\DISPLAY1");
     wr16(d + 36, 156);
     wr32(d + 40, 0x5C0000);  // DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY
     wr32(d + 104, 32);
-    wr32(d + 108, m->w);
-    wr32(d + 112, m->h);
-    wr32(d + 120, m->hz);
+    wr32(d + 108, m->width);
+    wr32(d + 112, m->height);
+    wr32(d + 120, m->refresh);
     return 1;
 }
 STDCALL(user32, SystemParametersInfoA, 4) { return 1; }

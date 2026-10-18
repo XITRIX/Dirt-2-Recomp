@@ -404,6 +404,9 @@ void dev_set_texture(X86* c);
 void dev_update_texture(X86* c);
 void dev_update_surface(X86* c);
 void d3d_get_adapter_monitor(X86* c);
+void d3d_get_adapter_mode_count(X86* c);
+void d3d_enum_adapter_modes(X86* c);
+void d3d_get_adapter_display_mode(X86* c);
 void dev_present(X86* c);
 void swap_present(X86* c);
 void surf_lock(X86* c);
@@ -424,6 +427,9 @@ void ib_unlock(X86* c);
 
 OVERRIDE(IDirect3D9, CreateDevice, d3d_create_device)
 OVERRIDE(IDirect3D9, GetAdapterMonitor, d3d_get_adapter_monitor)
+OVERRIDE(IDirect3D9, GetAdapterModeCount, d3d_get_adapter_mode_count)
+OVERRIDE(IDirect3D9, EnumAdapterModes, d3d_enum_adapter_modes)
+OVERRIDE(IDirect3D9, GetAdapterDisplayMode, d3d_get_adapter_display_mode)
 OVERRIDE(IDirect3DDevice9, Present, dev_present)
 OVERRIDE(IDirect3DDevice9, Reset, dev_reset)
 OVERRIDE(IDirect3DDevice9, CreateTexture, dev_create_texture)
@@ -880,6 +886,53 @@ void dev_create_index_buffer(X86* c) {
                 a[3], a[4], uint32_t(hr), rd32(c->esp));
     c->eax = uint32_t(hr);
     c->esp += 4 * 8;
+}
+
+// Display modes: the game's Resolution menu lists these, so they are the render
+// scale choices (platform::display_modes). Only the 32-bit back-buffer formats
+// have modes, as on a desktop driver.
+bool mode_format(uint32_t fmt) { return fmt == D3DFMT_X8R8G8B8 || fmt == D3DFMT_A8R8G8B8; }
+
+void write_mode(uint32_t dst, const platform::DisplayMode& m, uint32_t fmt) {
+    wr32(dst + 0, m.width);
+    wr32(dst + 4, m.height);
+    wr32(dst + 8, m.refresh);
+    wr32(dst + 12, fmt);
+}
+
+void d3d_get_adapter_mode_count(X86* c) {  // (this, adapter, format)
+    const Args a{c};
+    c->eax = a[1] == 0 && mode_format(a[2]) ? uint32_t(platform::display_modes().size()) : 0;
+    static std::atomic<int> logged{0};
+    if (logged++ < 4) rt::log("d3d9: GetAdapterModeCount(fmt %u) -> %u", a[2], c->eax);
+    c->esp += 4 * 4;
+}
+
+void d3d_enum_adapter_modes(X86* c) {  // (this, adapter, format, index, D3DDISPLAYMODE*)
+    const Args a{c};
+    const auto& modes = platform::display_modes();
+    if (a[1] != 0 || !mode_format(a[2]) || a[3] >= modes.size() || !a[4]) {
+        c->eax = uint32_t(D3DERR_INVALIDCALL);
+    } else {
+        write_mode(a[4], modes[a[3]], a[2]);
+        c->eax = uint32_t(D3D_OK);
+    }
+    c->esp += 4 * 6;
+}
+
+void d3d_get_adapter_display_mode(X86* c) {  // (this, adapter, D3DDISPLAYMODE*): the native (x1) mode
+    const Args a{c};
+    const auto& modes = platform::display_modes();
+    const platform::DisplayMode* native = &modes[0];
+    for (const auto& m : modes)
+        if (m.scale == 1.0f) native = &m;
+    if (a[1] != 0 || !a[2]) {
+        c->eax = uint32_t(D3DERR_INVALIDCALL);
+    } else {
+        write_mode(a[2], *native, D3DFMT_X8R8G8B8);
+        c->eax = uint32_t(D3D_OK);
+    }
+    c->esp += 4 * 4;
 }
 
 void d3d_get_adapter_monitor(X86* c) {

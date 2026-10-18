@@ -133,6 +133,28 @@ void set_game_paused(bool paused) {
     g_bg_cv.notify_all();
 }
 
+const std::vector<DisplayMode>& display_modes() {
+    static const std::vector<DisplayMode> modes = [] {
+        uint32_t w = 1920, h = 1080, hz = 60;
+        on_main([&] {
+            if (const SDL_DisplayMode* m = SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay())) {
+                // SDL reports points; the GPU renders pixels.
+                const float density = m->pixel_density > 0 ? m->pixel_density : 1.0f;
+                w = uint32_t(m->w * density + 0.5f);
+                h = uint32_t(m->h * density + 0.5f);
+                if (m->refresh_rate > 0) hz = uint32_t(m->refresh_rate + 0.5f);
+            }
+        });
+        if (h > w) std::swap(w, h);  // the game runs landscape
+        std::vector<DisplayMode> out;
+        for (const float s : {0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f})
+            out.push_back({(uint32_t(w * s) + 1) & ~1u, (uint32_t(h * s) + 1) & ~1u, hz, s});
+        rt::log("platform: render modes %ux%u x0.5 .. x2 at %u Hz", w, h, hz);
+        return out;
+    }();
+    return modes;
+}
+
 void display_size(int* width, int* height) {
     on_main([&] {
         const SDL_DisplayMode* m = SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay());
@@ -148,12 +170,54 @@ namespace {
 std::atomic<bool> g_guest_done{false};
 
 std::string g_saves_dir;
+std::string g_hw_config;  // the game's hardware_settings_config.xml
+
+// The game falls back to its largest mode (x2, supersampling) when the saved
+// resolution is not one we offer, e.g. its first-run 1024x768. Start such a
+// config at the native (x1) mode instead; after that the game's menu decides.
+void normalise_resolution(const std::string& path) {
+    std::FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return;
+    std::string xml;
+    char buf[4096];
+    for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) xml.append(buf, n);
+    std::fclose(f);
+    const size_t tag = xml.find("<resolution ");
+    if (tag == std::string::npos) return;
+    auto attr = [&](const char* name, size_t& pos, size_t& len) {
+        const std::string key = std::string(" ") + name + "=\"";
+        pos = xml.find(key, tag);
+        if (pos == std::string::npos || pos > xml.find('>', tag)) return false;
+        pos += key.size();
+        len = xml.find('"', pos) - pos;
+        return true;
+    };
+    size_t wp, wl, hp, hl;
+    if (!attr("width", wp, wl) || !attr("height", hp, hl)) return;
+    const uint32_t w = uint32_t(std::stoul(xml.substr(wp, wl))), h = uint32_t(std::stoul(xml.substr(hp, hl)));
+    const platform::DisplayMode* native = nullptr;
+    for (const auto& m : platform::display_modes()) {
+        if (m.width == w && m.height == h) return;  // already one of ours
+        if (m.scale == 1.0f) native = &m;
+    }
+    if (!native) return;
+    // Height first: replacing width would move the height attribute's offset.
+    xml.replace(hp, hl, std::to_string(native->height));
+    xml.replace(wp, wl, std::to_string(native->width));
+    if (std::FILE* o = std::fopen(path.c_str(), "wb")) {
+        std::fwrite(xml.data(), 1, xml.size(), o);
+        std::fclose(o);
+        rt::log("platform: saved resolution %ux%u is not offered, starting at native %ux%u", w, h, native->width,
+                native->height);
+    }
+}
 
 void* game_main(void*) {
     rt::install_crash_handler();
     // Saves sync before the game reads them (C:\Users\Player\Documents maps into
     // the data folder). On this thread so the main thread can show a dialog.
     platform::cloud_saves_start(g_saves_dir);
+    normalise_resolution(g_hw_config);
     X86* c = rt::create_main_thread();
     rt::log("entering guest at 0x%08X", recomp_image_info.entry);
     const uint32_t r = rt::invoke(c, recomp_image_info.entry, {}, true);
@@ -315,6 +379,7 @@ int main(int argc, char** argv) {
         SDL_AddGamepadMappingsFromFile((data + "/gamecontrollerdb.txt").c_str());
 
     g_saves_dir = data + "/C/Users/Player/Documents/My Games/DiRT2/savegame";
+    g_hw_config = data + "/C/Users/Player/Documents/My Games/DiRT2/hardwaresettings/hardware_settings_config.xml";
 
     if (!rt::mem_init()) return 1;
     std::string err;
