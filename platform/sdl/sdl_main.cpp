@@ -7,10 +7,14 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <thread>
 
 #include "../platform.h"
 #include "recomp/host.h"
@@ -103,6 +107,23 @@ void drawable_size(Window w, int* width, int* height) {
     on_main([&] { SDL_GetWindowSizeInPixels(static_cast<SDL_Window*>(w), width, height); });
 }
 
+namespace {
+std::mutex g_bg_mu;
+std::condition_variable g_bg_cv;
+bool g_background = false, g_parked = false;
+}  // namespace
+
+void gpu_checkpoint() {
+    std::unique_lock lk(g_bg_mu);
+    if (!g_background) return;
+    rt::log("platform: render thread paused while in the background");
+    g_parked = true;
+    g_bg_cv.notify_all();
+    g_bg_cv.wait(lk, [] { return !g_background; });
+    g_parked = false;
+    rt::log("platform: render thread resumed");
+}
+
 void display_size(int* width, int* height) {
     on_main([&] {
         const SDL_DisplayMode* m = SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay());
@@ -127,7 +148,53 @@ void* game_main(void*) {
     std::exit(int(r));
 }
 
+// Copies everything written to stderr (our log, fatal errors with guest
+// registers, DXVK) into <data>/dirt2.log as well: on iOS the console is gone
+// unless a debugger is attached.
+void tee_stderr(const std::string& path) {
+    int fds[2];
+    const int console = dup(STDERR_FILENO);
+    // Keep the previous run's log: a crash is often only looked at after a relaunch.
+    std::rename(path.c_str(), (path.substr(0, path.size() - 4) + ".prev.log").c_str());
+    FILE* file = std::fopen(path.c_str(), "w");
+    if (!file || console < 0 || pipe(fds) != 0) return;
+    dup2(fds[1], STDERR_FILENO);
+    close(fds[1]);
+    std::thread([in = fds[0], console, file] {
+        char buf[4096];
+        ssize_t n;
+        while ((n = read(in, buf, sizeof buf)) > 0) {
+            (void)!write(console, buf, size_t(n));
+            std::fwrite(buf, 1, size_t(n), file);
+            std::fflush(file);
+        }
+    }).detach();
+}
+
 constexpr uint32_t WM_CLOSE = 0x10, WM_ACTIVATEAPP = 0x1C, WM_ACTIVATE = 0x06;
+
+// App lifecycle on iOS. SDL calls event watches synchronously, so the render
+// thread is parked at its next Present before the app finishes going to the
+// background (submitting GPU work there loses the Metal device for good).
+bool SDLCALL lifecycle_watch(void*, SDL_Event* e) {
+    if (e->type == SDL_EVENT_WILL_ENTER_BACKGROUND) {
+        shim::post_message(0, WM_ACTIVATE, 0, 0);
+        shim::post_message(0, WM_ACTIVATEAPP, 0, 0);
+        std::unique_lock lk(platform::g_bg_mu);
+        platform::g_background = true;
+        // A render thread busy elsewhere (loading) parks at its next Present.
+        platform::g_bg_cv.wait_for(lk, std::chrono::seconds(2), [] { return platform::g_parked; });
+    } else if (e->type == SDL_EVENT_DID_ENTER_FOREGROUND) {
+        {
+            std::lock_guard lk(platform::g_bg_mu);
+            platform::g_background = false;
+        }
+        platform::g_bg_cv.notify_all();
+        shim::post_message(0, WM_ACTIVATEAPP, 1, 0);
+        shim::post_message(0, WM_ACTIVATE, 1, 0);
+    }
+    return true;
+}
 
 void translate(const SDL_Event& e) {
     switch (e.type) {
@@ -203,6 +270,7 @@ int main(int argc, char** argv) {
         // Defaults to $HOME/.cache, which is not writable on iOS (HOME is the container root).
         setenv("DXVK_SHADER_CACHE_PATH", data.c_str(), 0);
         rt::set_discovery_log(data + "/recomp_discovered.txt");
+        tee_stderr(data + "/dirt2.log");
     }
     // SDL's GameController (MFi) driver reports some pads (Backbone One) as
     // connected but never delivers their input. Without it, Xbox/PlayStation/
@@ -218,6 +286,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
+    SDL_AddEventWatch(lifecycle_watch, nullptr);
     platform::set_app_icon(dir + "/dirt2.ico");
     // Community mappings shipped next to the executable, then optional user
     // additions in the data directory (later entries override earlier ones).

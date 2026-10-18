@@ -61,6 +61,8 @@ void fatal(const char* fmt, ...) {
     backtrace_symbols_fd(frames, n, 2);
     dump_watch();
     std::fflush(stderr);
+    // Let a stderr tee (the log file on iOS) write the lines above before the process dies.
+    usleep(300 * 1000);
     std::abort();
 }
 

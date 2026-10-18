@@ -26,6 +26,11 @@ void display_size(int* width, int* height);
 bool prompt_text(const std::string& title, const std::string& message, const std::string& initial,
                  std::string& result);
 
+// Called by the render thread before each Present. While the app is in the
+// background (iOS forbids GPU work there: the Metal device is lost), it blocks
+// until the app is back in the foreground.
+void gpu_checkpoint();
+
 // Uses the image at path (e.g. the game's dirt2.ico) as the application icon
 // where the platform takes it from the process (macOS without a bundle).
 void set_app_icon(const std::string& path);

@@ -391,6 +391,8 @@ void QI(X86* c) {
 void d3d_create_device(X86* c);
 void dev_reset(X86* c);
 void dev_create_texture(X86* c);
+void dev_create_vertex_buffer(X86* c);
+void dev_create_index_buffer(X86* c);
 void dev_set_vertex_shader(X86* c);
 void dev_draw_indexed_primitive(X86* c);
 void dev_draw_primitive_up(X86* c);
@@ -425,6 +427,8 @@ OVERRIDE(IDirect3D9, GetAdapterMonitor, d3d_get_adapter_monitor)
 OVERRIDE(IDirect3DDevice9, Present, dev_present)
 OVERRIDE(IDirect3DDevice9, Reset, dev_reset)
 OVERRIDE(IDirect3DDevice9, CreateTexture, dev_create_texture)
+OVERRIDE(IDirect3DDevice9, CreateVertexBuffer, dev_create_vertex_buffer)
+OVERRIDE(IDirect3DDevice9, CreateIndexBuffer, dev_create_index_buffer)
 OVERRIDE(IDirect3DDevice9, SetVertexShader, dev_set_vertex_shader)
 OVERRIDE(IDirect3DDevice9, DrawIndexedPrimitive, dev_draw_indexed_primitive)
 OVERRIDE(IDirect3DDevice9, DrawPrimitiveUP, dev_draw_primitive_up)
@@ -846,6 +850,38 @@ void dev_create_texture(X86* c) {
     c->esp += 4 * 10;
 }
 
+// CreateVertexBuffer(length, usage, fvf, pool, **vb, shared) and
+// CreateIndexBuffer(length, usage, format, pool, **ib, shared). The game does
+// not check these, so a failure becomes a call through a null vtable: log it.
+void dev_create_vertex_buffer(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<IDirect3DDevice9*>(to_host(a[0]));
+    IDirect3DVertexBuffer9* vb = nullptr;
+    const HRESULT hr = self ? self->CreateVertexBuffer(a[1], a[2], a[3], D3DPOOL(a[4]), &vb, nullptr) : D3DERR_INVALIDCALL;
+    if (a[5]) wr32(a[5], SUCCEEDED(hr) ? wrap(vb) : 0);
+    if (a[6]) wr32(a[6], 0);
+    if (FAILED(hr))
+        rt::log("d3d9: CreateVertexBuffer(%u bytes, usage %X, fvf %X, pool %u) failed: %08X (caller %08X)", a[1], a[2],
+                a[3], a[4], uint32_t(hr), rd32(c->esp));
+    c->eax = uint32_t(hr);
+    c->esp += 4 * 8;
+}
+
+void dev_create_index_buffer(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<IDirect3DDevice9*>(to_host(a[0]));
+    IDirect3DIndexBuffer9* ib = nullptr;
+    const HRESULT hr = self ? self->CreateIndexBuffer(a[1], a[2], D3DFORMAT(a[3]), D3DPOOL(a[4]), &ib, nullptr)
+                            : D3DERR_INVALIDCALL;
+    if (a[5]) wr32(a[5], SUCCEEDED(hr) ? wrap(ib) : 0);
+    if (a[6]) wr32(a[6], 0);
+    if (FAILED(hr))
+        rt::log("d3d9: CreateIndexBuffer(%u bytes, usage %X, fmt %u, pool %u) failed: %08X (caller %08X)", a[1], a[2],
+                a[3], a[4], uint32_t(hr), rd32(c->esp));
+    c->eax = uint32_t(hr);
+    c->esp += 4 * 8;
+}
+
 void d3d_get_adapter_monitor(X86* c) {
     c->eax = 0x00010001;
     c->esp += 4 * 3;
@@ -910,6 +946,7 @@ std::string str_rect(uint32_t r) {
 }
 
 void dev_present(X86* c) {
+    platform::gpu_checkpoint();  // no GPU work while the app is in the background
     const Args a{c};
     auto* self = static_cast<IDirect3DDevice9*>(to_host(a[0]));
     static std::atomic<uint32_t> frames{0};
@@ -949,6 +986,7 @@ void dev_present(X86* c) {
     c->esp += 4 * 6;
 }
 void swap_present(X86* c) {
+    platform::gpu_checkpoint();
     const Args a{c};
     if (std::getenv("DIRT2_LOG_PRESENT")) rt::log("d3d9: SwapChain::Present by t%u (caller %08X)", rt::current_thread_id(), rd32(c->esp));
     auto* self = static_cast<IDirect3DSwapChain9*>(to_host(a[0]));
