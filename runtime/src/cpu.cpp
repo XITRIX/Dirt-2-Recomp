@@ -93,6 +93,12 @@ void report_crash(const char* what, uintptr_t fault) {
     if (X86* c = current_cpu())
         std::fprintf(stderr, "  eax=%08X ecx=%08X edx=%08X ebx=%08X esp=%08X ebp=%08X esi=%08X edi=%08X\n", c->eax,
                      c->ecx, c->edx, c->ebx, c->esp, c->ebp, c->esi, c->edi);
+    // The guest stack: return addresses on it name the game functions involved.
+    if (X86* c = current_cpu(); c && c->esp > 0x10000 && c->esp < 0x7FFF0000) {
+        std::fprintf(stderr, "  stack:");
+        for (int k = 0; k < 32; ++k) std::fprintf(stderr, "%s%08X", k % 8 ? " " : "\n    ", rd32(c->esp + 4 * k));
+        std::fprintf(stderr, "\n");
+    }
     host_backtrace(48);
     dump_watch();
     std::fflush(stderr);
@@ -113,17 +119,20 @@ void crash_handler(int sig, siginfo_t* info, void*) {
 
 #if defined(__SWITCH__)
 // libnx calls this for a CPU exception in any thread (abort, data/instruction
-// abort, alignment). pc and lr are logged relative to the ELF's load address,
-// so `aarch64-none-elf-addr2line -e dirt2.elf <offset>` names them.
+// abort, alignment). pc and lr are logged relative to main(), which relocates
+// with the image (libnx's __start__ is an absolute 0): the ELF address is
+// main's (`aarch64-none-elf-nm dirt2.elf | grep " main$"`) plus the offset,
+// which `aarch64-none-elf-addr2line -f -C -e dirt2.elf` names.
+int main(int, char**);
 extern "C" {
 alignas(16) u8 __nx_exception_stack[0x10000];
 u64 __nx_exception_stack_size = sizeof(__nx_exception_stack);
-extern char __start__[];  // libnx crt0: start of the loaded image
 
 void __libnx_exception_handler(ThreadExceptionDump* ctx) {
-    char what[96];
-    std::snprintf(what, sizeof what, "exception %u, pc +0x%llX lr +0x%llX", ctx->error_desc,
-                  (unsigned long long)(ctx->pc.x - u64(__start__)), (unsigned long long)(ctx->lr.x - u64(__start__)));
+    char what[128];
+    const long long base = (long long)(uintptr_t)&main;
+    std::snprintf(what, sizeof what, "exception %u, pc main%+lld lr main%+lld", ctx->error_desc,
+                  (long long)ctx->pc.x - base, (long long)ctx->lr.x - base);
     rt::report_crash(what, uintptr_t(ctx->far.x));
     svcSleepThread(300'000'000);  // let the log reach the SD card
     svcExitProcess();
