@@ -1,0 +1,424 @@
+diff --git a/src/d3d11/d3d11_pipeline.cpp b/src/d3d11/d3d11_pipeline.cpp
+index ef1d783..64a3416 100644
+--- a/src/d3d11/d3d11_pipeline.cpp
++++ b/src/d3d11/d3d11_pipeline.cpp
+@@ -56,7 +56,7 @@ public:
+   }
+ 
+   void GetPipeline(MTL_COMPILED_GRAPHICS_PIPELINE *pPipeline) final {
+-    ready_.wait(false, std::memory_order_acquire);
++    wait_pipeline(ready_, "graphics");
+     *pPipeline = {state_};
+   }
+ 
+@@ -190,7 +190,7 @@ public:
+   }
+ 
+   void GetPipeline(MTL_COMPILED_COMPUTE_PIPELINE *pPipeline) final {
+-    ready_.wait(false, std::memory_order_acquire);
++    wait_pipeline(ready_, "compute");
+     *pPipeline = {state_};
+   }
+ 
+diff --git a/src/d3d11/d3d11_pipeline.hpp b/src/d3d11/d3d11_pipeline.hpp
+index 73f3e63..206e48f 100644
+--- a/src/d3d11/d3d11_pipeline.hpp
++++ b/src/d3d11/d3d11_pipeline.hpp
+@@ -6,6 +6,7 @@
+ #include "d3d11_shader.hpp"
+ #include "d3d11_state_object.hpp"
+ #include "util_hash.hpp"
++#include "d3d11_pipeline_warmup.hpp"
+ 
+ struct MTL_GRAPHICS_PIPELINE_DESC {
+   ManagedShader VertexShader;
+diff --git a/src/d3d11/d3d11_pipeline_cache.cpp b/src/d3d11/d3d11_pipeline_cache.cpp
+index ec17d04..d554d45 100644
+--- a/src/d3d11/d3d11_pipeline_cache.cpp
++++ b/src/d3d11/d3d11_pipeline_cache.cpp
+@@ -11,6 +11,9 @@
+ #include "../d3d10/d3d10_input_layout.hpp"
+ #include <cstring>
+ #include <shared_mutex>
++#include <cstdio>
++#include <unordered_set>
++#include "util_env.hpp"
+ 
+ namespace dxmt {
+ 
+@@ -219,6 +222,7 @@ class PipelineCache : public MTLD3D11PipelineCacheBase {
+ 
+   CachedSM50Shader *CreateShader(const void *pBytecode,
+                                  uint32_t BytecodeLength) {
++    CachedSM50Shader *created = nullptr;
+     auto sha1 = Sha1HashState::compute(pBytecode, BytecodeLength);
+     {
+       std::shared_lock<std::shared_mutex> lock(mutex_shares);
+@@ -247,8 +251,218 @@ class PipelineCache : public MTLD3D11PipelineCacheBase {
+       shader->bytecode_length = BytecodeLength;
+       memcpy(shader->bytecode, pBytecode, BytecodeLength);
+ #endif
+-      return shaders_.emplace(sha1, std::move(shader)).first->second.get();
++      created = shaders_.emplace(sha1, std::move(shader)).first->second.get();
+     }
++    warm_pending();
++    return created;
++  }
++
++  // ---- pipeline record and warm-up (d3d11_pipeline_warmup.hpp) ----
++
++  enum : uint32_t { kWarmGraphics = 0, kWarmTessellation = 1, kWarmCompute = 2 };
++  static constexpr uint32_t kWarmMaxElements = 32;
++  // Fixed size and zero-filled, so records compare and hash as bytes.
++  struct WarmupRecord {
++    uint32_t kind;
++    Sha1Digest shaders[5]; // VS, HS, DS, GS, PS (CS in [0] for compute); zero: none
++    uint32_t layout_count, layout_mask, has_layout, has_blend;
++    MTL_SHADER_INPUT_LAYOUT_ELEMENT_DESC layout[kWarmMaxElements];
++    D3D11_BLEND_DESC1 blend;
++    uint32_t num_color;
++    WMTPixelFormat color[8];
++    WMTPixelFormat depth;
++    WMTPrimitiveTopologyClass topology;
++    uint32_t rasterization, sample_count, gs_strip, sample_mask, gs_passthrough;
++    SM50_INDEX_BUFFER_FORMAT index_format;
++  };
++  struct WarmupHeader {
++    char magic[4];
++    uint32_t version, record_size, reserved;
++  };
++  static constexpr uint32_t kWarmVersion = 1;
++
++  std::FILE *record_file_ = nullptr;
++  std::mutex record_mu_;
++  std::unordered_set<std::string> recorded_;  // record bytes, recorded or loaded
++  std::vector<WarmupRecord> pending_;
++  std::mutex pending_mu_;
++  std::vector<IMTLD3D11BlendState *> warm_blends_;  // kept alive for the pipelines
++  uint32_t warm_queued_ = 0;
++
++  static std::string record_key(const WarmupRecord &r) { return std::string((const char *)&r, sizeof r); }
++
++  void record(uint32_t kind, const MTL_GRAPHICS_PIPELINE_DESC *d, Shader *cs) {
++    if (!record_file_)
++      return;
++    WarmupRecord r;
++    std::memset(&r, 0, sizeof r);
++    r.kind = kind;
++    if (cs) {
++      r.shaders[0] = cs->sha1();
++    } else {
++      if (d->SOLayout || d->GeometryShader)
++        return; // not warmed (the game uses neither)
++      Shader *sh[5] = {d->VertexShader, d->HullShader, d->DomainShader, d->GeometryShader, d->PixelShader};
++      for (int i = 0; i < 5; i++)
++        if (sh[i])
++          r.shaders[i] = sh[i]->sha1();
++      if (d->InputLayout) {
++        MTL_SHADER_INPUT_LAYOUT_ELEMENT_DESC *els;
++        const uint32_t n = d->InputLayout->input_layout_element(&els);
++        if (n > kWarmMaxElements)
++          return;
++        r.has_layout = 1;
++        r.layout_count = n;
++        r.layout_mask = d->InputLayout->input_slot_mask();
++        std::memcpy(r.layout, els, n * sizeof *els);
++      }
++      if (d->BlendState) {
++        r.has_blend = 1;
++        d->BlendState->GetDesc1(&r.blend);
++      }
++      r.num_color = d->NumColorAttachments;
++      for (unsigned i = 0; i < d->NumColorAttachments && i < 8; i++)
++        r.color[i] = d->ColorAttachmentFormats[i];
++      r.depth = d->DepthStencilFormat;
++      r.topology = d->TopologyClass;
++      r.rasterization = d->RasterizationEnabled;
++      r.sample_count = d->SampleCount;
++      r.gs_strip = d->GSStripTopology;
++      r.sample_mask = d->SampleMask;
++      r.gs_passthrough = d->GSPassthrough;
++      r.index_format = d->IndexBufferFormat;
++    }
++    std::lock_guard lk(record_mu_);
++    if (!recorded_.insert(record_key(r)).second)
++      return;
++    std::fwrite(&r, sizeof r, 1, record_file_);
++    std::fflush(record_file_);
++  }
++
++  void open_warmup() {
++    if (auto path = env::getEnvVar("DXMT_PIPELINE_WARMUP"); !path.empty()) {
++      size_t start = 0;
++      while (start <= path.size()) {
++        size_t end = path.find(':', start);
++        if (end == std::string::npos)
++          end = path.size();
++        const std::string file = path.substr(start, end - start);
++        start = end + 1;
++        std::FILE *f = file.empty() ? nullptr : std::fopen(file.c_str(), "rb");
++        if (!f)
++          continue;
++        WarmupHeader h{};
++        size_t loaded = 0;
++        if (std::fread(&h, sizeof h, 1, f) == 1 && !std::memcmp(h.magic, "DXPW", 4) && h.version == kWarmVersion &&
++            h.record_size == sizeof(WarmupRecord)) {
++          WarmupRecord r;
++          while (std::fread(&r, sizeof r, 1, f) == 1)
++            if (recorded_.insert(record_key(r)).second) {
++              pending_.push_back(r);
++              ++loaded;
++            }
++          Logger::info(str::format("Pipeline warm-up: ", loaded, " pipelines from ", file));
++        } else {
++          Logger::warn(str::format("Pipeline warm-up: ", file, " is from another DXMT build, ignored"));
++        }
++        std::fclose(f);
++      }
++    }
++    if (auto path = env::getEnvVar("DXMT_PIPELINE_RECORD"); !path.empty()) {
++      bool fresh = true;
++      if (std::FILE *f = std::fopen(path.c_str(), "rb")) {
++        WarmupHeader h{};
++        fresh = !(std::fread(&h, sizeof h, 1, f) == 1 && !std::memcmp(h.magic, "DXPW", 4) &&
++                  h.version == kWarmVersion && h.record_size == sizeof(WarmupRecord));
++        std::fclose(f);
++      }
++      record_file_ = std::fopen(path.c_str(), fresh ? "wb" : "ab");
++      if (record_file_ && fresh) {
++        WarmupHeader h{{'D', 'X', 'P', 'W'}, kWarmVersion, (uint32_t)sizeof(WarmupRecord), 0};
++        std::fwrite(&h, sizeof h, 1, record_file_);
++        std::fflush(record_file_);
++      }
++    }
++  }
++
++  CachedSM50Shader *find_shader(const Sha1Digest &d) {
++    std::shared_lock<std::shared_mutex> lock(mutex_shares);
++    auto it = shaders_.find(d);
++    return it == shaders_.end() ? nullptr : it->second.get();
++  }
++
++  // Queues every recorded pipeline whose shaders all exist now.
++  void warm_pending() {
++    std::unique_lock lk(pending_mu_, std::try_to_lock);
++    if (!lk.owns_lock() || pending_.empty())
++      return;
++    static const Sha1Digest zero{};
++    for (size_t i = 0; i < pending_.size();) {
++      WarmupRecord &r = pending_[i];
++      CachedSM50Shader *sh[5] = {};
++      bool ready = true;
++      for (int k = 0; k < 5 && ready; k++)
++        if (r.shaders[k] != zero && !(sh[k] = find_shader(r.shaders[k])))
++          ready = false;
++      if (!ready) {
++        ++i;
++        continue;
++      }
++      if (r.kind == kWarmCompute) {
++        MTL_COMPUTE_PIPELINE_DESC d{sh[0]};
++        MTLCompiledComputePipeline *p;
++        GetComputePipeline(&d, &p);
++      } else {
++        MTL_GRAPHICS_PIPELINE_DESC d{};
++        d.VertexShader = sh[0];
++        d.HullShader = sh[1];
++        d.DomainShader = sh[2];
++        d.GeometryShader = sh[3];
++        d.PixelShader = sh[4];
++        if (r.has_layout) {
++          std::lock_guard<dxmt::mutex> ia(mutex_ia_);
++          std::vector<MTL_SHADER_INPUT_LAYOUT_ELEMENT_DESC> key(r.layout, r.layout + r.layout_count);
++          auto it = input_layouts.find(key);
++          if (it == input_layouts.end())
++            it = input_layouts
++                     .emplace(key, std::make_unique<CachedInputLayout>(
++                                       std::vector<MTL_SHADER_INPUT_LAYOUT_ELEMENT_DESC>(key), r.layout_mask))
++                     .first;
++          d.InputLayout = it->second.get();
++        }
++        if (r.has_blend) {
++          IMTLD3D11BlendState *bs = nullptr;
++          if (FAILED(blend_states.CreateStateObject(&r.blend, &bs)) || !bs) {
++            pending_.erase(pending_.begin() + i);
++            continue;
++          }
++          warm_blends_.push_back(bs);
++          d.BlendState = bs;
++        }
++        d.NumColorAttachments = r.num_color;
++        for (unsigned k = 0; k < 8; k++)
++          d.ColorAttachmentFormats[k] = r.color[k];
++        d.DepthStencilFormat = r.depth;
++        d.TopologyClass = r.topology;
++        d.RasterizationEnabled = r.rasterization;
++        d.SampleCount = r.sample_count;
++        d.GSStripTopology = r.gs_strip;
++        d.SampleMask = r.sample_mask;
++        d.GSPassthrough = r.gs_passthrough;
++        d.IndexBufferFormat = r.index_format;
++        if (r.kind == kWarmTessellation) {
++          MTLCompiledTessellationMeshPipeline *p;
++          GetTessellationPipeline(&d, &p);
++        } else {
++          MTLCompiledGraphicsPipeline *p;
++          GetGraphicsPipeline(&d, &p);
++        }
++      }
++      ++warm_queued_;
++      pending_.erase(pending_.begin() + i);
++    }
++    if (pending_.empty() && warm_queued_)
++      Logger::info(str::format("Pipeline warm-up: all ", warm_queued_, " recorded pipelines queued"));
+   }
+ 
+   virtual HRESULT AddVertexShader(const void *pBytecode,
+@@ -390,6 +604,7 @@ class PipelineCache : public MTLD3D11PipelineCacheBase {
+       D3D11_ASSERT(0 && "duplicated graphics pipeline");
+     } else {
+       scheduler_.submit(iter->second.get());
++      record(kWarmGraphics, pDesc, nullptr);
+     }
+     *ppPipeline = iter->second.get();
+   }
+@@ -426,6 +641,7 @@ class PipelineCache : public MTLD3D11PipelineCacheBase {
+       D3D11_ASSERT(0 && "duplicated tessellation pipeline");
+     } else {
+       scheduler_.submit(iter->second.get());
++      record(kWarmTessellation, pDesc, nullptr);
+     }
+     *ppPipeline = iter->second.get();
+   }
+@@ -443,6 +659,7 @@ class PipelineCache : public MTLD3D11PipelineCacheBase {
+       D3D11_ASSERT(0 && "duplicated compute pipeline");
+     } else {
+       scheduler_.submit(iter->second.get());
++      record(kWarmCompute, nullptr, pDesc->ComputeShader);
+     }
+     *ppPipeline = iter->second.get();
+   }
+@@ -452,7 +669,16 @@ public:
+       scache_(ShaderCache::getInstance(pDevice->GetDXMTDevice().metalVersion())),
+       device(pDevice),
+       blend_states(pDevice),
+-      so_layouts(pDevice) {};
++      so_layouts(pDevice) {
++    open_warmup();
++  };
++
++  ~PipelineCache() {
++    for (auto *bs : warm_blends_)
++      bs->Release();
++    if (record_file_)
++      std::fclose(record_file_);
++  }
+ };
+ 
+ std::unique_ptr<MTLD3D11PipelineCacheBase>
+diff --git a/src/d3d11/d3d11_pipeline_gs.cpp b/src/d3d11/d3d11_pipeline_gs.cpp
+index 43ef039..aa9f797 100644
+--- a/src/d3d11/d3d11_pipeline_gs.cpp
++++ b/src/d3d11/d3d11_pipeline_gs.cpp
+@@ -74,7 +74,7 @@ public:
+   }
+ 
+   void GetPipeline(MTL_COMPILED_GRAPHICS_PIPELINE *pPipeline) final {
+-    ready_.wait(false, std::memory_order_acquire);
++    wait_pipeline(ready_, "geometry");
+     *pPipeline = {state_mesh_};
+   }
+ 
+diff --git a/src/d3d11/d3d11_pipeline_ts.cpp b/src/d3d11/d3d11_pipeline_ts.cpp
+index bcf4b2d..4dc79b5 100644
+--- a/src/d3d11/d3d11_pipeline_ts.cpp
++++ b/src/d3d11/d3d11_pipeline_ts.cpp
+@@ -94,7 +94,7 @@ public:
+   }
+ 
+   void GetPipeline(MTL_COMPILED_TESSELLATION_MESH_PIPELINE *pPipeline) final {
+-    ready_.wait(false, std::memory_order_acquire);
++    wait_pipeline(ready_, "tessellation");
+     *pPipeline = {state_rasterization_, hull_reflection.NumOutputElement,
+                   hull_reflection.ThreadsPerPatch};
+   }
+diff --git a/src/d3d11/d3d11_pipeline_warmup.cpp b/src/d3d11/d3d11_pipeline_warmup.cpp
+new file mode 100644
+index 0000000..16acf03
+--- /dev/null
++++ b/src/d3d11/d3d11_pipeline_warmup.cpp
+@@ -0,0 +1,27 @@
++#include "d3d11_pipeline_warmup.hpp"
++#include "log/log.hpp"
++#include "util_env.hpp"
++#include <mutex>
++
++namespace dxmt {
++
++void wait_pipeline_logged(std::atomic_bool &ready, const char *kind) {
++  static const bool timing = env::getEnvVar("DXMT_PIPELINE_TIMING") == "1";
++  if (!timing) {
++    ready.wait(false, std::memory_order_acquire);
++    return;
++  }
++  const auto t0 = std::chrono::steady_clock::now();
++  ready.wait(false, std::memory_order_acquire);
++  const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
++  static std::mutex mu;
++  static unsigned count = 0;
++  static double total = 0;
++  std::lock_guard lk(mu);
++  ++count;
++  total += ms;
++  Logger::info(str::format("Pipeline wait at draw (", kind, "): ", ms, " ms (", count, " so far, ", total,
++                           " ms total)"));
++}
++
++} // namespace dxmt
+diff --git a/src/d3d11/d3d11_pipeline_warmup.hpp b/src/d3d11/d3d11_pipeline_warmup.hpp
+new file mode 100644
+index 0000000..3c9ce69
+--- /dev/null
++++ b/src/d3d11/d3d11_pipeline_warmup.hpp
+@@ -0,0 +1,29 @@
++#pragma once
++/*
++ * Pipeline record and warm-up (DiRT 2 recompilation, dxmt/0004).
++ *
++ * Metal compiles a pipeline the first time a draw needs it; the draw then
++ * waits (stutter). DXMT_PIPELINE_RECORD=<file> appends every new pipeline
++ * (shader SHA-1s, input layout, blend, render target formats and the other
++ * state the pipeline is keyed on) to a file; DXMT_PIPELINE_WARMUP=<file>[:...]
++ * loads such files, and as soon as all shaders of a recorded pipeline exist
++ * (the game creates them while loading) the pipeline is queued on DXMT's
++ * compiler threads, so the draw finds it ready. DXMT_PIPELINE_TIMING=1 logs
++ * every draw that had to wait for a pipeline: the stutter metric.
++ */
++#include <atomic>
++#include <chrono>
++#include <cstdint>
++
++namespace dxmt {
++
++// Waits for a pipeline compile; with DXMT_PIPELINE_TIMING=1 logs the wait.
++void wait_pipeline_logged(std::atomic_bool &ready, const char *kind);
++
++inline void wait_pipeline(std::atomic_bool &ready, const char *kind) {
++  if (ready.load(std::memory_order_acquire))
++    return;
++  wait_pipeline_logged(ready, kind);
++}
++
++} // namespace dxmt
+diff --git a/src/d3d11/meson.build b/src/d3d11/meson.build
+index a229dd6..80c8afb 100644
+--- a/src/d3d11/meson.build
++++ b/src/d3d11/meson.build
+@@ -24,6 +24,7 @@ d3d11_src = [
+   'd3d11_pipeline_ts.cpp',
+   'd3d11_enumerable.cpp',
+   'd3d11_pipeline_cache.cpp',
++  'd3d11_pipeline_warmup.cpp',
+   'd3d11_context_imm.cpp',
+   'd3d11_context_def.cpp',
+   'd3d11_multithread.cpp',

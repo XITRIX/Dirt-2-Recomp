@@ -416,6 +416,49 @@ void setup_pipeline_warmup(const std::string& data) {
     setenv("DXVK_PIPELINE_WARMUP", warmup.c_str(), 0);
     // DXVK_PIPELINE_RECORD= (empty) stops recording.
     setenv("DXVK_PIPELINE_RECORD", recorded.c_str(), 0);
+
+    // DX11 path (DXMT, dxmt/0004-pipeline-warmup.patch): the same scheme. Its
+    // converted-shader cache lives in the data folder (iOS may purge
+    // Library/Caches); pipelines are recorded there and warmed up from the
+    // shipped list plus this device's own recordings.
+    const std::string dxmt_cache = data + "/dxmt";
+    std::error_code ec;
+    fs::create_directories(dxmt_cache, ec);
+    setenv("DXMT_SHADER_CACHE_PATH", dxmt_cache.c_str(), 0);
+    const std::string dxmt_recorded = data + "/dirt2.dxmt-pipelines";
+    std::string dxmt_warmup = dxmt_recorded;
+    if (const char* b = SDL_GetBasePath()) {
+        const std::string base = b;
+        if (fs::exists(base + "dirt2.dxmt-pipelines", ec)) dxmt_warmup = base + "dirt2.dxmt-pipelines:" + dxmt_warmup;
+        // The shipped converted-shader cache, installed once per app build like DXVK's.
+        const std::string shipped = base + "dxmt";
+        if (fs::is_directory(shipped, ec))
+            for (const auto& e : fs::directory_iterator(shipped, ec)) {
+                const fs::path dst = fs::path(dxmt_cache) / e.path().filename();
+                const auto size = fs::file_size(e.path(), ec);
+                const std::string stamp_path = dst.string() + ".stamp";
+                const std::string stamp = std::to_string(size) + " " +
+                    std::to_string((long long)fs::last_write_time(e.path(), ec).time_since_epoch().count());
+                std::string old;
+                if (FILE* f = std::fopen(stamp_path.c_str(), "r")) {
+                    char buf[64] = {};
+                    if (std::fgets(buf, sizeof buf, f)) old = buf;
+                    std::fclose(f);
+                }
+                if (old == stamp) continue;
+                if (fs::copy_file(e.path(), dst.string() + ".tmp", fs::copy_options::overwrite_existing, ec) && !ec) {
+                    fs::rename(dst.string() + ".tmp", dst, ec);
+                    if (FILE* f = !ec ? std::fopen(stamp_path.c_str(), "w") : nullptr) {
+                        std::fputs(stamp.c_str(), f);
+                        std::fclose(f);
+                    }
+                    std::fprintf(stderr, "pipeline warm-up: installed the shipped DXMT cache %s\n",
+                                 dst.filename().c_str());
+                }
+            }
+    }
+    setenv("DXMT_PIPELINE_WARMUP", dxmt_warmup.c_str(), 0);
+    setenv("DXMT_PIPELINE_RECORD", dxmt_recorded.c_str(), 0);
 }
 
 }  // namespace
