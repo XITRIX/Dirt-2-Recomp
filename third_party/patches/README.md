@@ -18,6 +18,7 @@ or patches change, and never while it holds edits that are not in a patch.
 | | | `MoltenVK/0004-full-sample-mask-keeps-hsr.patch` | Do not export a full sample mask from shaders (keeps hidden surface removal on Apple GPUs) |
 | DXMT | utmapp/dxmt (`66e27f37`) | `dxmt/0001-native-hwnd-is-metal-layer.patch` | A native embedder passes the `CAMetalLayer` to present into as the swap chain's HWND (there is no Wine window) |
 | | | `dxmt/0002-no-semaphore-release-without-semaphore.patch` | Skip the frame-latency semaphore the native build does not create (it logged a warning on every present) |
+| | | `dxmt/0003-ios-no-curses.patch` | Link `-lcurses -lxml2` for a packaged LLVM on macOS only: the iOS SDKs have no libcurses |
 | SPIRV-Cross | MoltenVK's pin (`adec7acb`) | `SPIRV-Cross/0001-msl-mixed-compare-images.patch` | Images sampled both plainly and with depth compare stay `texture2d`; compares emulated (green video, wrong alpha) |
 
 Each copy in `build/src/<name>` is a small git repo: an `upstream` commit, then one

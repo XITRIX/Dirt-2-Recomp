@@ -88,10 +88,15 @@ set_property(TARGET dxvk_d3d9 APPEND PROPERTY INTERFACE_LINK_LIBRARIES moltenvk)
 # (an embedded framework in the app); optional until the DX11 path is the default.
 set(DIRT2_DXMT_SRC_DIR "${CMAKE_SOURCE_DIR}/build/src/dxmt")  # patched copy (prepare_sources.sh)
 set(DIRT2_DXMT_DIR "${CMAKE_SOURCE_DIR}/build/dxmt/${DIRT2_PLATFORM}" CACHE PATH "DXMT install prefix")
-if(EXISTS "${DIRT2_DXMT_DIR}/lib/libdxmt-native.dylib")
+if(DIRT2_IOS)
+  set(_dxmt_image "${DIRT2_DXMT_DIR}/dxmt.framework/dxmt")  # embedded in the app (Frameworks/)
+else()
+  set(_dxmt_image "${DIRT2_DXMT_DIR}/lib/libdxmt-native.dylib")
+endif()
+if(EXISTS "${_dxmt_image}")
   add_library(dxmt SHARED IMPORTED)
   set_target_properties(dxmt PROPERTIES
-    IMPORTED_LOCATION "${DIRT2_DXMT_DIR}/lib/libdxmt-native.dylib"
+    IMPORTED_LOCATION "${_dxmt_image}"
     INTERFACE_INCLUDE_DIRECTORIES "${DIRT2_DXMT_SRC_DIR}/include/native/directx;${DIRT2_DXMT_SRC_DIR}/include/native/windows")
   set(DIRT2_HAVE_DXMT ON)
 else()
@@ -157,6 +162,17 @@ if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
   if(DIRT2_HAVE_DXMT)
     # Object libraries' objects do not pass through other object libraries.
     target_link_libraries(dirt2 PRIVATE dirt2_shims_d3d11)
+    if(DIRT2_IOS)
+      # DX11 (DXMT) is the renderer on iOS; dxmt.framework ships in the app.
+      target_compile_definitions(dirt2 PRIVATE DIRT2_DEFAULT_DX11=1)
+      target_link_options(dirt2 PRIVATE "-Wl,-rpath,@executable_path/Frameworks")
+      set_target_properties(dirt2 PROPERTIES SKIP_BUILD_RPATH ON)  # no build-tree paths in the app
+      add_custom_command(TARGET dirt2 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_BUNDLE_DIR:dirt2>/Frameworks
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${DIRT2_DXMT_DIR}/dxmt.framework"
+          $<TARGET_BUNDLE_DIR:dirt2>/Frameworks/dxmt.framework
+        VERBATIM)
+    endif()
   endif()
   # Community gamepad mappings, loaded from next to the executable at startup.
   add_custom_command(TARGET dirt2 POST_BUILD

@@ -1,0 +1,19 @@
+diff --git a/src/airconv/darwin/meson.build b/src/airconv/darwin/meson.build
+index 5aa33ec..d221334 100644
+--- a/src/airconv/darwin/meson.build
++++ b/src/airconv/darwin/meson.build
+@@ -11,8 +11,13 @@ endif
+ 
+ llvm_ld_flags_darwin = [
+   '-L'+join_paths(native_llvm_path, 'lib'),
+-  '-lm', '-lz', '-lcurses', '-lxml2'
++  '-lm', '-lz',
+ ]
++# A packaged LLVM (Homebrew's) wants terminfo and libxml2; the iOS SDKs ship
++# no libcurses, and an LLVM built without either links without them.
++if apple_subsystem == 'macos'
++  llvm_ld_flags_darwin += [ '-lcurses', '-lxml2' ]
++endif
+ 
+ if native_llvm_path.startswith('/usr/local/opt')
+   llvm_ld_flags_darwin = [

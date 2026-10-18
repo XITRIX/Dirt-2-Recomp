@@ -120,7 +120,15 @@ The plan is to run the game's own DX11 renderer through DXMT (utmapp/dxmt fork, 
   - `shims/d3d11/reflect.cpp`: `D3DReflect` in the d3dcompiler_42 layout, built in guest memory from RDEF, ISGN/OSGN and STAT.
   - `shims/d3d11/compiler.cpp` with `tools/scripts/dxbc_immediate.py`: `D3DCompile` serves generated SM 5.0 DXBC for the engine's 8 immediate-mode shaders, the only HLSL the game compiles at run time.
   - **Known:** one 0×0 texture fails to create at start-up. That is the game's own request, and D3D11 rejects it on Windows too.
-- **Next: Phase 2** (races and parity on macOS) and **Phase 3** (iOS presentation: DXMT's iOS build has no swap chain).
+- **Phase 3 (iOS): running.** DX11 is the default renderer on iOS (`DIRT2_DEFAULT_DX11`).
+  - `dxmt.framework` (28.7 MB including LLVM) is embedded in `Frameworks/` and signed by `package_ios.sh`.
+  - First launch on an iPhone 15 Pro Max: the device is created at feature level 11_0 and the frontend presents at a steady 120 fps.
+  - DXMT's "headless" iOS build presents fine through the swap chain on our `CAMetalLayer`. It only lacks display enumeration.
+  - Build for iOS: `build_llvm.sh macos iphoneos` (the cross builds compile only the libraries airconv links), then `build_dxmt.sh iphoneos`, then the usual `ios` preset.
+- **Next:**
+  - Races and parity checks on both platforms (Phase 2).
+  - MetalFX on DX11 through DXMT's own scaler. On DX11 the METALFX row is not shown, because the ambient occlusion row it reuses is a real setting there.
+  - The DX9/DXVK path stays the macOS default until parity.
 
 ## Render scale and MetalFX
 

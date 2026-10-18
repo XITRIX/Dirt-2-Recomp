@@ -20,6 +20,7 @@ if [ "$MODE" = sim ]; then
     APP=$ROOT/build/ios-sim/dirt2.app
     /usr/libexec/PlistBuddy -c "Set :CFBundleSupportedPlatforms:0 iPhoneSimulator" "$APP/Info.plist"
     # The simulator refuses ad-hoc apps with restricted entitlements; they matter on devices only.
+    for fw in "$APP"/Frameworks/*.framework; do [ -d "$fw" ] && codesign --force --sign - "$fw"; done
     codesign --force --sign - "$APP"
     echo "signed (ad hoc): $APP"
     exit 0
@@ -103,6 +104,10 @@ done
 [ -n "$IDENTITY" ] || { echo "no certificate of the profile has its key in this keychain" >&2; exit 1; }
 
 cp "$PROFILE" "$APP/embedded.mobileprovision"
+# Embedded frameworks (dxmt.framework) are signed first, without entitlements.
+for fw in "$APP"/Frameworks/*.framework; do
+    [ -d "$fw" ] && codesign --force --sign "$IDENTITY" --timestamp=none "$fw"
+done
 codesign --force --sign "$IDENTITY" --timestamp=none --entitlements "$WORK/ents.plist" "$APP"
 codesign --verify --deep --strict "$APP"
 

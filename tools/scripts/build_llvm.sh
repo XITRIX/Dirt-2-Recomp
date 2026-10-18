@@ -46,11 +46,28 @@ for PLATFORM in ${*:-macos}; do
             [ -x "$TBLGEN" ] || { echo "error: build LLVM for macos first (host llvm-tblgen)" >&2; exit 1; }
             ARGS+=(-DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT="$PLATFORM" -DCMAKE_OSX_DEPLOYMENT_TARGET=$MIN_IOS
                 -DLLVM_TABLEGEN="$TBLGEN" -DLLVM_HOST_TRIPLE=arm64-apple-ios
+                -DLLVM_INCLUDE_TOOLS=OFF -DLLVM_INCLUDE_UTILS=OFF
                 -DLLVM_ENABLE_PIC=ON -DLLVM_BUILD_LLVM_DYLIB=OFF) ;;
         *) echo "error: unknown platform $PLATFORM" >&2; exit 1 ;;
     esac
     echo "== LLVM $VER for $PLATFORM"
     cmake -S "$SRC/llvm" -B "$WORK" "${ARGS[@]}" > "$WORK.configure.log" 2>&1 || { tail -30 "$WORK.configure.log" >&2; exit 1; }
-    cmake --build "$WORK" --target install > "$WORK.build.log" 2>&1 || { grep -m20 -E "error|FAILED" "$WORK.build.log" >&2; exit 1; }
+    if [ "$PLATFORM" = macos ]; then
+        cmake --build "$WORK" --target install > "$WORK.build.log" 2>&1 || { grep -m20 -E "error|FAILED" "$WORK.build.log" >&2; exit 1; }
+    else
+        # Cross builds: only the libraries airconv links (build/src/dxmt/src/airconv/meson.build)
+        # and the headers; LLVM's iOS configuration cannot link its executables.
+        LIBS="LLVMPasses LLVMTarget LLVMObjCARCOpts LLVMCoroutines LLVMipo LLVMInstrumentation LLVMVectorize
+              LLVMLinker LLVMIRReader LLVMAsmParser LLVMFrontendOpenMP LLVMScalarOpts LLVMInstCombine
+              LLVMAggressiveInstCombine LLVMTransformUtils LLVMBitWriter LLVMAnalysis LLVMProfileData
+              LLVMSymbolize LLVMDebugInfoPDB LLVMDebugInfoMSF LLVMDebugInfoDWARF LLVMObject LLVMTextAPI
+              LLVMMCParser LLVMMC LLVMDebugInfoCodeView LLVMBitReader LLVMCore LLVMRemarks
+              LLVMBitstreamReader LLVMBinaryFormat LLVMSupport LLVMDemangle"
+        # shellcheck disable=SC2086
+        cmake --build "$WORK" --target $LIBS install-llvm-headers > "$WORK.build.log" 2>&1 ||
+            { grep -m20 -E "error|FAILED" "$WORK.build.log" >&2; exit 1; }
+        mkdir -p "$OUT/lib"
+        cp "$WORK"/lib/libLLVM*.a "$OUT/lib/"
+    fi
     echo "LLVM ($PLATFORM): $OUT"
 done

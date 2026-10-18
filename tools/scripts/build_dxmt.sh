@@ -5,6 +5,7 @@
 #                                                     embedded framework, not linked static)
 #   build/dxmt/<platform>/include/dxmt-native/dxmt_native.h
 #   build/dxmt/<platform>/bin/airconv                 DXBC -> metallib tool (macOS only)
+#   build/dxmt/<platform>/dxmt.framework              iOS: the image as an embeddable framework
 # Needs build_llvm.sh <platform> first. Platforms: macos, iphoneos, iphonesimulator.
 # Usage: build_dxmt.sh [platform ...]   (default: macos)
 set -euo pipefail
@@ -60,5 +61,26 @@ EOF
     "$MESON" compile -C "$WORK" > "$WORK.build.log" 2>&1 || { grep -m30 -E "error|FAILED" "$WORK.build.log" >&2; exit 1; }
     "$MESON" install -C "$WORK" > /dev/null
     [ -x "$WORK/src/airconv/darwin/airconv" ] && mkdir -p "$OUT/bin" && cp "$WORK/src/airconv/darwin/airconv" "$OUT/bin/"
+    if [ "$PLATFORM" != macos ]; then
+        # iOS apps embed dynamic code as frameworks: Frameworks/dxmt.framework/dxmt.
+        FW=$OUT/dxmt.framework
+        rm -rf "$FW" && mkdir -p "$FW"
+        cp "$OUT/lib/libdxmt-native.dylib" "$FW/dxmt"
+        install_name_tool -id @rpath/dxmt.framework/dxmt "$FW/dxmt"
+        cat > "$FW/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>dxmt</string>
+<key>CFBundleIdentifier</key><string>org.dxmt.native</string>
+<key>CFBundleName</key><string>dxmt</string>
+<key>CFBundlePackageType</key><string>FMWK</string>
+<key>CFBundleShortVersionString</key><string>1.0</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleSupportedPlatforms</key><array><string>$( [ "$PLATFORM" = iphoneos ] && echo iPhoneOS || echo iPhoneSimulator )</string></array>
+<key>MinimumOSVersion</key><string>$MIN_IOS</string>
+</dict></plist>
+PLIST
+    fi
     echo "DXMT ($PLATFORM): $OUT"
 done

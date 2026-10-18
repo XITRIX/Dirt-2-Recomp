@@ -92,7 +92,11 @@ Window create_window(int width, int height, const char* title) {
 Renderer renderer() {
     static const Renderer r = [] {
         const char* e = std::getenv("DIRT2_RENDERER");
+#ifdef DIRT2_DEFAULT_DX11
+        return e && std::strcmp(e, "dx9") == 0 ? Renderer::DX9 : Renderer::DX11;
+#else
         return e && std::strcmp(e, "dx11") == 0 ? Renderer::DX11 : Renderer::DX9;
+#endif
     }();
     return r;
 }
@@ -511,7 +515,8 @@ int main(int argc, char** argv) {
     }
     if (chdir(dir.c_str()) != 0) rt::log("warning: cannot chdir to %s", dir.c_str());
     shim::install_resolution_labels();
-    shim::install_menu_patches(platform::metalfx_supported());
+    // On DX11 the ambient-occlusion row the METALFX row reuses is a real setting.
+    shim::install_menu_patches(platform::metalfx_supported() && platform::renderer() == platform::Renderer::DX9);
 
     pthread_attr_t attr;
     pthread_attr_init(&attr);
