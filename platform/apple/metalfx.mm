@@ -163,6 +163,12 @@ void metalfx_init() {
             g_supported = dev && [MTLFXSpatialScalerDescriptor supportsDevice:dev];
     }
     rt::log("metalfx: %s", g_supported ? "supported" : "not supported");
+    @autoreleasepool {
+        id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
+        if (@available(macOS 11.0, iOS 14.0, *))
+            rt::log("metal: %s, 32-bit float filtering %s", dev.name.UTF8String,
+                    dev.supports32BitFloatFiltering ? "supported" : "NOT supported");
+    }
     if (g_supported) dxvk_set_present_hook(present_hook);
 }
 

@@ -15,6 +15,8 @@
 #include <filesystem>
 #include <cstdlib>
 #include <map>
+#include <set>
+#include <tuple>
 #include <vector>
 
 #include "../../platform/platform.h"
@@ -414,6 +416,18 @@ void create_texture(X86* c, uint32_t subresources) {
     Tex* t = nullptr;
     const HRESULT hr =
         self && desc ? (self->*Create)(desc, init.empty() ? nullptr : init.data(), a[3] ? &t : nullptr) : E_INVALIDARG;
+    // Small float render targets (the luminance chain), logged once per size and format.
+    if constexpr (requires { desc->Height; })
+        if (desc && (desc->BindFlags & D3D11_BIND_RENDER_TARGET) && desc->Width <= 512 && desc->Height <= 512) {
+            const uint32_t f = uint32_t(desc->Format);
+            const bool fp = f == DXGI_FORMAT_R32G32B32A32_FLOAT || f == DXGI_FORMAT_R32_FLOAT || f == DXGI_FORMAT_R32G32_FLOAT ||
+                            f == DXGI_FORMAT_R16G16B16A16_FLOAT || f == DXGI_FORMAT_R16_FLOAT || f == DXGI_FORMAT_R16G16_FLOAT ||
+                            f == DXGI_FORMAT_R11G11B10_FLOAT;
+            static std::set<std::tuple<uint32_t, uint32_t, uint32_t>> seen;
+            std::lock_guard lk(g_mu);
+            if (fp && seen.insert({desc->Width, desc->Height, f}).second)
+                rt::log("d3d11: float render target %ux%u format %u", desc->Width, desc->Height, f);
+        }
     if (FAILED(hr) && desc) {
         uint32_t h = 0;
         if constexpr (requires { desc->Height; }) h = desc->Height;
