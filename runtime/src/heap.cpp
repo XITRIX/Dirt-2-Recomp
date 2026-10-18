@@ -69,6 +69,15 @@ uint32_t heap_alloc(uint32_t size, bool zero) {
     const uint32_t cls = class_for(size);
     const uint32_t total = g_class_size[cls] + kHeader;
     uint32_t block = g_free[cls];
+    // A block on a free list must be free and of this class. A live one there
+    // means the list is corrupt (a double free, or a write into a header): never
+    // hand it out twice; drop the list and carve fresh memory instead.
+    if (block && (hdr(block)->magic == kMagic || hdr(block)->cls != cls)) {
+        log("heap: free list of class %u corrupt at 0x%08X (magic %08X, class %u); list dropped", cls, block + kHeader,
+            hdr(block)->magic, hdr(block)->cls);
+        g_free[cls] = 0;
+        block = 0;
+    }
     if (block) {
         g_free[cls] = hdr(block)->next;
     } else {
@@ -90,16 +99,21 @@ void heap_free(uint32_t p) {
     if (!p) return;
     const uint32_t block = p - kHeader;
     Header* h = hdr(block);
+    // Check and clear the in-use mark under the lock: two threads freeing the
+    // same block must not both pass, or it goes onto the free list twice and two
+    // later allocations share it.
+    std::unique_lock lk(g_mu);
     if (h->magic != kMagic) {
-        log("heap_free: bad pointer 0x%08X", p);
+        lk.unlock();
+        log("heap_free: bad or already freed pointer 0x%08X", p);
         return;
     }
     h->magic = 0;
     if (h->cls == kLargeTag) {
+        lk.unlock();
         vm_free(block, 0, true);
         return;
     }
-    std::lock_guard lk(g_mu);
     h->next = g_free[h->cls];
     g_free[h->cls] = block;
 }
@@ -113,10 +127,13 @@ uint32_t heap_size(uint32_t p) {
 uint32_t heap_realloc(uint32_t p, uint32_t size) {
     if (!p) return heap_alloc(size);
     const uint32_t old = heap_size(p);
-    const Header* h = hdr(p - kHeader);
-    if (h->cls != kLargeTag && size <= g_class_size[h->cls]) {
-        hdr(p - kHeader)->size = size;
-        return p;
+    {
+        std::lock_guard lk(g_mu);
+        Header* h = hdr(p - kHeader);
+        if (h->magic == kMagic && h->cls != kLargeTag && size <= g_class_size[h->cls]) {
+            h->size = size;
+            return p;
+        }
     }
     const uint32_t n = heap_alloc(size);
     if (!n) return 0;
