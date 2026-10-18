@@ -10,6 +10,7 @@ add_library(dirt2_shims OBJECT
   kernel32/locale.cpp
   user32/user32.cpp
   misc/misc.cpp
+  misc/envmap_list.cpp
   xlive/xlive.cpp
   ws2_32/ws2_32.cpp
   d3d9/bridge.cpp
