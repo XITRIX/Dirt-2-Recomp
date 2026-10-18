@@ -13,8 +13,8 @@ Run Colin McRae DiRT 2 (Steam v1.1, `dirt2_game.exe`) natively on Apple platform
 | Lifter and runtime | Done. 68,910 live functions lift with Unicorn differential tests passing. |
 | Boot | Boots through CRT, GFWL (offline) and engine init on macOS. |
 | Frontend | 3D frontend renders in correct colour with audio. Bink intros play correctly (skipped by default). |
-| Race | Not reached yet. |
-| iOS | Runs on an iPhone 15 Pro Max (A17 Pro): boots, plays the intros, renders the 3D title screen at 35-60 fps. Same sources and scripts as macOS (see Build). |
+| Race | Races start and finish on the iPhone; a post-race menu crash is still to be reproduced with the new logs (`dirt2.log`, `dirt2.prev.log`). |
+| iOS | Races run on an iPhone 15 Pro Max and iPad Pro (M4), up to 120 Hz. Saves sync between devices through CloudKit (`platform/apple/cloud_saves.mm`): pulled at launch, uploaded after each save, Steam-style prompt on conflicts. |
 
 Latest fixes:
 
