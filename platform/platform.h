@@ -19,8 +19,8 @@ void drawable_size(Window w, int* width, int* height);
 void set_fullscreen(Window w, bool fullscreen);
 
 // Which of the game's renderers runs: DX9 (DXVK on MoltenVK) or DX11 (DXMT on
-// Metal). DIRT2_RENDERER=dx9|dx11. DX11 on iOS (DIRT2_DEFAULT_DX11), DX9 elsewhere
-// until the DX11 path reaches parity.
+// Metal). DIRT2_RENDERER=dx9|dx11. DX11 by default on macOS and iOS when DXMT is
+// built (DIRT2_DEFAULT_DX11), DX9 otherwise.
 enum class Renderer { DX9, DX11 };
 Renderer renderer();
 // The CAMetalLayer of a window's Metal view, created on first use (DX11 path:

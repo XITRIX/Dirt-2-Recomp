@@ -120,7 +120,7 @@ The plan is to run the game's own DX11 renderer through DXMT (utmapp/dxmt fork, 
   - `shims/d3d11/reflect.cpp`: `D3DReflect` in the d3dcompiler_42 layout, built in guest memory from RDEF, ISGN/OSGN and STAT.
   - `shims/d3d11/compiler.cpp` with `tools/scripts/dxbc_immediate.py`: `D3DCompile` serves generated SM 5.0 DXBC for the engine's 8 immediate-mode shaders, the only HLSL the game compiles at run time.
   - **Known:** one 0×0 texture fails to create at start-up. That is the game's own request, and D3D11 rejects it on Windows too.
-- **Phase 3 (iOS): running.** DX11 is the default renderer on iOS (`DIRT2_DEFAULT_DX11`).
+- **Phase 3 (iOS): running.** DX11 is the default renderer on iOS and macOS (`DIRT2_DEFAULT_DX11`; `DIRT2_RENDERER=dx9` for DXVK).
   - `dxmt.framework` (28.7 MB including LLVM) is embedded in `Frameworks/` and signed by `package_ios.sh`.
   - First launch on an iPhone 15 Pro Max: the device is created at feature level 11_0 and the frontend presents at a steady 120 fps.
   - DXMT's "headless" iOS build presents fine through the swap chain on our `CAMetalLayer`. It only lacks display enumeration.

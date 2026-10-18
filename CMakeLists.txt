@@ -196,9 +196,10 @@ if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
       # DiRT2.app/Contents/Frameworks/libdxmt-native.dylib (package_macos.sh).
       target_link_options(dirt2 PRIVATE "-Wl,-rpath,@executable_path/../Frameworks")
     endif()
+    # DX11 (DXMT) is the default renderer on Apple platforms (DIRT2_RENDERER=dx9 for DXVK).
+    target_compile_definitions(dirt2 PRIVATE DIRT2_DEFAULT_DX11=1)
     if(DIRT2_IOS)
-      # DX11 (DXMT) is the renderer on iOS; dxmt.framework ships in the app.
-      target_compile_definitions(dirt2 PRIVATE DIRT2_DEFAULT_DX11=1)
+      # dxmt.framework ships in the app.
       target_link_options(dirt2 PRIVATE "-Wl,-rpath,@executable_path/Frameworks")
       set_target_properties(dirt2 PROPERTIES SKIP_BUILD_RPATH ON)  # no build-tree paths in the app
       add_custom_command(TARGET dirt2 POST_BUILD

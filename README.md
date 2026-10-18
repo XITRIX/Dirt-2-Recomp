@@ -83,7 +83,7 @@ cmake --build build/macos-arm64
 ./build/macos-arm64/dirt2 --game "<game folder>"
 ```
 
-- **Renderer:** DX9 is the default on macOS. Run with `DIRT2_RENDERER=dx11` to use the DX11 path.
+- **Renderer:** DX11 (DXMT on Metal) is the default on macOS and iOS. Run with `DIRT2_RENDERER=dx9` to use the DX9 path (DXVK on MoltenVK).
 - **Saves and settings:** these go to `~/Library/Application Support/Dirt2Recomp`.
 - **A shareable build:** `tools/scripts/package_macos.sh` writes `build/package/macos/DiRT2-macOS.zip` with `DiRT2.app`, without game data. Without `--game`, the app looks for a **Dirt 2** folder next to itself, then the folder chosen last time, then asks for it.
 
