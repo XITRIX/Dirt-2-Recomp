@@ -130,6 +130,22 @@ The plan is to run the game's own DX11 renderer through DXMT (utmapp/dxmt fork, 
   - MetalFX on DX11 through DXMT's own scaler. On DX11 the METALFX row is not shown, because the ambient occlusion row it reuses is a real setting there.
   - The DX9/DXVK path stays the macOS default until parity.
 
+### DX11 pipeline warm-up (DXMT)
+
+The same scheme as DXVK's, through `dxmt/0004`:
+- **Recording:** every run records new pipelines to `<data>/dirt2.dxmt-pipelines`. DXMT's converted-shader cache is `<data>/dxmt/shaders_<metal>.db`.
+- **Warm-up:** at start-up the shipped `dirt2.dxmt-pipelines`, plus the device's own, are queued for background compilation as soon as their shaders exist.
+- **Metric:** `DXMT_PIPELINE_TIMING=1` logs each draw that waited for a pipeline.
+
+Measured on macOS, scripted frontend from a cold cache: 13 draw-time waits without warm-up, 0 with.
+
+To produce the shipped data:
+1. Copy the data folders from devices that played: `xcrun devicectl device copy from ... --source "Library/Application Support/Dirt2Recomp/<file>"` for `dirt2.dxmt-pipelines`, `dxmt/shaders_320.db` and its `-wal`.
+2. Merge them: `tools/scripts/merge_dxmt_pipelines.py -o build/pipelines <dir>...`. It drops duplicate pipelines, takes the union of the cache entries, and checkpoints the WALs.
+3. Rebuild: CMake copies the files into the app, and `package_macos.sh` includes them.
+
+The shipped cache replaces a device's own cache once per app build. So merge in every device's data each time it is shipped.
+
 ## Render scale and MetalFX
 
 - **Resolution menu:** the game's own Resolution row lists native ×0.5, ×0.75, ×1, ×1.25, ×1.5 and ×2. Sizes are multiples of 8 and each label shows its multiplier, e.g. "2704 x 1760 (0.75x)". The modes come from `platform::display_modes()`; the bridge serves them through `EnumAdapterModes`, and the label hook is at vtable slot 0x0131B6C0 in `bridge.cpp`.

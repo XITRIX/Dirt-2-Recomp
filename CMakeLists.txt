@@ -182,12 +182,18 @@ if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
   # cache and the merged pipeline list from tools/scripts/merge_pipelines.py.
   set(DIRT2_PIPELINE_DATA_DIR "${CMAKE_SOURCE_DIR}/build/pipelines" CACHE PATH
     "Folder with dirt2.dxvk.bin, dirt2.dxvk.lut and dirt2.pipelines to ship")
-  foreach(f dirt2.dxvk.bin dirt2.dxvk.lut dirt2.pipelines)
+  # DX11 path (DXMT): dirt2.dxmt-pipelines and dxmt/shaders_*.db from
+  # tools/scripts/merge_dxmt_pipelines.py.
+  foreach(f dirt2.dxvk.bin dirt2.dxvk.lut dirt2.pipelines dirt2.dxmt-pipelines)
     if(EXISTS "${DIRT2_PIPELINE_DATA_DIR}/${f}")
       add_custom_command(TARGET dirt2 POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DIRT2_PIPELINE_DATA_DIR}/${f}" $<TARGET_FILE_DIR:dirt2>)
     endif()
   endforeach()
+  if(IS_DIRECTORY "${DIRT2_PIPELINE_DATA_DIR}/dxmt")
+    add_custom_command(TARGET dirt2 POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_directory "${DIRT2_PIPELINE_DATA_DIR}/dxmt" $<TARGET_FILE_DIR:dirt2>/dxmt)
+  endif()
 else()
   message(STATUS "generated/sources.txt not found: run 'recomp lift' to enable the dirt2 target")
 endif()
