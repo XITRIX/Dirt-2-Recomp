@@ -256,8 +256,8 @@ void normalise_resolution(const std::string& path) {
     }
 }
 
-// MetalFX on/off is the graphics menu's MetalFX row, saved in the game's
-// hardware settings (shims/frontend/menu_patch.cpp).
+// MetalFX on/off is the graphics menu's METALFX row (the aspect ratio row),
+// saved in the game's hardware settings (shims/frontend/menu_patch.cpp).
 void read_metalfx_setting(const std::string& path) {
     if (const int on = shim::read_metalfx_setting(path); on >= 0) platform::set_metalfx_enabled(on != 0);
 }
@@ -458,6 +458,9 @@ void setup_pipeline_warmup(const std::string& data) {
             }
     }
     setenv("DXMT_PIPELINE_WARMUP", dxmt_warmup.c_str(), 0);
+    // MetalFX on the DX11 path: DXMT's own scaler, to the window's drawable
+    // size (dxmt/0005; the bridge sets the target and the on/off setting).
+    if (platform::metalfx_supported()) setenv("DXMT_METALFX_SPATIAL_NATIVE", "1", 0);
     setenv("DXMT_PIPELINE_RECORD", dxmt_recorded.c_str(), 0);
 }
 
@@ -558,8 +561,7 @@ int main(int argc, char** argv) {
     }
     if (chdir(dir.c_str()) != 0) rt::log("warning: cannot chdir to %s", dir.c_str());
     shim::install_resolution_labels();
-    // On DX11 the ambient-occlusion row the METALFX row reuses is a real setting.
-    shim::install_menu_patches(platform::metalfx_supported() && platform::renderer() == platform::Renderer::DX9);
+    shim::install_menu_patches(platform::metalfx_supported());
 
     pthread_attr_t attr;
     pthread_attr_init(&attr);

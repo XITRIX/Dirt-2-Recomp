@@ -23,6 +23,10 @@ namespace shim {
 void* host_window(uint32_t hwnd);
 }
 
+// dxmt/0005-metalfx-native-target.patch: MetalFX upscales the back buffer to
+// this size (the window's drawable) while enabled and larger.
+extern "C" void dxmt_set_spatial_upscale(int enabled, uint32_t width, uint32_t height);
+
 using namespace shim;
 
 namespace {
@@ -516,11 +520,31 @@ void capture(IDXGISwapChain* sc, uint32_t frame) {
     bb->Release();
 }
 
+// MetalFX target for DXMT: the swap chain window's drawable in pixels, and the
+// game's MetalFX setting. The size is queried every 60 frames (it runs on the
+// main thread); the setting is read every frame.
+void update_upscale_target(uint32_t proxy, bool force = false) {
+    if (!platform::metalfx_supported()) return;
+    static uint32_t frames = 0;
+    static int w = 0, h = 0;
+    if (force || frames++ % 60 == 0) {
+        platform::Window win = nullptr;
+        {
+            std::lock_guard lk(g_mu);
+            auto it = g_swaps.find(proxy);
+            if (it != g_swaps.end()) win = it->second.window;
+        }
+        if (win) platform::drawable_size(win, &w, &h);
+    }
+    dxmt_set_spatial_upscale(platform::metalfx_enabled(), uint32_t(std::max(w, 0)), uint32_t(std::max(h, 0)));
+}
+
 // Present(sync interval, flags): the render thread parks here in the background.
 void swap_present(X86* c) {
     const Args a{c};
     auto* self = static_cast<IDXGISwapChain*>(to_host(a[0]));
     platform::gpu_checkpoint();
+    update_upscale_target(a[0]);
     static uint32_t frames = 0;
     if (self) capture(self, ++frames);
     const HRESULT hr = self ? self->Present(a[1], a[2]) : E_INVALIDARG;
@@ -547,6 +571,7 @@ void swap_set_fullscreen_state(X86* c) {
     }
     static const bool force_windowed = std::getenv("DIRT2_WINDOWED") != nullptr;
     if (w && !force_windowed) platform::set_fullscreen(w, a[1] != 0);
+    update_upscale_target(a[0], true);
     c->eax = uint32_t(S_OK);
     c->esp += 4 * 4;
 }

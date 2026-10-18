@@ -1,22 +1,21 @@
 // Frontend data patches, served through vfs overrides so the game folder stays
 // untouched (copies in <data>/overlay).
 //
-// MetalFX row: the graphics menu's DX11 ambient occlusion row (item_23, combo
-// pc_gfx_dao) is hidden on the DX9 path the game runs. It becomes MetalFX
-// On/Off:
-//   system/states.bin                    item_23 shown, titled MetalFX, placed
-//                                         under Multisampling
-//   system/hardware_settings_options.xml dynamic_ambient_occ options off/on;
-//                                         the detail presets no longer set it
-//   system/hardware_settings_config.xml  (first-run defaults) quality 0, as
-//                                         the options expect
+// MetalFX row: the graphics menu's Aspect Ratio row (item_5, combo
+// pc_gfx_aspect) becomes METALFX Off/On. On these devices the render
+// resolutions always have the window's shape, so only Normal is right: the
+// game corrects the projection only for a fixed "A:B" ratio (f_00BED570) and
+// any value without a colon renders as Normal. So the row's options are
+//   off: <resolution aspect="normal"/>    on: <resolution aspect="metalfx"/>
+// and the host reads aspect="metalfx" as MetalFX on, for both renderers.
+//   system/states.bin                    item_5 titled METALFX, placed under
+//                                         Multisampling (swapped with VSync)
+//   system/hardware_settings_options.xml aspect options off/on; the detail
+//                                         presets no longer set them
+//   system/hardware_settings_config.xml  (first-run defaults) MetalFX on
 // Its title: string ids missing from the language file show as "<id>", so the
 // localisation lookup (0x01161960, tools/recomp/config/hooks.txt) answers the
 // row's id itself.
-//
-// The DX9 renderer never reads dynamic_ambient_occ, so its enabled flag in
-// hardware_settings_config.xml carries the MetalFX setting
-// (platform/sdl/sdl_main.cpp reads it).
 //
 // states.bin is the compiled frontend XML; tools/scripts/states_bin.py
 // documents the format and dumps it.
@@ -136,12 +135,12 @@ struct States {
     }
 };
 
-// rv_graphics_options' item_23 (ambient occlusion): shown, titled MetalFX and
-// moved under Multisampling. A row's place is its slot number (glyph
-// "N.root.library", IBScreenGenericData index, IBGlyphLink "N.root.library.pill")
-// and itemflow is the pad order, so MetalFX takes slot 4 and rows 4..22 move
-// down one; item ids stay as they are.
-constexpr int kMetalFxItem = 23, kMetalFxSlot = 4;
+// rv_graphics_options' item_5 (aspect ratio): titled METALFX and moved under
+// Multisampling. A row's place is its slot number (glyph "N.root.library",
+// IBScreenGenericData index, IBGlyphLink "N.root.library.pill") and itemflow is
+// the pad order, so it takes slot 4 and VSync (item_4) moves down one; item ids
+// stay as they are.
+constexpr int kMetalFxItem = 5, kMetalFxSlot = 4;
 
 bool patch_states(const std::string& in, const std::string& out) {
     States s;
@@ -161,12 +160,9 @@ bool patch_states(const std::string& in, const std::string& out) {
             if (item_id < 0 || glyph < 0 || data < 0 || link < 0 || value(item_id).rfind("item_", 0) != 0) continue;
             const int num = std::atoi(value(item_id).c_str() + 5);
             if (num == kMetalFxItem) {
-                const long vis = s.child(item, "IBDX11OnlyVisibility"), title = s.child(item, "IBTextStatic"),
-                           combo = s.child(item, "IBHWConfigBasedCombo");
-                const long only = vis < 0 ? -1 : s.attr(vis, "dx_11_only"), text = title < 0 ? -1 : s.attr(title, "string"),
-                           cdata = combo < 0 ? -1 : s.attr(combo, "data");
-                if (only < 0 || text < 0 || cdata < 0 || value(cdata) != "pc_gfx_dao") return false;
-                s.attrs[only] = s.sid("false");
+                const long title = s.child(item, "IBTextStatic"), combo = s.child(item, "IBHWConfigBasedCombo");
+                const long text = title < 0 ? -1 : s.attr(title, "string"), cdata = combo < 0 ? -1 : s.attr(combo, "data");
+                if (text < 0 || cdata < 0 || value(cdata) != "pc_gfx_aspect") return false;
                 s.attrs[text] = s.sid(kMetalFxTitle);
                 found = true;
             }
@@ -205,20 +201,20 @@ bool patch_states(const std::string& in, const std::string& out) {
     return false;
 }
 
-// dynamic_ambient_occ becomes off/on (the options' names give the Off/On
+// The aspect category becomes off/on (the options' names give the Off/On
 // labels, as for skidmarks) and leaves the detail presets.
 bool patch_options(const std::string& in, const std::string& out) {
     std::string x = read_file(in);
-    const size_t a = x.find("<category name=\"dynamic_ambient_occ\"");
+    const size_t a = x.find("<category name=\"aspect\"");
     const size_t b = a == std::string::npos ? a : x.find("</category>", a);
     if (b == std::string::npos) return false;
     x.replace(a, b - a,
-              "<category name=\"dynamic_ambient_occ\" >\r\n"
-              "      <option name=\"off\" >\r\n        <dynamic_ambient_occ enabled=\"false\" quality=\"0\" />\r\n"
-              "      </option>\r\n"
-              "      <option name=\"on\" >\r\n        <dynamic_ambient_occ enabled=\"true\" quality=\"0\" />\r\n"
-              "      </option>\r\n    ");
-    for (size_t r; (r = x.find("<ref category=\"dynamic_ambient_occ\"")) != std::string::npos;) {
+              "<category name=\"aspect\" >\r\n"
+              "      <option name=\"off\" >\r\n        <graphics_card>\r\n"
+              "          <resolution aspect=\"normal\" />\r\n        </graphics_card>\r\n      </option>\r\n"
+              "      <option name=\"on\" >\r\n        <graphics_card>\r\n"
+              "          <resolution aspect=\"metalfx\" />\r\n        </graphics_card>\r\n      </option>\r\n    ");
+    for (size_t r; (r = x.find("<ref category=\"aspect\"")) != std::string::npos;) {
         size_t start = x.rfind('\n', r);
         start = start == std::string::npos ? r : start;
         x.erase(start, x.find("/>", r) + 2 - start);
@@ -226,23 +222,23 @@ bool patch_options(const std::string& in, const std::string& out) {
     return write_file(out, x);
 }
 
-// The element the row writes, with quality forced to 0 so the off/on options
-// match what is saved (the shipped defaults have quality 1).
-bool fix_dao_quality(std::string& x) {
-    const size_t tag = x.find("<dynamic_ambient_occ ");
+// The value of <resolution aspect="..."> (start and length), or false.
+bool find_aspect(const std::string& x, size_t& at, size_t& len) {
+    const size_t tag = x.find("<resolution ");
     if (tag == std::string::npos) return false;
-    const size_t end = x.find('>', tag), q = x.find("quality=\"", tag);
+    const size_t end = x.find('>', tag), q = x.find("aspect=\"", tag);
     if (q == std::string::npos || q > end) return false;
-    const size_t v = q + 9, ve = x.find('"', v);
-    if (x.compare(v, ve - v, "0") == 0) return false;
-    x.replace(v, ve - v, "0");
+    at = q + 8;
+    len = x.find('"', at) - at;
     return true;
 }
 
+// First-run defaults: MetalFX on.
 bool patch_defaults(const std::string& in, const std::string& out) {
     std::string x = read_file(in);
-    if (x.find("<dynamic_ambient_occ ") == std::string::npos) return false;
-    fix_dao_quality(x);
+    size_t at, len;
+    if (!find_aspect(x, at, len)) return false;
+    x.replace(at, len, "metalfx");
     return write_file(out, x);
 }
 
@@ -250,11 +246,16 @@ bool patch_defaults(const std::string& in, const std::string& out) {
 
 int read_metalfx_setting(const std::string& path) {
     std::string x = read_file(path);
-    const size_t tag = x.find("<dynamic_ambient_occ ");
-    const size_t at = tag == std::string::npos ? tag : x.find("enabled=\"", tag);
-    if (at == std::string::npos || at > x.find('>', tag)) return -1;
-    if (fix_dao_quality(x)) write_file(path, x);
-    return x.compare(at + 9, 5, "false") == 0 ? 0 : 1;
+    size_t at, len;
+    if (!find_aspect(x, at, len)) return -1;
+    const std::string v = x.substr(at, len);
+    if (v == "metalfx") return 1;
+    if (v == "normal") return 0;
+    // A fixed ratio (saved before the row existed) distorts the image here:
+    // back to native, with MetalFX on.
+    x.replace(at, len, "metalfx");
+    write_file(path, x);
+    return 1;
 }
 
 void install_menu_patches(bool metalfx_row) {
@@ -269,7 +270,7 @@ void install_menu_patches(bool metalfx_row) {
     const Patch patches[] = {{"system/states.bin", patch_states},
                              {"system/hardware_settings_options.xml", patch_options},
                              {"system/hardware_settings_config.xml", patch_defaults}};
-    for (const Patch& p : patches) {  // all or nothing: half the patch shows ambient occlusion's options
+    for (const Patch& p : patches) {  // all or nothing: half the patch shows the aspect options
         const std::string out = dir + "/" + std::filesystem::path(p.rel).filename().string();
         if (!p.fn(vfs::host_path(std::string(vfs::kInstallDir) + "\\" + p.rel), out)) {
             rt::log("menu: cannot patch %s, MetalFX row not added", p.rel);

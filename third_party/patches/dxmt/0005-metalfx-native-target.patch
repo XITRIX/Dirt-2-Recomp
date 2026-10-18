@@ -1,0 +1,214 @@
+diff --git a/src/d3d11/d3d11_swapchain.cpp b/src/d3d11/d3d11_swapchain.cpp
+index c66abbc..47cb088 100644
+--- a/src/d3d11/d3d11_swapchain.cpp
++++ b/src/d3d11/d3d11_swapchain.cpp
+@@ -1,4 +1,5 @@
+ #include "d3d11_swapchain.hpp"
++#include <atomic>
+ #include "com/com_guid.hpp"
+ #include "config/config.hpp"
+ #include "d3d11_private.h"
+@@ -126,6 +127,19 @@ public:
+   };
+ };
+ 
++namespace {
++/* Native embedders (DXMT_METALFX_SPATIAL_NATIVE=1): MetalFX upscales the back
++ * buffer to a size the embedder sets (its window's drawable), when enabled and
++ * larger than the back buffer; otherwise the back buffer is presented as is.
++ * dxmt_set_spatial_upscale may be called at any time; swap chains pick the
++ * change up at their next Present. (DiRT 2 recompilation, dxmt/0005.) */
++struct NativeUpscaleTarget {
++  std::atomic<uint32_t> width{0}, height{0}, generation{0};
++  std::atomic<bool> enabled{false};
++};
++NativeUpscaleTarget g_native_upscale;
++} // namespace
++
+ template <bool EnableMetalFX>
+ class MTLD3D11SwapChain final : public MTLDXGISubObject<IDXGISwapChain4, MTLD3D11Device> {
+ public:
+@@ -152,7 +166,9 @@ public:
+     }
+ 
+     if constexpr (EnableMetalFX) {
+-      scale_factor = std::max(Config::getInstance().getOption<float>("d3d11.metalSpatialUpscaleFactor", 2), 1.0f);
++      native_target_ = env::getEnvVar("DXMT_METALFX_SPATIAL_NATIVE") == "1";
++      if (!native_target_)
++        scale_factor = std::max(Config::getInstance().getOption<float>("d3d11.metalSpatialUpscaleFactor", 2), 1.0f);
+     }
+ 
+     presenter = Rc(new Presenter(pDevice->GetMTLDevice(), layer_weak_,
+@@ -510,8 +526,6 @@ public:
+       backbuffer_desc_.Height = desc_.Height;
+     }
+ 
+-    ApplyLayerProps();
+-
+     backbuffer_desc_.Format = desc_.Format;
+ 
+     backbuffer_ = nullptr;
+@@ -523,26 +537,8 @@ public:
+     backbuffer_->AddRefPrivate();
+     backbuffer_->Release();
+ 
+-    if constexpr (EnableMetalFX) {
+-      D3D11_TEXTURE2D_DESC1 upscaled_desc_ = backbuffer_desc_;
+-      upscaled_desc_.Height *= scale_factor;
+-      upscaled_desc_.Width *= scale_factor;
+-      upscaled_backbuffer_ = nullptr;
+-      if (FAILED(dxmt::CreateDeviceTexture2D(
+-              device_, &upscaled_desc_, nullptr, reinterpret_cast<ID3D11Texture2D1 **>(&upscaled_backbuffer_)
+-          )))
+-        return E_FAIL;
+-
+-      WMTFXSpatialScalerInfo info;
+-      info.input_height = desc_.Height;
+-      info.input_width = desc_.Width;
+-      info.output_height = desc_.Height * scale_factor;
+-      info.output_width = desc_.Width * scale_factor;
+-      info.color_format = backbuffer_->texture()->pixelFormat();
+-      info.output_format =upscaled_backbuffer_->texture()->pixelFormat();
+-      metalfx_scaler = new SpatialScaler(device_->GetMTLDevice(), info);
+-      D3D11_ASSERT(metalfx_scaler && "otherwise metalfx failed to initialize");
+-    }
++    UpdateUpscaler();
++    ApplyLayerProps();
+ 
+     return S_OK;
+   };
+@@ -593,8 +589,8 @@ public:
+                               : colorspace_,
+                           LayerSupportEDR());
+     if (presenter->changeLayerProperties(
+-            ConvertSwapChainFormat(desc_.Format), target_color_space, desc_.Width * scale_factor,
+-            desc_.Height * scale_factor, desc_.SampleDesc.Count
++            ConvertSwapChainFormat(desc_.Format), target_color_space, out_width_ ? out_width_ : desc_.Width * scale_factor,
++            out_height_ ? out_height_ : desc_.Height * scale_factor, desc_.SampleDesc.Count
+         ))
+       device_context_->WaitUntilGPUIdle();
+   };
+@@ -785,7 +781,16 @@ public:
+       auto output = static_cast<MTLDXGIOutput *>(target_.ptr());
+       presenter->changeGammaRamp(output->GetGammaRamp());
+     }
++    bool upscale = false;
+     if constexpr (EnableMetalFX) {
++      if (native_target_ && g_native_upscale.generation.load() != upscale_generation_) {
++        UpdateUpscaler();
++        ApplyLayerProps();
++      }
++      upscale = upscale_active_ && metalfx_scaler;
++    }
++    if (upscale) {
++      if constexpr (EnableMetalFX)
+       chunk->emitcc([
+         this, vsync_duration, backbuffer = backbuffer_->texture(),
+         sync_state = SyncFrame(++presentation_count_),
+@@ -1094,6 +1099,51 @@ private:
+   std::conditional<EnableMetalFX, Rc<SpatialScaler>, std::monostate>::type metalfx_scaler;
+   std::conditional<EnableMetalFX, Com<D3D11ResourceCommon>, std::monostate>::type upscaled_backbuffer_;
+   float scale_factor = 1.0;
++  bool native_target_ = false;   // output size from dxmt_set_spatial_upscale
++  bool upscale_active_ = EnableMetalFX;
++  uint32_t upscale_generation_ = 0;
++  uint32_t out_width_ = 0, out_height_ = 0;  // drawable size
++
++  // The upscaler for the current back buffer: none when MetalFX is off or the
++  // target is not larger (native targets); the drawable size either way.
++  void UpdateUpscaler() {
++    out_width_ = desc_.Width * scale_factor;
++    out_height_ = desc_.Height * scale_factor;
++    if constexpr (EnableMetalFX) {
++      if (native_target_) {
++        auto &t = g_native_upscale;
++        upscale_generation_ = t.generation.load();
++        const uint32_t w = t.width.load(), h = t.height.load();
++        upscale_active_ = t.enabled.load() && w && h && (w > desc_.Width || h > desc_.Height);
++        out_width_ = upscale_active_ ? w : desc_.Width;
++        out_height_ = upscale_active_ ? h : desc_.Height;
++      }
++      upscaled_backbuffer_ = nullptr;
++      metalfx_scaler = nullptr;
++      if (!upscale_active_ || !backbuffer_)
++        return;
++      D3D11_TEXTURE2D_DESC1 upscaled_desc_ = backbuffer_desc_;
++      upscaled_desc_.Width = out_width_;
++      upscaled_desc_.Height = out_height_;
++      if (FAILED(dxmt::CreateDeviceTexture2D(
++              device_, &upscaled_desc_, nullptr, reinterpret_cast<ID3D11Texture2D1 **>(&upscaled_backbuffer_)
++          ))) {
++        upscale_active_ = false;
++        out_width_ = desc_.Width, out_height_ = desc_.Height;
++        return;
++      }
++      WMTFXSpatialScalerInfo info;
++      info.input_height = desc_.Height;
++      info.input_width = desc_.Width;
++      info.output_height = out_height_;
++      info.output_width = out_width_;
++      info.color_format = backbuffer_->texture()->pixelFormat();
++      info.output_format = upscaled_backbuffer_->texture()->pixelFormat();
++      metalfx_scaler = new SpatialScaler(device_->GetMTLDevice(), info);
++      if (native_target_)
++        Logger::info(str::format("MetalFX: ", desc_.Width, "x", desc_.Height, " -> ", out_width_, "x", out_height_));
++    }
++  }
+ };
+ 
+ HRESULT
+@@ -1124,7 +1174,7 @@ CreateSwapChain(
+       pDesc->BufferCount != 1) {
+     WARN("CreateSwapChain: unsupported swap effect ", pDesc->SwapEffect, " with backbuffer size ", pDesc->BufferCount);
+   }
+-  if (env::getEnvVar("DXMT_METALFX_SPATIAL_SWAPCHAIN") == "1") {
++  if (env::getEnvVar("DXMT_METALFX_SPATIAL_SWAPCHAIN") == "1" || env::getEnvVar("DXMT_METALFX_SPATIAL_NATIVE") == "1") {
+     if (pDevice->GetMTLDevice().supportsFXSpatialScaler()) {
+       *ppSwapChain = new MTLD3D11SwapChain<true>(
+           pFactory, pDevice, layer_factory.ptr(), hWnd, pDesc, pFullscreenDesc
+@@ -1140,4 +1190,15 @@ CreateSwapChain(
+   return S_OK;
+ };
+ 
+-} // namespace dxmt
+\ No newline at end of file
++} // namespace dxmt
++
++extern "C" __attribute__((visibility("default"))) void
++dxmt_set_spatial_upscale(int enabled, uint32_t width, uint32_t height) {
++  auto &t = dxmt::g_native_upscale;
++  if (t.enabled.load() == !!enabled && t.width.load() == width && t.height.load() == height)
++    return;
++  t.width.store(width);
++  t.height.store(height);
++  t.enabled.store(!!enabled);
++  t.generation.fetch_add(1);
++}
+diff --git a/src/dxmt-native/dxmt_native.exports b/src/dxmt-native/dxmt_native.exports
+index 904cf71..2ca7213 100644
+--- a/src/dxmt-native/dxmt_native.exports
++++ b/src/dxmt-native/dxmt_native.exports
+@@ -30,3 +30,4 @@ _dxmt_event_wait
+ _dxmt_native_abi_version
+ _dxmt_d3d11_buffer_bind_external_fd
+ _dxmt_d3d11_buffer_external_cookie
++_dxmt_set_spatial_upscale
+diff --git a/src/dxmt-native/dxmt_native.h b/src/dxmt-native/dxmt_native.h
+index 4c036a7..c8b95ef 100644
+--- a/src/dxmt-native/dxmt_native.h
++++ b/src/dxmt-native/dxmt_native.h
+@@ -57,6 +57,14 @@ int32_t dxmt_d3d11_buffer_bind_external_fd(void *d3d11_buffer, int fd, uint64_t
+  * allocation of that buffer, -1 if it is ordinary device memory. */
+ int dxmt_d3d11_buffer_external_cookie(void *d3d11_buffer, const void *mapped_ptr, uint32_t *out_cookie);
+ 
++/* == MetalFX spatial upscaling to the embedder's size ===================== */
++
++/* With DXMT_METALFX_SPATIAL_NATIVE=1, swap chains upscale their back buffer
++ * with MetalFX to width x height (the window's drawable) while enabled and
++ * larger than the back buffer, and present it unscaled otherwise. Callable at
++ * any time; applied at each swap chain's next Present. */
++void dxmt_set_spatial_upscale(int enabled, uint32_t width, uint32_t height);
++
+ #ifdef __cplusplus
+ }
+ #endif

@@ -134,7 +134,13 @@ The plan is to run the game's own DX11 renderer through DXMT (utmapp/dxmt fork, 
 
 - **Resolution menu:** the game's own Resolution row lists native ×0.5, ×0.75, ×1, ×1.25, ×1.5 and ×2. Sizes are multiples of 8 and each label shows its multiplier, e.g. "2704 x 1760 (0.75x)". The modes come from `platform::display_modes()`; the bridge serves them through `EnumAdapterModes`, and the label hook is at vtable slot 0x0131B6C0 in `bridge.cpp`.
 - **MetalFX:** below ×1, `platform/apple/metalfx.mm` upscales each frame into the drawable with `MTLFXSpatialScaler`. It runs from a DXVK present hook (`dxvk/0002-present-hook.patch`).
-- **METALFX row in Graphics:** this is the game's DX11-only ambient occlusion row (item_23, `pc_gfx_dao`), which the DX9 path hides. `shims/frontend/menu_patch.cpp` shows it under Multisampling, with Off/On options, through VFS overrides (`vfs::set_override`). The patched files are `system/states.bin`, `hardware_settings_options.xml` and `hardware_settings_config.xml`, written to `<data>/overlay`; the game folder is never touched. The value is saved as `<dynamic_ambient_occ enabled>`, which the DX9 renderer never reads, and `sdl_main.cpp` watches it. On devices without MetalFX the row stays hidden.
+- **MetalFX on DX11:** DXMT's own scaler does the upscaling (`dxmt/0005`). The bridge passes the window's drawable size and the setting to `dxmt_set_spatial_upscale`.
+- **METALFX row in Graphics:** this is the game's Aspect Ratio row (item_5, `pc_gfx_aspect`), moved under Multisampling, with Off/On options, the same on both renderers.
+  - Only Normal is right on these devices: our resolutions always have the window's shape, and the game corrects the projection only for an "A:B" value (`f_00BED570`).
+  - So Off stores `aspect="normal"` and On stores `aspect="metalfx"`, which renders exactly as Normal. `sdl_main.cpp` reads and watches that value.
+  - A saved fixed ratio is reset to `metalfx`.
+  - `shims/frontend/menu_patch.cpp` serves the patched `system/states.bin`, `hardware_settings_options.xml` and `hardware_settings_config.xml` from `<data>/overlay` through VFS overrides; the game folder is never touched.
+  - On devices without MetalFX the row is the game's own Aspect Ratio row.
 - **Row title:** the game shows a string id missing from the language file as `<id>`. The lookup at 0x01161960 is therefore hooked (`tools/recomp/config/hooks.txt`, `recomp lift --hooks`) to answer `lng_metalfx_combo_title`.
 - **Menu data:** `tools/scripts/states_bin.py dump <states.bin> id=rv_graphics_options` prints the compiled menu XML, and `roundtrip` checks the encoder. In `states.bin`, a row's place is its slot number (`glyph`, `IBScreenGenericData index`, `IBGlyphLink`). `itemflow` holds the pad order, one id per line, and the game splits it on line breaks.
 
