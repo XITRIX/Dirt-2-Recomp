@@ -147,12 +147,14 @@ The first run builds the libraries, which takes about an hour; later runs use th
 
 ## Nintendo Switch (homebrew, in progress)
 
-Not playable yet. The current build is the Gate 0 headless boot: the game starts, runs its engine start-up and stops where it asks for Direct3D, logging how long that took. It measures whether the Switch's CPU can run the recompiled game before any graphics work. The plan is in [docs/SWITCH.md](docs/SWITCH.md).
+Not playable yet. The renderer is our own D3D9 on deko3d (the Switch's native GPU API), with every DX9 shader translated offline; it is in bring-up and has not drawn a frame on hardware yet. Gate 0 (the game boots to its renderer on the Switch's CPU) passed. The plan and state are in [docs/SWITCH.md](docs/SWITCH.md).
 
 You need [devkitPro](https://devkitpro.org/wiki/Getting_Started) with `switch-dev` (devkitA64, libnx, deko3d, uam) in `/opt/devkitpro`, a Switch running Atmosphère, and the lifter output from step 3 above (`generated/`, built on the Mac).
 
 ```bash
 tools/scripts/build_deps.sh switch
+tools/scripts/build_shader_tools.sh      # host: DX9 shader translator (needs build_graphics.sh macos first)
+tools/scripts/dx9_shader_census.py       # translates the game's 897 DX9 shaders -> build/shaders/dx9/dirt2.dkshpack
 cmake --preset switch
 cmake --build build/switch
 tools/scripts/package_switch.sh
@@ -160,7 +162,7 @@ tools/scripts/package_switch.sh
 
 `build_deps.sh switch` builds SDL3 with the Switch port (devkitPro's, see `third_party/patches/README.md`), OpenAL Soft, Vorbis and FFmpeg with devkitA64. Compiling the lifted code with GCC takes over an hour.
 
-To install, unzip `build/package/switch/DiRT2-switch.zip` onto the root of the SD card, then copy the game's `Dirt 2` folder into `sdmc:/switch/dirt2/`. Start it by **title takeover**: hold **R** while launching any installed game, then pick DiRT 2 in the Homebrew Menu. Started from the Album, it gets about 400 MB and refuses to run. The log is `sdmc:/switch/dirt2/dirt2.log`; Gate 0 ends with a `gate 0: Direct3DCreate9(...) reached ... s after start` line, after which the app exits. Crashes log the faulting address as an offset into `build/switch/dirt2.elf`:
+To install, unzip `build/package/switch/DiRT2-switch.zip` onto the root of the SD card, then copy the game's `Dirt 2` folder into `sdmc:/switch/dirt2/`. Start it by **title takeover**: hold **R** while launching any installed game, then pick DiRT 2 in the Homebrew Menu. Started from the Album, it gets about 400 MB and refuses to run. The log is `sdmc:/switch/dirt2/dirt2.log`: `deko3d:` lines report the device, the shader pack, methods the game calls that are not implemented yet, and frame rate. Crashes log the faulting address as an offset into `build/switch/dirt2.elf`:
 
 ```bash
 /opt/devkitpro/devkitA64/bin/aarch64-none-elf-addr2line -f -C -e build/switch/dirt2.elf <offset>

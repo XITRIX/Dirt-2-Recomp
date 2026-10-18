@@ -1,7 +1,12 @@
 # Nintendo Switch homebrew executable (included from the top-level CMakeLists
-# when DIRT2_SWITCH): dirt2.elf, packaged as dirt2.nro. Gate 0 build: no GPU
-# backend, the run ends at Direct3DCreate9 (platform/switch/switch_platform.cpp).
-add_executable(dirt2 platform/sdl/sdl_main.cpp platform/switch/switch_platform.cpp)
+# when DIRT2_SWITCH): dirt2.elf, packaged as dirt2.nro. Renderer: D3D9 on
+# deko3d (shims/d3d9/deko) behind the D3D9 bridge, with the offline shader pack
+# (tools/scripts/dx9_shader_census.py -> dirt2.dkshpack, shipped next to the NRO).
+add_executable(dirt2 platform/sdl/sdl_main.cpp platform/switch/switch_platform.cpp
+  shims/d3d9/deko/gpu.cpp shims/d3d9/deko/resources.cpp shims/d3d9/deko/shaders.cpp
+  shims/d3d9/deko/device.cpp shims/d3d9/deko/d3d9.cpp)
+target_compile_options(dirt2 PRIVATE -Wall -Wno-unused-parameter)
+target_link_libraries(dirt2 PRIVATE deko3d)
 # GNU ld reads each archive once: the runtime uses the lifted code's function
 # table and the lifted code calls the runtime, so they are searched as a group.
 # CMake knows RESCAN only on platforms it recognises; devkitA64's ld is GNU ld.

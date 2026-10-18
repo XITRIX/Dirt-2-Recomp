@@ -4,7 +4,6 @@
 // devkitPro SDL3 port (third_party/patches/sdl3).
 #include <switch.h>
 
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -79,20 +78,4 @@ void report_missing_game(const std::string& dir) {
                "Copy the \"Dirt 2\" game folder (the one with dirt2_game.exe) to " + dir + " on the SD card.");
 }
 
-std::chrono::steady_clock::time_point g_start = std::chrono::steady_clock::now();
-
 }  // namespace switch_platform
-
-// Gate 0 (headless boot): no GPU backend yet. The game has run its CRT and
-// engine start-up when it asks for Direct3D: log how long that took and how
-// much guest memory it committed, then end the run. _Exit, not exit: static
-// destructors would run under the game's other threads (it crashed there);
-// libnx's exit path still returns to the Homebrew Menu.
-struct IDirect3D9;
-extern "C" IDirect3D9* Direct3DCreate9(unsigned sdk_version) {
-    const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - switch_platform::g_start).count();
-    rt::log("gate 0: Direct3DCreate9(%u) reached %.2f s after start, %llu MB of guest memory committed", sdk_version, s,
-            (unsigned long long)(rt::committed_bytes() >> 20));
-    std::fflush(stderr);
-    std::_Exit(0);
-}

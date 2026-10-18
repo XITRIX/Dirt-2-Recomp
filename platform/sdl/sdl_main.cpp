@@ -86,7 +86,7 @@ Window create_window(int width, int height, const char* title) {
         }
         const float d = display_density();
 #if defined(SDL_PLATFORM_SWITCH)
-        // Gate 0: no GPU backend, and SDL is built without Vulkan (a Vulkan window would fail).
+        // deko3d presents to the native window itself (SDL_SWITCH_NATIVE_WINDOW, set in main).
         const SDL_WindowFlags api = 0;
 #else
         const SDL_WindowFlags api = renderer() == Renderer::DX11 ? SDL_WINDOW_METAL : SDL_WINDOW_VULKAN;
@@ -621,6 +621,10 @@ int main(int argc, char** argv) {
     SDL_SetHint(SDL_HINT_JOYSTICK_MFI, "1");
 #else
     SDL_SetHint(SDL_HINT_JOYSTICK_MFI, std::getenv("DIRT2_JOYSTICK_MFI") ? "1" : "0");
+#endif
+#if defined(SDL_PLATFORM_SWITCH)
+    // The D3D9-on-deko3d device owns the NWindow's buffers: SDL must not put an EGL surface on it.
+    SDL_SetHint("SDL_SWITCH_NATIVE_WINDOW", "1");
 #endif
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS)) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
