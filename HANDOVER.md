@@ -18,6 +18,7 @@ Run Colin McRae DiRT 2 (Steam v1.1, `dirt2_game.exe`) natively on Apple platform
 
 Latest fixes:
 
+- Shader/pipeline compile stutter: DXVK now records the pipelines the game uses and compiles them on background threads at the next start (`third_party/patches/dxvk/0003-pipeline-warmup.patch`, section below). On a cold Metal cache, 110 s of frontend went from 151 compiles at draw time (19.1 s in total, 137 of them over 16 ms) to 1, with 153 pipelines compiled in the background in 4.2 s before the title screen.
 - `a300843`: green video and wrong alpha everywhere. SPIRV-Cross typed DXVK's textures as `depth2d` because DXVK samples each D3D9 sampler both plainly and with depth compare; patched in `third_party/patches/SPIRV-Cross/`. Full write-up in STATUS.md, open issue 1.
 - GPU device lost (`kIOGPUCommandBufferCallbackErrorInvalidResource`): MoltenVK removed freed allocations from its queue-wide `MTLResidencySet` while unretained command buffers still used them. Removal is now deferred until every queue drains: `third_party/patches/MoltenVK/0002-defer-residency-removal.patch`, STATUS.md open issue 4.
 - Gamepad (Backbone One) silent: SDL's MFi driver delivered no input. It is now disabled, and pads use HIDAPI/IOKit with the bundled `gamecontrollerdb.txt`. STATUS.md open issue 5.
@@ -43,6 +44,7 @@ Per-platform outputs never overlap, so platforms can build at the same time. Pla
 | `build/dxvk/<platform>` | `libdxvk_d3d9.a`, DXVK's internal libraries merged in: `build_graphics.sh` |
 | `build/macos-arm64`, `build/ios`, `build/ios-sim` | Game builds (CMake presets) |
 | `build/package/<platform>` | Packaged builds |
+| `build/pipelines` | Shipped pipeline warm-up data (game-derived, never committed): see Pipeline warm-up |
 | `~/Library/Caches/Dirt2Recomp/xcode/` | Xcode derived data (must not live in `~/Documents`, see Pitfalls) |
 
 ```bash
@@ -66,6 +68,39 @@ tools/scripts/package_ios.sh device          # signs, writes build/package/iphon
 - Patches: `tools/scripts/prepare_sources.sh` exports each submodule to `build/src/<name>` and applies `third_party/patches/<name>/` there (MoltenVK's fetched dependencies too).
 - MoltenVK's externals (SPIRV-Cross, SPIRV-Tools) are one multi-platform xcframework at a path MoltenVK's project hard-codes. `build_mvk_externals.sh` builds it for all platforms at once, under a lock, and only when the SPIRV-Cross patch changes; per-platform MoltenVK builds only read it. MoltenVK's own `make` and `Package/` folder are not used. Do not rerun `fetchDependencies` on an existing checkout: it resets the External sources and drops the patch.
 - Game data (11.5 GB) is never committed. Saves, config and DXVK logs go to `~/Library/Application Support/Dirt2Recomp` on macOS and the app container's Library on iOS (override with `DIRT2_DATA_DIR`).
+
+## Pipeline warm-up
+
+MoltenVK has no pipeline libraries, so DXVK compiles every new shader/state pipeline at its first draw: 100–400 ms each on a cold Metal cache, 2–3 ms on a warm one. `0003-pipeline-warmup.patch` adds recording and warm-up (details in `third_party/patches/README.md`); `platform/sdl/sdl_main.cpp` (`setup_pipeline_warmup`) wires it up:
+
+- Every run records new pipelines to `<data>/dirt2.pipelines` (`DXVK_PIPELINE_RECORD`; set it empty to stop). DXVK's shader cache sits next to it as `dirt2.dxvk.bin/.lut` (`DXVK_SHADER_CACHE_NAME=dirt2`).
+- At device creation, the pipelines in the shipped `dirt2.pipelines` (next to the executable, or in the iOS app bundle) and in `<data>/dirt2.pipelines` are compiled on DXVK's worker threads (`DXVK_PIPELINE_WARMUP`). So each device also learns from its own play, from the second launch on.
+- The shipped shader cache is copied into the data directory once per app build (DXVK opens it read-write and exclusive); `<data>/dirt2.dxvk.stamp` records which build was copied.
+- macOS sets `MVK_CONFIG_SHOULD_MAXIMIZE_CONCURRENT_COMPILATION=1`.
+- `DXVK_PIPELINE_TIMING=1` logs each pipeline compiled at a draw: the stutter metric.
+
+Measured on macOS (M1 Max, 10 cores; 110 s of scripted frontend, `DIRT2_INPUT_SCRIPT`):
+
+| Run | Compiled at draw | Draw compile time | Over 16 ms | Warm-up |
+|---|---|---|---|---|
+| Cold Metal cache, no warm-up | 151 | 19.1 s | 137 | |
+| Cold Metal cache, warm-up | 1 | 0.15 s | 1 | 153 in 4.2 s, done before the title screen |
+| Warm Metal cache, no warm-up | 153 | 0.42 s | 0 | |
+| Warm Metal cache, warm-up | 0 | 0 | 0 | 153 in 0.11 s |
+
+Not measured yet: iOS (the same files are bundled in the app; expect a longer warm-up on 6 cores), memory held by warmed pipelines on the iPhone, and a race (only the frontend has been recorded so far).
+
+Producing the shipped data:
+
+1. Record on one machine with one data directory, so the shader cache covers every recorded pipeline: start with an empty `DIRT2_DATA_DIR`, play the menus and as many tracks and cars as possible (`DIRT2_INPUT_SCRIPT` makes menu runs repeatable). Recording accumulates across runs; quitting by killing the game is fine.
+2. Merge into `build/pipelines` with that run's cache:
+   ```bash
+   mkdir -p build/pipelines && cp <data>/dirt2.dxvk.bin <data>/dirt2.dxvk.lut build/pipelines/
+   tools/scripts/merge_pipelines.py -o build/pipelines/dirt2.pipelines --lut build/pipelines/dirt2.dxvk.lut <data>/dirt2.pipelines [more recordings]
+   ```
+   The script drops duplicates and torn entries, refuses files from another DXVK build, and reports how many pipelines the cache covers. Recordings from other devices (an iPhone's `Library/Application Support` data) merge in too, but only pipelines whose shaders are in the shipped cache are warmed up; the device records the rest itself.
+3. Re-run CMake (the files are picked up at configure time), build, and package: CMake copies them next to the macOS executable and into the iOS bundle; `package_macos.sh` includes them.
+4. Whenever a DXVK patch changes shader conversion or the pipeline state layout, bump `DXVK_VERSION` in `0003-pipeline-warmup.patch` (`meson.build`) and re-record: older caches and pipeline files are then ignored, and logged as such.
 
 ## Layout
 

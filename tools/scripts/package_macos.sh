@@ -5,6 +5,7 @@
 #                                     is linked in statically
 #   DiRT2-macOS/gamecontrollerdb.txt  SDL gamepad mappings (third_party/SDL_GameControllerDB)
 #   DiRT2-macOS/run.sh                launcher; takes the game folder (the one with dirt2_game.exe)
+#   DiRT2-macOS/dirt2.{dxvk.bin,dxvk.lut,pipelines}  pipeline warm-up data, if build/pipelines has it
 # Game data is not included. Usage: package_macos.sh [out_dir]
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -16,6 +17,10 @@ rm -rf "$PKG"
 mkdir -p "$PKG"
 cp "$ROOT/build/macos-arm64/dirt2" "$PKG/dirt2"
 cp "$ROOT/third_party/SDL_GameControllerDB/gamecontrollerdb.txt" "$PKG/"
+# Pipeline warm-up data, when produced (tools/scripts/merge_pipelines.py)
+for f in dirt2.dxvk.bin dirt2.dxvk.lut dirt2.pipelines; do
+    if [ -f "$ROOT/build/pipelines/$f" ]; then cp "$ROOT/build/pipelines/$f" "$PKG/"; fi
+done
 
 # Static build: the executable may only load system libraries and frameworks.
 foreign=$(otool -L "$PKG/dirt2" | tail -n +2 | awk '{print $1}' | grep -vE '^(/usr/lib/|/System/)' || true)

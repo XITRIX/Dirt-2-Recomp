@@ -192,6 +192,8 @@ Debug switches:
 | `DIRT2_SCREENSHOT_DIR` | Back-buffer capture |
 | `DIRT2_INPUT_TRACE` | First XInput call per pad/result and every pad state change |
 | `DIRT2_JOYSTICK_MFI=1` | Re-enable SDL's GameController (MFi) joystick driver |
+| `DXVK_PIPELINE_TIMING=1` | Log each pipeline compiled at a draw, with its time (stutter) |
+| `DXVK_PIPELINE_RECORD=` / `DXVK_PIPELINE_WARMUP=` | Empty: stop recording pipelines / skip the warm-up (HANDOVER.md, Pipeline warm-up) |
 
 `tests/dxvk_smoke/` holds standalone DXVK checks: clear, texture sampling, and the game's video shader (`FMT=` texture format, `PLANES=` real decoded frames, `OUT=` frame dump). `tests/video/` holds the decoder and raw-MoltenVK harnesses.
 

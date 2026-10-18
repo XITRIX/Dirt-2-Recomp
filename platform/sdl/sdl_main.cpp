@@ -306,6 +306,60 @@ void translate(const SDL_Event& e) {
     }
 }
 
+// Pipeline warm-up (third_party/patches/dxvk/0003-pipeline-warmup.patch).
+// Without pipeline libraries on MoltenVK, DXVK compiles each new pipeline at
+// its first draw: a stutter. DXVK records every pipeline the game uses and
+// compiles the recorded ones on its worker threads at the next start. The
+// app ships a shader cache and pipeline list (next to the executable, or in
+// the iOS bundle); the shader cache is copied into the data directory because
+// DXVK opens it read-write. This device's own recording adds to the shipped one.
+void setup_pipeline_warmup(const std::string& data) {
+    namespace fs = std::filesystem;
+    setenv("DXVK_SHADER_CACHE_NAME", "dirt2", 0);
+#if !defined(SDL_PLATFORM_IOS) && !defined(SDL_PLATFORM_TVOS) && !defined(SDL_PLATFORM_VISIONOS)
+    setenv("MVK_CONFIG_SHOULD_MAXIMIZE_CONCURRENT_COMPILATION", "1", 0);
+#endif
+    const std::string recorded = data + "/dirt2.pipelines";
+    std::string warmup = recorded;
+    if (const char* b = SDL_GetBasePath()) {
+        const std::string base = b;
+        std::error_code ec;
+        if (fs::exists(base + "dirt2.pipelines", ec)) warmup = base + "dirt2.pipelines:" + warmup;
+        // Copy the shipped shader cache once per app build: the stamp is the
+        // shipped file's size and time, so an update brings its new cache.
+        const std::string lut = base + "dirt2.dxvk.lut", bin = base + "dirt2.dxvk.bin";
+        if (fs::exists(lut, ec) && fs::exists(bin, ec)) {
+            const std::string stamp = std::to_string(fs::file_size(lut, ec)) + " " +
+                std::to_string((long long)fs::last_write_time(lut, ec).time_since_epoch().count());
+            const std::string stamp_path = data + "/dirt2.dxvk.stamp";
+            std::string old;
+            if (FILE* f = std::fopen(stamp_path.c_str(), "r")) {
+                char buf[64] = {};
+                if (std::fgets(buf, sizeof buf, f)) old = buf;
+                std::fclose(f);
+            }
+            if (old != stamp) {
+                bool ok = true;
+                for (const std::string* src : {&bin, &lut}) {
+                    const std::string dst = data + "/" + fs::path(*src).filename().string();
+                    ok = ok && fs::copy_file(*src, dst + ".tmp", fs::copy_options::overwrite_existing, ec);
+                    if (ok) fs::rename(dst + ".tmp", dst, ec);
+                    ok = ok && !ec;
+                }
+                if (FILE* f = ok ? std::fopen(stamp_path.c_str(), "w") : nullptr) {
+                    std::fputs(stamp.c_str(), f);
+                    std::fclose(f);
+                }
+                std::fprintf(stderr, "pipeline warm-up: %s the shipped shader cache\n",
+                             ok ? "installed" : "failed to install");
+            }
+        }
+    }
+    setenv("DXVK_PIPELINE_WARMUP", warmup.c_str(), 0);
+    // DXVK_PIPELINE_RECORD= (empty) stops recording.
+    setenv("DXVK_PIPELINE_RECORD", recorded.c_str(), 0);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -358,12 +412,12 @@ int main(int argc, char** argv) {
         std::error_code ec;
         std::filesystem::create_directories(data, ec);
         setenv("DXVK_LOG_PATH", data.c_str(), 0);
-        setenv("DXVK_STATE_CACHE_PATH", data.c_str(), 0);
         // Defaults to $HOME/.cache, which is not writable on iOS (HOME is the container root).
         setenv("DXVK_SHADER_CACHE_PATH", data.c_str(), 0);
         rt::set_discovery_log(data + "/recomp_discovered.txt");
         tee_stderr(data + "/dirt2.log");
         platform::metalfx_init(data);
+        setup_pipeline_warmup(data);
     }
     // SDL's GameController (MFi) driver reports some pads (Backbone One) as
     // connected but never delivers their input. Without it, Xbox/PlayStation/

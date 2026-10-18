@@ -5,10 +5,12 @@
 #   build/src/MoltenVK                   third_party/MoltenVK + patches/MoltenVK
 #   build/src/MoltenVK/External/<name>   MoltenVK's fetched dependencies + patches/<name>
 #
-# Each copy is its own small git repo with two commits, "upstream <sha>" and
-# "patched", so changing a patch is: edit the copy, then
+# Each copy is its own small git repo: a commit "upstream <sha>" (tag upstream),
+# then one commit per patch named after it (the last one tagged patched). To
+# change the last patch, edit the copy, then
 #   git -C build/src/<name> diff patched > /dev/null   # review
-#   git -C build/src/<name> diff upstream -- <files> > third_party/patches/<name>/<patch>
+#   git -C build/src/<name> diff patched~1 > third_party/patches/<name>/<patch>
+# (with a single patch, patched~1 is upstream).
 # A copy is rebuilt when its submodule commit or its patches change; one with
 # uncommitted edits is never overwritten.
 set -euo pipefail
@@ -46,12 +48,15 @@ commit_and_patch() {
     local dir=$1 set=$2 label=$3
     (cd "$dir" && git init -q && git add -A -f && git -c user.name=prepare -c user.email=prepare@local \
         commit -q -m "upstream $label" && git tag -f upstream > /dev/null)
+    # One commit per patch, so a later patch can be regenerated against the
+    # ones before it: git diff <its parent commit>.
     for p in "$ROOT/third_party/patches/$set"/*.patch; do
         [ -f "$p" ] || continue
         git -C "$dir" apply "$p" || { echo "error: $(basename "$p") does not apply to $set $label" >&2; exit 1; }
+        (cd "$dir" && git add -A -f && git -c user.name=prepare -c user.email=prepare@local commit -q --allow-empty \
+            -m "$(basename "$p")")
     done
-    (cd "$dir" && git add -A -f && git -c user.name=prepare -c user.email=prepare@local commit -q --allow-empty -m patched &&
-        git tag -f patched > /dev/null)
+    git -C "$dir" tag -f patched > /dev/null
 }
 
 # ---- DXVK (with its nested submodules: headers, dxbc-spirv, libdisplay-info) ----

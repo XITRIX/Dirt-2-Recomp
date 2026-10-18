@@ -1,0 +1,865 @@
+diff --git a/meson.build b/meson.build
+index 4964301..56359ee 100644
+--- a/meson.build
++++ b/meson.build
+@@ -206,8 +206,11 @@ glsl_generator = generator(
+   arguments : glsl_args,
+ )
+ 
++# DiRT 2: a fixed version instead of git describe, which gives a different
++# string per checkout. DXVK_VERSION validates the shader cache and the recorded
++# pipelines we ship: bump it whenever a patch changes shader conversion.
+ dxvk_version = vcs_tag(
+-  command: ['git', 'describe', '--dirty=+'],
++  command: ['echo', '3.1.1-dirt2.1'],
+   input:  'version.h.in',
+   output: 'version.h',
+ )
+diff --git a/src/dxvk/dxvk_device.cpp b/src/dxvk/dxvk_device.cpp
+index 6b1f833..c8cd4ed 100644
+--- a/src/dxvk/dxvk_device.cpp
++++ b/src/dxvk/dxvk_device.cpp
+@@ -42,6 +42,8 @@ namespace dxvk {
+       m_shaderCache = DxvkShaderCache::getInstance();
+ 
+     logBindingModel();
++
++    m_objects.pipelineManager().initPipelineFiles();
+   }
+   
+   
+@@ -526,6 +528,13 @@ namespace dxvk {
+     const std::string&                    name,
+     const DxvkIrShaderCreateInfo&         createInfo,
+     const Rc<DxvkIrShaderConverter>&      converter) {
++    // The pipeline warm-up may have loaded this shader already
++    auto& pipelineManager = m_objects.pipelineManager();
++    Rc<DxvkShader> known = pipelineManager.findCachedShader(name, createInfo);
++
++    if (known != nullptr)
++      return known;
++
+     Rc<DxvkIrShader> shader = nullptr;
+ 
+     if (m_shaderCache && !converter)
+@@ -538,7 +547,10 @@ namespace dxvk {
+         m_shaderCache->addShader(shader);
+     }
+ 
+-    return shader;
++    if (shader == nullptr)
++      return nullptr;
++
++    return pipelineManager.addCachedShader(name, shader);
+   }
+ 
+ 
+diff --git a/src/dxvk/dxvk_graphics.cpp b/src/dxvk/dxvk_graphics.cpp
+index 2c5334d..d69796d 100644
+--- a/src/dxvk/dxvk_graphics.cpp
++++ b/src/dxvk/dxvk_graphics.cpp
+@@ -1100,12 +1100,19 @@ namespace dxvk {
+         // Keep pipeline object locked, at worst we're going to stall
+         // a state cache worker and the current thread needs priority.
+         bool canCreateBasePipeline = this->canCreateBasePipeline(state);
++        auto t0 = std::chrono::steady_clock::now();
+         instance = this->createInstance(state, canCreateBasePipeline);
+ 
++        if (unlikely(m_manager->isTimingDrawCompiles()))
++          m_manager->logDrawCompile(std::chrono::steady_clock::now() - t0);
++
+         // Unlock here since we may dispatch the pipeline to a worker,
+         // which will then acquire it to increment the use counter.
+         lock.unlock();
+ 
++        if (unlikely(m_manager->isRecordingPipelines()))
++          m_manager->recordGraphicsPipeline(m_shaders, state);
++
+         // If necessary, compile an optimized pipeline variant
+         if (!instance->fastHandle.load())
+           m_workers->compileGraphicsPipeline(this, state, DxvkPipelinePriority::Low);
+@@ -1157,6 +1164,28 @@ namespace dxvk {
+   }
+ 
+ 
++  bool DxvkGraphicsPipeline::warmUpPipeline(
++    const DxvkGraphicsPipelineStateInfo& state) {
++    if (this->findInstance(state))
++      return false;
++
++    if (!this->validatePipelineState(state, false))
++      return false;
++
++    // Compiles once: a draw that needs this state in the meantime
++    // waits for this compile instead of starting its own.
++    this->getOptimizedPipeline(state);
++
++    std::unique_lock<dxvk::mutex> lock(m_mutex);
++
++    if (this->findInstance(state))
++      return false;
++
++    this->createInstance(state, false);
++    return true;
++  }
++
++
+   void DxvkGraphicsPipeline::acquirePipeline() {
+     if (!m_device->mustTrackPipelineLifetime())
+       return;
+diff --git a/src/dxvk/dxvk_graphics.h b/src/dxvk/dxvk_graphics.h
+index 98eea48..70c73ff 100644
+--- a/src/dxvk/dxvk_graphics.h
++++ b/src/dxvk/dxvk_graphics.h
+@@ -579,6 +579,17 @@ namespace dxvk {
+     void compilePipeline(
+       const DxvkGraphicsPipelineStateInfo&    state);
+ 
++    /**
++     * \brief Compiles a recorded pipeline ahead of its first use
++     *
++     * Compiles without holding the pipeline lock, so that the
++     * application is not held up on other states of this pipeline.
++     * \param [in] state Pipeline state vector
++     * \returns \c true if this call created the pipeline instance
++     */
++    bool warmUpPipeline(
++      const DxvkGraphicsPipelineStateInfo&    state);
++
+     /**
+      * \brief Acquires the pipeline
+      *
+diff --git a/src/dxvk/dxvk_pipemanager.cpp b/src/dxvk/dxvk_pipemanager.cpp
+index c1507b4..b759c32 100644
+--- a/src/dxvk/dxvk_pipemanager.cpp
++++ b/src/dxvk/dxvk_pipemanager.cpp
+@@ -1,7 +1,11 @@
++#include <cstring>
+ #include <optional>
+ 
++#include <version.h>
++
+ #include "dxvk_device.h"
+ #include "dxvk_pipemanager.h"
++#include "dxvk_shader_ir.h"
+ 
+ namespace dxvk {
+   
+@@ -45,6 +49,47 @@ namespace dxvk {
+   }
+ 
+ 
++  void DxvkPipelineWorkers::compileWarmUpPipeline(
++          DxvkGraphicsPipeline*           pipeline,
++    const DxvkGraphicsPipelineStateInfo&  state) {
++    std::unique_lock lock(m_lock);
++    this->startWorkers();
++
++    pipeline->acquirePipeline();
++    m_tasksTotal += 1;
++    m_warmUpPending += 1;
++
++    // Normal priority: the high-priority workers stay free for
++    // whatever the application needs right now.
++    m_buckets[uint32_t(DxvkPipelinePriority::Normal)].queue.emplace(pipeline, state, true);
++    notifyWorkers(DxvkPipelinePriority::Normal);
++  }
++
++
++  void DxvkPipelineWorkers::beginWarmUp() {
++    m_warmUpStart = std::chrono::steady_clock::now();
++    m_warmUpCompiled = 0u;
++    m_warmUpPending = 1u;
++  }
++
++
++  void DxvkPipelineWorkers::endWarmUp() {
++    finishWarmUpTask();
++  }
++
++
++  void DxvkPipelineWorkers::finishWarmUpTask() {
++    if (m_warmUpPending.fetch_sub(1u) != 1u)
++      return;
++
++    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
++      std::chrono::steady_clock::now() - m_warmUpStart).count();
++
++    Logger::info(str::format("DXVK: Pipeline warm-up: compiled ",
++      m_warmUpCompiled.load(), " pipelines in ", ms, " ms"));
++  }
++
++
+   void DxvkPipelineWorkers::stopWorkers() {
+     { std::unique_lock lock(m_lock);
+ 
+@@ -163,6 +208,12 @@ namespace dxvk {
+ 
+       if (entry.pipelineLibrary) {
+         entry.pipelineLibrary->compilePipeline();
++      } else if (entry.graphicsPipeline && entry.warmUp) {
++        if (entry.graphicsPipeline->warmUpPipeline(entry.graphicsState))
++          m_warmUpCompiled += 1;
++
++        entry.graphicsPipeline->releasePipeline();
++        finishWarmUpTask();
+       } else if (entry.graphicsPipeline) {
+         entry.graphicsPipeline->compilePipeline(entry.graphicsState);
+         entry.graphicsPipeline->releasePipeline();
+@@ -188,6 +239,11 @@ namespace dxvk {
+   
+   
+   DxvkPipelineManager::~DxvkPipelineManager() {
++    stopWorkerThreads();
++
++    if (m_recordFile)
++      std::fclose(m_recordFile);
++
+     auto vk = m_device->vkd();
+ 
+     if (!m_device->canUseDescriptorHeap())
+@@ -339,6 +395,11 @@ namespace dxvk {
+ 
+ 
+   void DxvkPipelineManager::stopWorkerThreads() {
++    m_warmUpStop.store(true);
++
++    if (m_warmUpThread.joinable())
++      m_warmUpThread.join();
++
+     m_workers.stopWorkers();
+   }
+ 
+@@ -445,4 +506,390 @@ namespace dxvk {
+     return layout;
+   }
+ 
++
++  /*
++   * Pipeline record and warm-up files
++   *
++   * Without graphics pipeline libraries, every new combination of shaders
++   * and state compiles synchronously at its first draw. A record file lists
++   * the pipelines an application used; warming up compiles them on the worker
++   * threads before they are needed. The shaders come from the shader cache,
++   * so a file is only useful together with the cache it was recorded with.
++   *
++   * File: header, then entries of { u32 size, u64 fnv1a(payload), payload }.
++   * Payload: u8 stage mask (vs, tcs, tes, gs, fs), per stage { u16 name
++   * length, name, DxvkShaderOptions, u32 flat shading inputs, i32 rasterized
++   * stream }, then the raw DxvkGraphicsPipelineStateInfo, which is compared
++   * and hashed bytewise anyway. A torn last entry is dropped.
++   */
++  namespace {
++
++    struct PipelineFileHeader {
++      char      magic[4];
++      uint32_t  format;
++      uint32_t  optionsSize;
++      uint32_t  stateSize;
++      char      version[64];
++    };
++
++    constexpr uint32_t PipelineFileFormat = 1u;
++
++    PipelineFileHeader makePipelineFileHeader() {
++      PipelineFileHeader header = { };
++      std::memcpy(header.magic, "D2PL", 4u);
++      header.format = PipelineFileFormat;
++      header.optionsSize = sizeof(DxvkShaderOptions);
++      header.stateSize = sizeof(DxvkGraphicsPipelineStateInfo);
++      std::strncpy(header.version, DXVK_VERSION, sizeof(header.version) - 1u);
++      return header;
++    }
++
++    bool readWholeFile(const std::string& path, std::vector<uint8_t>& data) {
++      std::FILE* file = std::fopen(path.c_str(), "rb");
++
++      if (!file)
++        return false;
++
++      uint8_t buffer[65536];
++      size_t count;
++
++      while ((count = std::fread(buffer, 1u, sizeof(buffer), file)))
++        data.insert(data.end(), buffer, buffer + count);
++
++      std::fclose(file);
++      return true;
++    }
++
++    /* Parses a pipeline file. Returns the number of bytes that hold a valid
++     * header and complete entries, or 0 if the header does not match. */
++    size_t parsePipelineFile(
++      const std::vector<uint8_t>&               data,
++            std::vector<std::vector<uint8_t>>&  payloads,
++            std::vector<uint64_t>&              checksums) {
++      PipelineFileHeader expected = makePipelineFileHeader();
++
++      if (data.size() < sizeof(expected) || std::memcmp(data.data(), &expected, sizeof(expected)))
++        return 0u;
++
++      size_t offset = sizeof(expected);
++
++      while (offset + 12u <= data.size()) {
++        uint32_t size;
++        uint64_t checksum;
++        std::memcpy(&size, &data[offset], 4u);
++        std::memcpy(&checksum, &data[offset + 4u], 8u);
++
++        if (offset + 12u + size > data.size()
++         || bit::fnv1a_hash(&data[offset + 12u], size) != checksum)
++          break;
++
++        payloads.emplace_back(data.begin() + offset + 12u, data.begin() + offset + 12u + size);
++        checksums.push_back(checksum);
++        offset += 12u + size;
++      }
++
++      return offset;
++    }
++
++    template<typename T>
++    void putBytes(std::vector<uint8_t>& out, const T& value) {
++      auto bytes = reinterpret_cast<const uint8_t*>(&value);
++      out.insert(out.end(), bytes, bytes + sizeof(value));
++    }
++
++    template<typename T>
++    bool getBytes(const std::vector<uint8_t>& in, size_t& offset, T& value) {
++      if (offset + sizeof(value) > in.size())
++        return false;
++
++      std::memcpy(reinterpret_cast<void*>(&value), &in[offset], sizeof(value));
++      offset += sizeof(value);
++      return true;
++    }
++
++  }
++
++
++  Rc<DxvkShader> DxvkPipelineManager::findCachedShader(
++    const std::string&                    name,
++    const DxvkIrShaderCreateInfo&         createInfo) {
++    std::lock_guard lock(m_cachedShaderMutex);
++
++    auto entry = m_cachedShaders.find(name);
++
++    if (entry == m_cachedShaders.end())
++      return nullptr;
++
++    for (const auto& shader : entry->second) {
++      if (static_cast<DxvkIrShader*>(shader.ptr())->getShaderCreateInfo().eq(createInfo))
++        return shader;
++    }
++
++    return nullptr;
++  }
++
++
++  Rc<DxvkShader> DxvkPipelineManager::addCachedShader(
++    const std::string&                    name,
++    const Rc<DxvkShader>&                 shader) {
++    auto createInfo = static_cast<DxvkIrShader*>(shader.ptr())->getShaderCreateInfo();
++
++    std::lock_guard lock(m_cachedShaderMutex);
++    auto& list = m_cachedShaders[name];
++
++    for (const auto& existing : list) {
++      if (static_cast<DxvkIrShader*>(existing.ptr())->getShaderCreateInfo().eq(createInfo))
++        return existing;
++    }
++
++    list.push_back(shader);
++    m_cachedShaderNames.insert({ shader.ptr(), name });
++    return shader;
++  }
++
++
++  bool DxvkPipelineManager::serializePipeline(
++    const DxvkGraphicsPipelineShaders&    shaders,
++    const DxvkGraphicsPipelineStateInfo&  state,
++          std::vector<uint8_t>&           payload) {
++    std::array<const Rc<DxvkShader>*, 5u> stages = {
++      &shaders.vs, &shaders.tcs, &shaders.tes, &shaders.gs, &shaders.fs };
++
++    uint8_t mask = 0u;
++
++    for (uint32_t i = 0u; i < stages.size(); i++) {
++      if (*stages[i] != nullptr)
++        mask |= 1u << i;
++    }
++
++    payload.clear();
++    putBytes(payload, mask);
++
++    std::lock_guard lock(m_cachedShaderMutex);
++
++    for (auto stage : stages) {
++      if (*stage == nullptr)
++        continue;
++
++      // Only shaders that come from the shader cache can be found again
++      auto name = m_cachedShaderNames.find(stage->ptr());
++
++      if (name == m_cachedShaderNames.end())
++        return false;
++
++      auto createInfo = static_cast<DxvkIrShader*>(stage->ptr())->getShaderCreateInfo();
++
++      if (!createInfo.xfbEntries.empty())
++        return false;
++
++      putBytes(payload, uint16_t(name->second.size()));
++      payload.insert(payload.end(), name->second.begin(), name->second.end());
++      putBytes(payload, createInfo.options);
++      putBytes(payload, createInfo.flatShadingInputs);
++      putBytes(payload, createInfo.rasterizedStream);
++    }
++
++    putBytes(payload, state);
++    return true;
++  }
++
++
++  bool DxvkPipelineManager::deserializePipeline(
++    const std::vector<uint8_t>&           payload,
++          DxvkGraphicsPipelineShaders&    shaders,
++          DxvkGraphicsPipelineStateInfo&  state) {
++    std::array<Rc<DxvkShader>*, 5u> stages = {
++      &shaders.vs, &shaders.tcs, &shaders.tes, &shaders.gs, &shaders.fs };
++
++    size_t offset = 0u;
++    uint8_t mask = 0u;
++
++    if (!getBytes(payload, offset, mask))
++      return false;
++
++    for (uint32_t i = 0u; i < stages.size(); i++) {
++      if (!(mask & (1u << i)))
++        continue;
++
++      uint16_t nameLength = 0u;
++
++      if (!getBytes(payload, offset, nameLength) || offset + nameLength > payload.size())
++        return false;
++
++      std::string name(reinterpret_cast<const char*>(&payload[offset]), nameLength);
++      offset += nameLength;
++
++      DxvkIrShaderCreateInfo createInfo = { };
++
++      if (!getBytes(payload, offset, createInfo.options)
++       || !getBytes(payload, offset, createInfo.flatShadingInputs)
++       || !getBytes(payload, offset, createInfo.rasterizedStream))
++        return false;
++
++      // Goes through the shader cache and registers the shader, so that
++      // the application gets the very same object when it asks for it.
++      *stages[i] = m_device->createCachedShader(name, createInfo, nullptr);
++
++      if (*stages[i] == nullptr)
++        return false;
++    }
++
++    return getBytes(payload, offset, state)
++        && offset == payload.size()
++        && shaders.validate();
++  }
++
++
++  void DxvkPipelineManager::initPipelineFiles() {
++    std::string recordPath = env::getEnvVar("DXVK_PIPELINE_RECORD");
++    std::string warmUpPaths = env::getEnvVar("DXVK_PIPELINE_WARMUP");
++    m_timeDrawCompiles = env::getEnvVar("DXVK_PIPELINE_TIMING") == "1";
++
++    std::vector<uint64_t> checksums;
++    size_t pathStart = 0u;
++
++    while (pathStart < warmUpPaths.size()) {
++      size_t pathEnd = warmUpPaths.find(':', pathStart);
++
++      if (pathEnd == std::string::npos)
++        pathEnd = warmUpPaths.size();
++
++      std::string path = warmUpPaths.substr(pathStart, pathEnd - pathStart);
++      pathStart = pathEnd + 1u;
++
++      std::vector<uint8_t> data;
++
++      if (path.empty() || !readWholeFile(path, data))
++        continue;
++
++      size_t count = m_warmUpEntries.size();
++
++      if (!parsePipelineFile(data, m_warmUpEntries, checksums)) {
++        Logger::warn(str::format("DXVK: Pipeline file ", path, " is from another DXVK build, ignored"));
++        continue;
++      }
++
++      Logger::info(str::format("DXVK: Pipeline file ", path, ": ", m_warmUpEntries.size() - count, " pipelines"));
++    }
++
++    // The same pipeline may be listed in several files
++    std::vector<std::vector<uint8_t>> entries;
++
++    for (size_t i = 0u; i < m_warmUpEntries.size(); i++) {
++      if (m_knownPipelines.insert(checksums[i]).second)
++        entries.push_back(std::move(m_warmUpEntries[i]));
++    }
++
++    m_warmUpEntries = std::move(entries);
++
++    if (!recordPath.empty()) {
++      // Keep what is already recorded, minus a torn last entry
++      std::vector<uint8_t> data;
++      std::vector<std::vector<uint8_t>> payloads;
++      std::vector<uint64_t> recorded;
++
++      size_t validSize = readWholeFile(recordPath, data)
++        ? parsePipelineFile(data, payloads, recorded) : 0u;
++
++      for (uint64_t checksum : recorded)
++        m_knownPipelines.insert(checksum);
++
++      if (validSize && validSize == data.size()) {
++        m_recordFile = std::fopen(recordPath.c_str(), "ab");
++      } else if ((m_recordFile = std::fopen(recordPath.c_str(), "wb"))) {
++        if (validSize) {
++          std::fwrite(data.data(), 1u, validSize, m_recordFile);
++        } else {
++          PipelineFileHeader header = makePipelineFileHeader();
++          std::fwrite(&header, 1u, sizeof(header), m_recordFile);
++        }
++
++        std::fflush(m_recordFile);
++      }
++
++      if (m_recordFile)
++        Logger::info(str::format("DXVK: Recording pipelines to ", recordPath, " (", recorded.size(), " so far)"));
++      else
++        Logger::warn(str::format("DXVK: Failed to open ", recordPath, " for recording pipelines"));
++    }
++
++    if (!m_warmUpEntries.empty())
++      m_warmUpThread = dxvk::thread([this] { runWarmUp(); });
++  }
++
++
++  void DxvkPipelineManager::recordGraphicsPipeline(
++    const DxvkGraphicsPipelineShaders&    shaders,
++    const DxvkGraphicsPipelineStateInfo&  state) {
++    std::vector<uint8_t> payload;
++
++    if (!serializePipeline(shaders, state, payload)) {
++      std::lock_guard lock(m_recordMutex);
++
++      if (!(m_recordSkipped++))
++        Logger::info("DXVK: Not recording pipelines with shaders that are not in the shader cache");
++      return;
++    }
++
++    uint64_t checksum = bit::fnv1a_hash(payload.data(), payload.size());
++
++    std::lock_guard lock(m_recordMutex);
++
++    if (!m_recordFile || !m_knownPipelines.insert(checksum).second)
++      return;
++
++    uint32_t size = uint32_t(payload.size());
++    std::fwrite(&size, 1u, sizeof(size), m_recordFile);
++    std::fwrite(&checksum, 1u, sizeof(checksum), m_recordFile);
++    std::fwrite(payload.data(), 1u, payload.size(), m_recordFile);
++    std::fflush(m_recordFile);
++  }
++
++
++  void DxvkPipelineManager::logDrawCompile(std::chrono::steady_clock::duration time) {
++    uint64_t us = std::chrono::duration_cast<std::chrono::microseconds>(time).count();
++    uint32_t count = ++m_drawCompiles;
++    uint64_t total = (m_drawCompileUs += us);
++
++    Logger::info(str::format("DXVK: Pipeline compiled at draw: ", us / 1000.0, " ms (",
++      count, " so far, ", total / 1000u, " ms total)"));
++  }
++
++
++  void DxvkPipelineManager::runWarmUp() {
++    env::setThreadName("dxvk-warmup");
++
++    auto start = std::chrono::steady_clock::now();
++    uint32_t queued = 0u;
++    uint32_t skipped = 0u;
++
++    m_workers.beginWarmUp();
++
++    for (const auto& payload : m_warmUpEntries) {
++      if (m_warmUpStop.load())
++        break;
++
++      DxvkGraphicsPipelineShaders shaders;
++      DxvkGraphicsPipelineStateInfo state;
++
++      if (!deserializePipeline(payload, shaders, state)) {
++        skipped += 1u;
++        continue;
++      }
++
++      m_workers.compileWarmUpPipeline(createGraphicsPipeline(shaders), state);
++      queued += 1u;
++    }
++
++    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
++      std::chrono::steady_clock::now() - start).count();
++
++    Logger::info(str::format("DXVK: Pipeline warm-up: queued ", queued, " pipelines in ", ms, " ms",
++      skipped ? str::format(", skipped ", skipped, " (shaders not in the shader cache)") : std::string()));
++
++    m_warmUpEntries.clear();
++    m_warmUpEntries.shrink_to_fit();
++    m_workers.endWarmUp();
++  }
++
+ }
+diff --git a/src/dxvk/dxvk_pipemanager.h b/src/dxvk/dxvk_pipemanager.h
+index ff98243..7223999 100644
+--- a/src/dxvk/dxvk_pipemanager.h
++++ b/src/dxvk/dxvk_pipemanager.h
+@@ -1,9 +1,11 @@
+ 
+ #pragma once
+ 
++#include <cstdio>
+ #include <mutex>
+ #include <queue>
+ #include <unordered_map>
++#include <unordered_set>
+ 
+ #include "dxvk_compute.h"
+ #include "dxvk_graphics.h"
+@@ -11,6 +13,7 @@
+ namespace dxvk {
+ 
+   class DxvkDevice;
++  struct DxvkIrShaderCreateInfo;
+ 
+   /**
+    * \brief Pipeline count
+@@ -99,6 +102,26 @@ namespace dxvk {
+       const DxvkGraphicsPipelineStateInfo&  state,
+             DxvkPipelinePriority            priority);
+ 
++    /**
++     * \brief Compiles a recorded pipeline ahead of its first use
++     *
++     * \param [in] pipeline Graphics pipeline
++     * \param [in] state Recorded pipeline state
++     */
++    void compileWarmUpPipeline(
++            DxvkGraphicsPipeline*           pipeline,
++      const DxvkGraphicsPipelineStateInfo&  state);
++
++    /**
++     * \brief Brackets queueing a warm-up
++     *
++     * The time from \ref beginWarmUp until the last queued
++     * pipeline is compiled is logged once both are done.
++     */
++    void beginWarmUp();
++
++    void endWarmUp();
++
+     /**
+      * \brief Stops all worker threads
+      *
+@@ -116,12 +139,13 @@ namespace dxvk {
+       PipelineEntry(DxvkShaderPipelineLibrary* l)
+       : pipelineLibrary(l), graphicsPipeline(nullptr) { }
+ 
+-      PipelineEntry(DxvkGraphicsPipeline* p, const DxvkGraphicsPipelineStateInfo& s)
+-      : pipelineLibrary(nullptr), graphicsPipeline(p), graphicsState(s) { }
++      PipelineEntry(DxvkGraphicsPipeline* p, const DxvkGraphicsPipelineStateInfo& s, bool w = false)
++      : pipelineLibrary(nullptr), graphicsPipeline(p), graphicsState(s), warmUp(w) { }
+ 
+       DxvkShaderPipelineLibrary*    pipelineLibrary;
+       DxvkGraphicsPipeline*         graphicsPipeline;
+       DxvkGraphicsPipelineStateInfo graphicsState;
++      bool                          warmUp = false;
+     };
+ 
+     struct PipelineBucket {
+@@ -141,8 +165,14 @@ namespace dxvk {
+     bool                              m_workersRunning = false;
+     std::vector<dxvk::thread>         m_workers;
+ 
++    std::atomic<uint32_t>             m_warmUpPending  = { 0u };
++    std::atomic<uint32_t>             m_warmUpCompiled = { 0u };
++    std::chrono::steady_clock::time_point m_warmUpStart;
++
+     void notifyWorkers(DxvkPipelinePriority priority);
+ 
++    void finishWarmUpTask();
++
+     void startWorkers();
+ 
+     void runWorker(DxvkPipelinePriority maxPriority);
+@@ -288,7 +318,64 @@ namespace dxvk {
+      * \brief Stops async compiler threads
+      */
+     void stopWorkerThreads();
+-    
++
++    /**
++     * \brief Looks up a shader created from the shader cache
++     *
++     * Pipelines match shaders by object, so every cached shader
++     * with a given name and create info is created only once:
++     * the pipeline warm-up and the application share it.
++     * \returns The shader, or \c nullptr if not created yet
++     */
++    Rc<DxvkShader> findCachedShader(
++      const std::string&                    name,
++      const DxvkIrShaderCreateInfo&         createInfo);
++
++    /**
++     * \brief Registers a shader created from the shader cache
++     *
++     * \returns The registered shader, which is an earlier one
++     *    if another thread registered the same shader first
++     */
++    Rc<DxvkShader> addCachedShader(
++      const std::string&                    name,
++      const Rc<DxvkShader>&                 shader);
++
++    /**
++     * \brief Sets up pipeline recording and warm-up
++     *
++     * \c DXVK_PIPELINE_RECORD names a file that every new graphics
++     * pipeline is appended to. \c DXVK_PIPELINE_WARMUP lists files
++     * (separated by \c :) whose pipelines are compiled on the worker
++     * threads ahead of their first use. Called once the device is set up.
++     */
++    void initPipelineFiles();
++
++    /**
++     * \brief Whether new pipelines are recorded
++     */
++    bool isRecordingPipelines() const {
++      return m_recordFile != nullptr;
++    }
++
++    /**
++     * \brief Whether to log pipelines compiled at a draw
++     *
++     * \c DXVK_PIPELINE_TIMING=1 logs each one with its time.
++     */
++    bool isTimingDrawCompiles() const {
++      return m_timeDrawCompiles;
++    }
++
++    void logDrawCompile(std::chrono::steady_clock::duration time);
++
++    /**
++     * \brief Appends a newly used pipeline to the record file
++     */
++    void recordGraphicsPipeline(
++      const DxvkGraphicsPipelineShaders&    shaders,
++      const DxvkGraphicsPipelineStateInfo&  state);
++
+   private:
+     
+     DxvkDevice*               m_device;
+@@ -336,6 +423,38 @@ namespace dxvk {
+       DxvkGraphicsPipeline,
+       DxvkHash, DxvkEq> m_graphicsPipelines;
+ 
++    dxvk::mutex               m_cachedShaderMutex;
++
++    std::unordered_map<std::string,
++      std::vector<Rc<DxvkShader>>>  m_cachedShaders;
++    std::unordered_map<const DxvkShader*,
++      std::string>                  m_cachedShaderNames;
++
++    dxvk::mutex                     m_recordMutex;
++    std::FILE*                      m_recordFile = nullptr;
++    std::unordered_set<uint64_t>    m_knownPipelines;
++    uint32_t                        m_recordSkipped = 0u;
++
++    bool                            m_timeDrawCompiles = false;
++    std::atomic<uint32_t>           m_drawCompiles = { 0u };
++    std::atomic<uint64_t>           m_drawCompileUs = { 0u };
++
++    std::vector<std::vector<uint8_t>> m_warmUpEntries;
++    std::atomic<bool>               m_warmUpStop = { false };
++    dxvk::thread                    m_warmUpThread;
++
++    void runWarmUp();
++
++    bool serializePipeline(
++      const DxvkGraphicsPipelineShaders&    shaders,
++      const DxvkGraphicsPipelineStateInfo&  state,
++            std::vector<uint8_t>&           payload);
++
++    bool deserializePipeline(
++      const std::vector<uint8_t>&           payload,
++            DxvkGraphicsPipelineShaders&    shaders,
++            DxvkGraphicsPipelineStateInfo&  state);
++
+     DxvkShaderPipelineLibrary* createPipelineLibraryLocked(
+       const DxvkShaderPipelineLibraryKey& key);
+ 
+diff --git a/src/dxvk/dxvk_shader_cache.cpp b/src/dxvk/dxvk_shader_cache.cpp
+index 0bec839..33b62a5 100644
+--- a/src/dxvk/dxvk_shader_cache.cpp
++++ b/src/dxvk/dxvk_shader_cache.cpp
+@@ -488,6 +488,10 @@ namespace dxvk {
+       auto entry = std::move(m_writeQueue.front());
+       m_writeQueue.pop();
+ 
++      // Also write out whenever the queue runs empty: the process may
++      // exit without destroying the device, losing a partial batch.
++      bool idle = m_writeQueue.empty();
++
+       lock.unlock();
+ 
+       stop = !entry;
+@@ -495,7 +499,7 @@ namespace dxvk {
+ 
+       if (entry) {
+         localQueue.push_back(std::move(entry));
+-        drain = localQueue.size() == localQueue.capacity();
++        drain = idle || localQueue.size() == localQueue.capacity();
+       }
+ 
+       if (drain) {
+@@ -659,6 +663,12 @@ namespace dxvk {
+ 
+     std::string baseName = str::format(std::hex, std::setw(16u), std::setfill('0'), hash);
+ 
++    // A fixed name lets a cache built on one machine ship with the app.
++    std::string fixedName = env::getEnvVar("DXVK_SHADER_CACHE_NAME");
++
++    if (!fixedName.empty())
++      baseName = fixedName;
++
+     FilePaths paths;
+     paths.directory = cachePath;
+     paths.lutFile = baseName + ".dxvk.lut";
+diff --git a/src/util/thread.h b/src/util/thread.h
+index ae6f01d..a875c82 100644
+--- a/src/util/thread.h
++++ b/src/util/thread.h
+@@ -361,6 +361,13 @@ namespace dxvk {
+     using std::thread::thread;
+ 
+     void set_priority(ThreadPriority priority) {
++#ifdef __APPLE__
++      // Darwin's SCHED_OTHER priorities are 15..47 (default 31), so the
++      // priority 0 below starves the thread: a draw waiting for a pipeline
++      // on a compiler worker could stall for seconds. Keep the default.
++      (void)priority;
++      return;
++#endif
+       ::sched_param param = {};
+       int32_t policy;
+       switch (priority) {

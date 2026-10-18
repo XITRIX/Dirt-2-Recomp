@@ -142,6 +142,16 @@ if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
   add_custom_command(TARGET dirt2 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       ${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL_GameControllerDB/gamecontrollerdb.txt $<TARGET_FILE_DIR:dirt2>)
+  # Shipped pipeline warm-up data (game-derived, never committed): DXVK's shader
+  # cache and the merged pipeline list from tools/scripts/merge_pipelines.py.
+  set(DIRT2_PIPELINE_DATA_DIR "${CMAKE_SOURCE_DIR}/build/pipelines" CACHE PATH
+    "Folder with dirt2.dxvk.bin, dirt2.dxvk.lut and dirt2.pipelines to ship")
+  foreach(f dirt2.dxvk.bin dirt2.dxvk.lut dirt2.pipelines)
+    if(EXISTS "${DIRT2_PIPELINE_DATA_DIR}/${f}")
+      add_custom_command(TARGET dirt2 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DIRT2_PIPELINE_DATA_DIR}/${f}" $<TARGET_FILE_DIR:dirt2>)
+    endif()
+  endforeach()
 else()
   message(STATUS "generated/sources.txt not found: run 'recomp lift' to enable the dirt2 target")
 endif()
