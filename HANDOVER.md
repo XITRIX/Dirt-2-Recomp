@@ -51,6 +51,7 @@ Per-platform outputs never overlap, so platforms can build at the same time. Pla
 git clone --recurse-submodules <repo> && cd Dirt2   # DXVK has nested submodules
 tools/scripts/build_deps.sh macos iphoneos iphonesimulator      # libraries
 tools/scripts/build_graphics.sh macos iphoneos iphonesimulator  # MoltenVK + DXVK
+tools/scripts/build_llvm.sh macos && tools/scripts/build_dxmt.sh macos  # DX11 path (in progress, see below)
 
 cmake --preset macos-arm64 && cmake --build build/macos-arm64
 ./build/macos-arm64/dirt2 --game "<folder with dirt2_game.exe>"
@@ -101,6 +102,19 @@ Producing the shipped data:
    The script drops duplicates and torn entries, refuses files from another DXVK build, and reports how many pipelines the cache covers. Recordings from other devices (an iPhone's `Library/Application Support` data) merge in too, but only pipelines whose shaders are in the shipped cache are warmed up; the device records the rest itself.
 3. Re-run CMake (the files are picked up at configure time), build, and package: CMake copies them next to the macOS executable and into the iOS bundle; `package_macos.sh` includes them.
 4. Whenever a DXVK patch changes shader conversion or the pipeline state layout, bump `DXVK_VERSION` in `0003-pipeline-warmup.patch` (`meson.build`) and re-record: older caches and pipeline files are then ignored, and logged as such.
+
+## DX11 renderer on Metal (DXMT), in progress
+
+The plan is to run the game's own DX11 renderer through DXMT (utmapp/dxmt fork, LGPL-2.1, shipped as an embedded `libdxmt-native` framework), with DX9/DXVK kept as a fallback. Phases and gates are in the plan; status:
+
+- **Phase 0 (feasibility): passed.**
+  - `third_party/dxmt` is a pristine submodule, prepared into `build/src/dxmt`.
+  - `build_llvm.sh` builds LLVM 15.0.7 static from pinned tarballs, with no backends (96 MB of libraries).
+  - `build_dxmt.sh` builds `libdxmt-native.dylib` (29 MB with LLVM) and the `airconv` tool, using meson 1.6.1 from `build/tools/venv`.
+  - **Shader census** (`extract_dxbc.py` → `build/dxbc_census.md`): 2,768 SM 5.0 blobs, 1,109 unique. 14 hull and 42 domain shaders, all tri domains with `fractional_odd` partitioning. No isoline domains, no geometry shaders, no stream output.
+  - **Conversion** (`airconv_census.py` → `build/airconv_census.md`): all 1,109 unique blobs convert and load in Metal.
+  - The one DXMT gap that applies: fractional tessellation factors are rounded to integers, so tessellated detail steps instead of morphing.
+- **Next: Phase 1,** the d3d11/dxgi bridge and the DX11 frontend on macOS.
 
 ## Render scale and MetalFX
 

@@ -16,6 +16,7 @@ or patches change, and never while it holds edits that are not in a patch.
 | | | `MoltenVK/0002-defer-residency-removal.patch` | Keep freed allocations in the residency set until queues drain (GPU device lost) |
 | | | `MoltenVK/0003-swapchain-view-follows-drawable.patch` | Rebuild cached views of swapchain images when the drawable changes (black-frame flicker) |
 | | | `MoltenVK/0004-full-sample-mask-keeps-hsr.patch` | Do not export a full sample mask from shaders (keeps hidden surface removal on Apple GPUs) |
+| DXMT | utmapp/dxmt (`66e27f37`) | none yet | D3D11 -> Metal for the DX11 renderer (in progress); built by `build_dxmt.sh` against `build_llvm.sh`'s LLVM 15.0.7 |
 | SPIRV-Cross | MoltenVK's pin (`adec7acb`) | `SPIRV-Cross/0001-msl-mixed-compare-images.patch` | Images sampled both plainly and with depth compare stay `texture2d`; compares emulated (green video, wrong alpha) |
 
 Each copy in `build/src/<name>` is a small git repo: an `upstream` commit, then one

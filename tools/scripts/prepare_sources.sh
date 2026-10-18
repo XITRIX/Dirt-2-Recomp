@@ -4,6 +4,7 @@
 #   build/src/dxvk                       third_party/dxvk + patches/dxvk
 #   build/src/MoltenVK                   third_party/MoltenVK + patches/MoltenVK
 #   build/src/MoltenVK/External/<name>   MoltenVK's fetched dependencies + patches/<name>
+#   build/src/dxmt                       third_party/dxmt + patches/dxmt
 #
 # Each copy is its own small git repo: a commit "upstream <sha>" (tag upstream),
 # then one commit per patch named after it (the last one tagged patched). To
@@ -73,6 +74,20 @@ prepare_dxvk() {
     echo "$stamp" > "$dst/.dirt2-stamp"
 }
 
+# ---- DXMT (D3D11 -> Metal; with its nested submodules: directx headers, nvapi) ----
+prepare_dxmt() {
+    local dst=$SRC/dxmt sha
+    sha=$(git -C third_party/dxmt rev-parse HEAD)
+    local stamp="$sha $(patches_hash dxmt)"
+    [ -f "$dst/.dirt2-stamp" ] && [ "$(cat "$dst/.dirt2-stamp")" = "$stamp" ] && return
+    guard_clean "$dst"
+    echo "== preparing build/src/dxmt ($sha)"
+    rm -rf "$dst"
+    export_tree third_party/dxmt "$dst"
+    commit_and_patch "$dst" dxmt "$sha"
+    echo "$stamp" > "$dst/.dirt2-stamp"
+}
+
 # ---- MoltenVK and its fetched dependencies ----
 prepare_moltenvk() {
     local dst=$SRC/MoltenVK sha
@@ -114,3 +129,4 @@ prepare_moltenvk() {
 
 prepare_dxvk
 prepare_moltenvk
+prepare_dxmt

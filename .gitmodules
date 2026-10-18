@@ -4,3 +4,6 @@
 [submodule "third_party/MoltenVK"]
 	path = third_party/MoltenVK
 	url = https://github.com/KhronosGroup/MoltenVK.git
+[submodule "third_party/dxmt"]
+	path = third_party/dxmt
+	url = https://github.com/utmapp/dxmt.git
