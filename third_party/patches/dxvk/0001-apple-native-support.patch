@@ -1,8 +1,48 @@
 diff --git a/src/d3d9/d3d9_device.cpp b/src/d3d9/d3d9_device.cpp
-index 9b72bb2e..932daae1 100644
+index 9b72bb2e..8eb533e6 100644
 --- a/src/d3d9/d3d9_device.cpp
 +++ b/src/d3d9/d3d9_device.cpp
-@@ -5234,6 +5234,12 @@ namespace dxvk {
+@@ -1273,6 +1273,17 @@ namespace dxvk {
+       fastPath &= !fbBlit;
+     }
+ 
++    {
++      static uint32_t srLog = 0;
++      if (srLog < 200 && (srcImage->info().sampleCount != 1 || dstImage->info().sampleCount != 1)) {
++        srLog++;
++        Logger::warn(str::format("EXPSR: src ", srcExtent.width, "x", srcExtent.height, " fmt ", uint32_t(srcFormat),
++          " s", uint32_t(srcImage->info().sampleCount), " -> dst ", dstExtent.width, "x", dstExtent.height,
++          " fmt ", uint32_t(dstFormat), " s", uint32_t(dstImage->info().sampleCount), " mip ", dstSubresource.mipLevel,
++          " filt ", uint32_t(Filter), " rects ", pSourceRect != nullptr, pDestRect != nullptr));
++      }
++    }
++
+     // Copies would only work if we are block aligned.
+     if (pSourceRect != nullptr) {
+       fastPath       &=  (pSourceRect->left   % srcFormatInfo->blockSize.width  == 0);
+@@ -4308,6 +4319,10 @@ namespace dxvk {
+     desc.Discard            = FALSE;
+     desc.MultiSample        = MultiSample;
+     desc.MultisampleQuality = MultisampleQuality;
++    if (env::getEnvVar("DIRT2_EXP_NO_SMALL_MSAA") == "1" && Width <= 512) {
++      desc.MultiSample        = D3DMULTISAMPLE_NONE;
++      desc.MultisampleQuality = 0;
++    }
+     desc.IsBackBuffer       = FALSE;
+     desc.IsAttachmentOnly   = TRUE;
+     desc.IsLockable         = Lockable;
+@@ -4454,6 +4469,10 @@ namespace dxvk {
+     desc.Discard            = Discard;
+     desc.MultiSample        = MultiSample;
+     desc.MultisampleQuality = MultisampleQuality;
++    if (env::getEnvVar("DIRT2_EXP_NO_SMALL_MSAA") == "1" && Width <= 512) {
++      desc.MultiSample        = D3DMULTISAMPLE_NONE;
++      desc.MultisampleQuality = 0;
++    }
+     desc.IsBackBuffer       = FALSE;
+     desc.IsAttachmentOnly   = TRUE;
+     desc.IsLockable         = IsLockableDepthStencilFormat(desc.Format);
+@@ -5234,6 +5253,12 @@ namespace dxvk {
           shouldFlush &= box.Left < box.Right && box.Top < box.Bottom && box.Front < box.Back;
           shouldFlush &= !pResource->IsManaged();
  
@@ -15,11 +55,58 @@ index 9b72bb2e..932daae1 100644
      if (shouldFlush) {
          this->FlushImage(pResource, Subresource);
          if (!pResource->IsAnySubresourceLocked())
+@@ -6923,6 +6948,18 @@ namespace dxvk {
+       );
+       alphaToCoverageEnabled &= isMultisampled;
+ 
++      static const bool expNoAtoc = env::getEnvVar("DIRT2_EXP_NO_ATOC") == "1";
++      if (alphaToCoverageEnabled) {
++        static uint32_t atocLogCount = 0;
++        if (atocLogCount++ < 30)
++          Logger::warn(str::format("EXPATOC: enabled (disabled by env: ", expNoAtoc, ") blend ",
++            m_state.renderStates[D3DRS_ALPHABLENDENABLE], " src ", m_state.renderStates[D3DRS_SRCBLEND],
++            " dst ", m_state.renderStates[D3DRS_DESTBLEND], " atest ", m_state.renderStates[D3DRS_ALPHATESTENABLE],
++            " aref ", m_state.renderStates[D3DRS_ALPHAREF], " afunc ", m_state.renderStates[D3DRS_ALPHAFUNC]));
++      }
++      if (expNoAtoc)
++        alphaToCoverageEnabled = false;
++
+       if (m_atocEnabled != alphaToCoverageEnabled) {
+         m_dirty.set(D3D9DeviceDirtyFlag::MultiSampleState);
+         m_atocEnabled = alphaToCoverageEnabled;
+@@ -7118,8 +7155,25 @@ namespace dxvk {
+ 
+     auto& rs = m_state.renderStates;
+ 
+-    float depthBias            = bit::cast<float>(rs[D3DRS_DEPTHBIAS]) * m_depthBiasScale;
+-    float slopeScaledDepthBias = bit::cast<float>(rs[D3DRS_SLOPESCALEDEPTHBIAS]);
++    static const float s_biasMul = [] {
++      const char* e = std::getenv("DIRT2_EXP_BIAS_MUL");
++      return e ? float(std::atof(e)) : 1.0f;
++    }();
++    static const float s_slopeMul = [] {
++      const char* e = std::getenv("DIRT2_EXP_SLOPE_MUL");
++      return e ? float(std::atof(e)) : 1.0f;
++    }();
++    float depthBias            = bit::cast<float>(rs[D3DRS_DEPTHBIAS]) * m_depthBiasScale * s_biasMul;
++    float slopeScaledDepthBias = bit::cast<float>(rs[D3DRS_SLOPESCALEDEPTHBIAS]) * s_slopeMul;
++    {
++      static int s_logged = 0;
++      if (s_logged < 40 && (rs[D3DRS_DEPTHBIAS] || rs[D3DRS_SLOPESCALEDEPTHBIAS])) {
++        s_logged++;
++        Logger::info(str::format("EXPBIAS: const ", bit::cast<float>(rs[D3DRS_DEPTHBIAS]), " slope ", slopeScaledDepthBias,
++          " scale ", m_depthBiasScale, " ds ", m_state.depthStencil != nullptr
++            ? uint32_t(m_state.depthStencil->GetCommonTexture()->Desc()->Format) : 0u));
++      }
++    }
+ 
+     DxvkDepthBias biases;
+     biases.depthBiasConstant = depthBias;
 diff --git a/src/d3d9/meson.build b/src/d3d9/meson.build
-index 53d23a64..387ff4c6 100644
+index 53d23a64..549e9be0 100644
 --- a/src/d3d9/meson.build
 +++ b/src/d3d9/meson.build
-@@ -55,7 +55,7 @@ d3d9_src = [
+@@ -55,11 +55,20 @@ d3d9_src = [
  d3d9_ld_args      = []
  d3d9_link_depends = []
  
@@ -28,6 +115,27 @@ index 53d23a64..387ff4c6 100644
    d3d9_ld_args      += [ '-Wl,--version-script', join_paths(meson.current_source_dir(), 'd3d9.sym') ]
    d3d9_link_depends += files('d3d9.sym')
  endif
+ 
++if platform == 'darwin'
++  # Apple: a static library, linked into the app together with DXVK's internal
++  # static libraries (no loose dylibs; iOS apps cannot load arbitrary ones).
++  d3d9_dll = static_library(dxvk_name_prefix+'d3d9', d3d9_src, glsl_generator.process(d3d9_shaders), d3d9_res,
++    dependencies        : [ dxbc_spirv_dep, dxvk_dep ],
++    include_directories : dxvk_include_path,
++    install             : true,
++  )
++else
+ d3d9_dll = shared_library(dxvk_name_prefix+'d3d9', d3d9_src, glsl_generator.process(d3d9_shaders), d3d9_res,
+   dependencies        : [ dxbc_spirv_dep, dxvk_dep ],
+   include_directories : dxvk_include_path,
+@@ -69,6 +78,7 @@ d3d9_dll = shared_library(dxvk_name_prefix+'d3d9', d3d9_src, glsl_generator.proc
+   link_depends        : [ d3d9_link_depends ],
+   kwargs              : dxvk_so_version,
+ )
++endif
+ 
+ d3d9_dep = declare_dependency(
+   link_with           : [ d3d9_dll ],
 diff --git a/src/dxvk/dxvk_context.cpp b/src/dxvk/dxvk_context.cpp
 index 7c6a4c8a..50bfac7a 100644
 --- a/src/dxvk/dxvk_context.cpp
@@ -165,21 +273,38 @@ index 2d73c55d..8be260e0 100644
      uint64_t                m_frameCount = 0u;
      std::pair<uint64_t, uint64_t> m_framesToCapture = {};
  
+diff --git a/src/dxvk/dxvk_device.cpp b/src/dxvk/dxvk_device.cpp
+index 02218254..6b1f833f 100644
+--- a/src/dxvk/dxvk_device.cpp
++++ b/src/dxvk/dxvk_device.cpp
+@@ -123,6 +123,9 @@ namespace dxvk {
+ 
+ 
+   bool DxvkDevice::canUseSampleLocations(VkSampleCountFlags samples) const {
++    static const bool s_off = std::getenv("DIRT2_EXP_NO_SAMPLE_LOC") != nullptr;
++    if (s_off)
++      return false;
+     return (m_features.extSampleLocations)
+         && (m_features.extExtendedDynamicState3.extendedDynamicState3SampleLocationsEnable)
+         && (m_properties.extSampleLocations.variableSampleLocations)
 diff --git a/src/dxvk/dxvk_device_info.cpp b/src/dxvk/dxvk_device_info.cpp
-index 63d89d9d..daf3b52e 100644
+index 63d89d9d..97a7a7f1 100644
 --- a/src/dxvk/dxvk_device_info.cpp
 +++ b/src/dxvk/dxvk_device_info.cpp
-@@ -754,6 +754,19 @@ namespace dxvk {
+@@ -753,17 +753,36 @@ namespace dxvk {
+     if (m_queueMapping.graphics.family == VK_QUEUE_FAMILY_IGNORED)
        return std::string("Device does not have a graphics queue");
  
++    std::string missing;
      for (const auto& f : getFeatureList()) {
 +#ifdef __APPLE__
 +      // MoltenVK (Metal) cannot provide these. None is needed by the D3D9
-+      // front end; geometry shaders only back optional D3D9 paths.
-+      static const std::array<std::string_view, 9> appleOptional = {
++      // front end; geometry shaders only back optional D3D9 paths. D3D9 has
++      // no cube-map arrays (the iOS simulator's GPU lacks them).
++      static const std::array<std::string_view, 10> appleOptional = {
 +        "geometryShader", "shaderCullDistance", "multiViewport",
 +        "textureCompressionBC", "sampleRateShading", "shaderInt64",
-+        "depthClipEnable", "robustBufferAccess2", "nullDescriptor" };
++        "depthClipEnable", "robustBufferAccess2", "nullDescriptor", "imageCubeArray" };
 +      if (f.featureRequired && !(*f.featureEnabled)
 +       && std::find(appleOptional.begin(), appleOptional.end(), std::string_view(f.readableName)) != appleOptional.end()) {
 +        Logger::warn(str::format("Device does not support '", f.readableName, "' (tolerated on Apple)"));
@@ -188,6 +313,21 @@ index 63d89d9d..daf3b52e 100644
 +#endif
        if (f.featureRequired && !(*f.featureEnabled)) {
          std::string message = str::format("Device does not support required feature '", f.readableName, "'");
+ 
+         if (f.extensionEnabled)
+           message += str::format(" (extension: ", f.extensionEnabled->extensionName, ")");
+ 
+-        return message;
++        // Report every missing feature at once, not only the first.
++        missing += (missing.empty() ? "" : "; ") + message;
+       }
+     }
+ 
++    if (!missing.empty())
++      return missing;
++
+     if (!m_featuresEnabled.extDescriptorHeap.descriptorHeap && m_properties.core.properties.limits.maxPushConstantsSize < MaxTotalPushDataSize)
+       return str::format("Device does not support ", MaxTotalPushDataSize, " of push data");
  
 diff --git a/src/dxvk/dxvk_unbound.cpp b/src/dxvk/dxvk_unbound.cpp
 index 4c62d367..0d18e5d9 100644

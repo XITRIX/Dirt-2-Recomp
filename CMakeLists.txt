@@ -32,20 +32,56 @@ if(DIRT2_BUILD_TESTS AND DIRT2_BUILD_TOOLS)
   add_subdirectory(tests/lifter)
 endif()
 
-find_package(SDL3 REQUIRED CONFIG)
-# OpenAL Soft (Homebrew keg on macOS: CMAKE_PREFIX_PATH=/opt/homebrew/opt/openal-soft).
-list(APPEND CMAKE_PREFIX_PATH "/opt/homebrew/opt/openal-soft")
-find_package(OpenAL REQUIRED CONFIG)
+# Third-party libraries: built from pinned sources as static libraries, the
+# same way on every platform (tools/scripts/build_deps.sh, build_graphics.sh).
+# Each platform's inputs live in build/<component>/<platform>:
+# macos, iphoneos, iphonesimulator. Nothing is taken from the host system.
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  set(DIRT2_IOS ON)
+  if(CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
+    set(DIRT2_PLATFORM iphonesimulator)
+  else()
+    set(DIRT2_PLATFORM iphoneos)
+  endif()
+elseif(APPLE)
+  set(DIRT2_PLATFORM macos)
+else()
+  message(FATAL_ERROR "Only Apple platforms are wired up so far")
+endif()
+set(DIRT2_DEPS_DIR "${CMAKE_SOURCE_DIR}/build/deps/${DIRT2_PLATFORM}" CACHE PATH "build_deps.sh output prefix")
+set(SDL3_DIR "${DIRT2_DEPS_DIR}/lib/cmake/SDL3")
+set(OpenAL_DIR "${DIRT2_DEPS_DIR}/lib/cmake/OpenAL")
+set(ENV{PKG_CONFIG_LIBDIR} "${DIRT2_DEPS_DIR}/lib/pkgconfig")
+set(ENV{PKG_CONFIG_PATH} "")
 
-# Graphics: DXVK native d3d9 on MoltenVK, built by tools/scripts/build_graphics.sh.
+find_package(Threads REQUIRED)  # static OpenAL Soft links Threads::Threads
+find_package(SDL3 REQUIRED CONFIG)
+find_package(OpenAL REQUIRED CONFIG)
+if(NOT TARGET SDL3::SDL3-static)
+  message(FATAL_ERROR "SDL3 in ${DIRT2_DEPS_DIR} is not the static build: run tools/scripts/build_deps.sh ${DIRT2_PLATFORM}")
+endif()
+
+# Graphics: DXVK native d3d9 on MoltenVK, both static (build_graphics.sh).
+# DXVK finds vkGetInstanceProcAddr and SDL's functions in the process.
 set(DIRT2_DXVK_DIR "${CMAKE_SOURCE_DIR}/third_party/dxvk")
-set(DIRT2_DXVK_BUILD_DIR "${CMAKE_SOURCE_DIR}/build/dxvk-macos" CACHE PATH "DXVK meson build directory")
-set(DIRT2_MOLTENVK_LIB_DIR "${CMAKE_SOURCE_DIR}/third_party/MoltenVK/Package/Release/MoltenVK/dylib/macOS"
-    CACHE PATH "Folder containing libMoltenVK.dylib")
-add_library(dxvk_d3d9 SHARED IMPORTED)
+set(DIRT2_DXVK_BUILD_DIR "${CMAKE_SOURCE_DIR}/build/dxvk/${DIRT2_PLATFORM}" CACHE PATH "DXVK meson build directory")
+set(DIRT2_MOLTENVK_LIB_DIR "${CMAKE_SOURCE_DIR}/build/moltenvk/${DIRT2_PLATFORM}/lib" CACHE PATH "Folder with libMoltenVK.a")
+add_library(dxvk_d3d9 STATIC IMPORTED)
 set_target_properties(dxvk_d3d9 PROPERTIES
-  IMPORTED_LOCATION "${DIRT2_DXVK_BUILD_DIR}/src/d3d9/libdxvk_d3d9.dylib"
+  IMPORTED_LOCATION "${DIRT2_DXVK_BUILD_DIR}/libdxvk_d3d9.a"
   INTERFACE_INCLUDE_DIRECTORIES "${DIRT2_DXVK_DIR}/include/native/directx;${DIRT2_DXVK_DIR}/include/native/windows")
+add_library(moltenvk STATIC IMPORTED)
+set_target_properties(moltenvk PROPERTIES IMPORTED_LOCATION "${DIRT2_MOLTENVK_LIB_DIR}/libMoltenVK.a")
+set(_mvk_frameworks Metal QuartzCore IOSurface Foundation CoreGraphics)
+if(DIRT2_IOS)
+  list(APPEND _mvk_frameworks UIKit)
+else()
+  list(APPEND _mvk_frameworks AppKit IOKit)
+endif()
+foreach(fw ${_mvk_frameworks})
+  set_property(TARGET moltenvk APPEND PROPERTY INTERFACE_LINK_LIBRARIES "-framework ${fw}")
+endforeach()
+set_property(TARGET dxvk_d3d9 APPEND PROPERTY INTERFACE_LINK_LIBRARIES moltenvk)
 
 add_subdirectory(runtime)
 add_subdirectory(shims)
@@ -72,10 +108,28 @@ if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
     target_compile_definitions(dirt2_gen PRIVATE RECOMP_TSO=1)
   endif()
 
-  add_executable(dirt2 platform/sdl/sdl_main.cpp)
+  if(DIRT2_IOS)
+    # App bundle; signing with entitlements is done by tools/scripts/package_ios.sh.
+    set(DIRT2_BUNDLE_ID "com.daniilvinogradov.dirt2recomp" CACHE STRING "iOS bundle identifier")
+    add_executable(dirt2 MACOSX_BUNDLE platform/sdl/sdl_main.cpp)
+    set_target_properties(dirt2 PROPERTIES
+      MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/platform/apple/Info.plist.in"
+      MACOSX_BUNDLE_GUI_IDENTIFIER "${DIRT2_BUNDLE_ID}")
+  else()
+    add_executable(dirt2 platform/sdl/sdl_main.cpp)
+  endif()
+  # Looked up in the process at run time, so the linker must keep them: Vulkan's
+  # entry points (DXVK, SDL) and the SDL functions DXVK's SDL3 WSI resolves
+  # (third_party/dxvk/src/wsi/sdl3/wsi_platform_sdl3.cpp).
+  foreach(sym vkGetInstanceProcAddr vkGetDeviceProcAddr
+      SDL_GetClosestFullscreenDisplayMode SDL_GetCurrentDisplayMode SDL_GetDesktopDisplayMode SDL_GetDisplayBounds
+      SDL_GetDisplayForWindow SDL_GetDisplayUsableBounds SDL_GetDisplays SDL_GetError SDL_GetFullscreenDisplayModes
+      SDL_GetWindowFlags SDL_GetWindowSizeInPixels SDL_InitSubSystem SDL_IsMainThread SDL_QuitSubSystem
+      SDL_RunOnMainThread SDL_SetWindowFullscreen SDL_SetWindowFullscreenMode SDL_SetWindowPosition SDL_SetWindowSize
+      SDL_Vulkan_CreateSurface SDL_Vulkan_GetInstanceExtensions SDL_Vulkan_LoadLibrary SDL_free)
+    target_link_options(dirt2 PRIVATE "-Wl,-u,_${sym}")
+  endforeach()
   target_link_libraries(dirt2 PRIVATE dirt2_shims dirt2_gen recomp_runtime dxvk_d3d9 SDL3::SDL3)
-  # Find DXVK and MoltenVK next to the build without installing them.
-  set_target_properties(dirt2 PROPERTIES BUILD_RPATH "${DIRT2_DXVK_BUILD_DIR}/src/d3d9;${DIRT2_MOLTENVK_LIB_DIR}")
   # Community gamepad mappings, loaded from next to the executable at startup.
   add_custom_command(TARGET dirt2 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different

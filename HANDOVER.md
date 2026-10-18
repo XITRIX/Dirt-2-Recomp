@@ -1,6 +1,6 @@
 # Handover
 
-State of the DiRT 2 static recompilation as of 2026-10-17 (`main` at `f93c43c`). Detailed findings and per-milestone notes live in [docs/STATUS.md](docs/STATUS.md); this file is the short version for whoever picks the work up next.
+State of the DiRT 2 static recompilation as of 2026-10-18. Detailed findings and per-milestone notes live in [docs/STATUS.md](docs/STATUS.md); this file is the short version for whoever picks the work up next.
 
 ## Goal
 
@@ -14,7 +14,7 @@ Run Colin McRae DiRT 2 (Steam v1.1, `dirt2_game.exe`) natively on Apple platform
 | Boot | Boots through CRT, GFWL (offline) and engine init on macOS. |
 | Frontend | 3D frontend renders in correct colour with audio. Bink intros play correctly (skipped by default). |
 | Race | Not reached yet. |
-| iOS | Not started. |
+| iOS | Builds for device and simulator from the same sources and scripts as macOS (see Build). |
 
 Latest fixes:
 
@@ -28,21 +28,43 @@ Latest fixes:
 1. **Fullscreen not retested** since the device-lost fix below; it previously crashed all of macOS. Test it windowed first, then fullscreen.
 2. **Flicker in the 3D frontend** (alternate black frames on some launches). Not rechecked since the alpha fix, which may have cured it.
 3. **Performance:** about 15 fps in 3D scenes. Not profiled yet.
-4. Then: drive the game into a race, fix what breaks, then the iOS preset (entitlements, data import, touch overlay, memory budget).
+4. Then: drive the game into a race and fix what breaks. On iOS: a touch overlay, the memory budget on a real device, and backgrounding.
 
 ## Build and run
 
+Every third-party library is built from pinned sources as a **static** library, the same way for every platform, and linked into one executable. Nothing is taken from Homebrew or the system except Apple's frameworks; Homebrew provides build tools only (cmake, meson, ninja, glslang, pkg-config).
+
+Per-platform outputs never overlap, so platforms can build at the same time. Platforms are `macos`, `iphoneos` and `iphonesimulator`:
+
+| Path | Contents |
+|---|---|
+| `build/deps/<platform>` | SDL3, OpenAL Soft, ogg, vorbis, FFmpeg (Bink only): `build_deps.sh` |
+| `build/moltenvk/<platform>` | `libMoltenVK.a` with the SPIRV-Cross patch: `build_moltenvk.sh` |
+| `build/dxvk/<platform>` | `libdxvk_d3d9.a`, DXVK's internal libraries merged in: `build_graphics.sh` |
+| `build/macos-arm64`, `build/ios`, `build/ios-sim` | Game builds (CMake presets) |
+| `build/package/<platform>` | Packaged builds |
+| `~/Library/Caches/Dirt2Recomp/xcode/` | Xcode derived data (must not live in `~/Documents`, see Pitfalls) |
+
 ```bash
-tools/scripts/build_graphics.sh            # MoltenVK (with SPIRV-Cross patch) + DXVK, once
+tools/scripts/build_deps.sh macos iphoneos iphonesimulator      # libraries
+tools/scripts/build_graphics.sh macos iphoneos iphonesimulator  # MoltenVK + DXVK
+
 cmake --preset macos-arm64 && cmake --build build/macos-arm64
 ./build/macos-arm64/dirt2 --game "<folder with dirt2_game.exe>"
-tools/scripts/package_macos.sh             # playable zip in build/package/
+tools/scripts/package_macos.sh               # build/package/macos/DiRT2-macOS.zip
+
+cmake --preset ios-sim && cmake --build build/ios-sim
+tools/scripts/package_ios.sh sim             # ad-hoc signs build/ios-sim/dirt2.app
+cmake --preset ios && cmake --build build/ios
+tools/scripts/package_ios.sh device          # signs, writes build/package/iphoneos/DiRT2-iOS.ipa
 ```
 
+- The game on iOS reads its data from the app's Documents folder (copy the `Dirt 2` folder in with Finder or the Files app). In the simulator, `SIMCTL_CHILD_DIRT2_GAME_DIR=<mac path>` points it at the Mac's copy.
+- Device signing uses team `D59DHVRS87` and bundle id `com.daniilvinogradov.dirt2recomp` (override with `DIRT2_TEAM`, `DIRT2_BUNDLE_ID`). The profile must carry `extended-virtual-addressing` (the 4 GB guest space) and `increased-memory-limit`; if none is installed, `package_ios.sh` has Xcode create one through a stub project.
 - Re-lift after lifter changes: `tools/scripts/relift.sh`. It lifts with `--include-dead`; without it, races crash with `unknown target` on gap-scan functions.
 - Patches: `tools/scripts/apply_patches.sh` applies `third_party/patches/<name>/` to `third_party/<name>` or MoltenVK's `External/<name>`. It is idempotent.
-- Rebuilding SPIRV-Cross alone: MoltenVK links a prebuilt `External/build/Release/SPIRVCross.xcframework`. A plain `make macos` does **not** pick up SPIRV-Cross edits. Rebuild it with the `xcodebuild ... ExternalDependencies-macOS` and `create_ext_lib_xcframeworks.sh` steps in `build_graphics.sh`, then `make macos`. Do not rerun `fetchDependencies`: it resets the External checkouts and drops the patch.
-- Game data (11.5 GB) is never committed. Saves, config and DXVK logs go to `~/Library/Application Support/Dirt2Recomp` (override with `DIRT2_DATA_DIR`).
+- MoltenVK's externals (SPIRV-Cross, SPIRV-Tools) are one multi-platform xcframework at a path MoltenVK's project hard-codes. `build_mvk_externals.sh` builds it for all platforms at once, under a lock, and only when the SPIRV-Cross patch changes; per-platform MoltenVK builds only read it. MoltenVK's own `make` and `Package/` folder are not used. Do not rerun `fetchDependencies` on an existing checkout: it resets the External sources and drops the patch.
+- Game data (11.5 GB) is never committed. Saves, config and DXVK logs go to `~/Library/Application Support/Dirt2Recomp` on macOS and the app container's Library on iOS (override with `DIRT2_DATA_DIR`).
 
 ## Layout
 
@@ -70,9 +92,12 @@ tools/scripts/package_macos.sh             # playable zip in build/package/
 
 ## Pitfalls
 
-- `/usr/bin/perl` and `/bin/sh` are SIP-protected and strip `DYLD_*` variables. A test started through `perl -e 'alarm ...'` silently loads Homebrew's MoltenVK 1.2.11 from `/opt/homebrew/lib`, and DXVK then reports no Vulkan 1.3 adapter. Set `$ENV{DYLD_LIBRARY_PATH}` inside perl before `exec`.
+- Xcode's SQLite build database fails with `disk I/O error` inside `~/Documents` when iCloud Drive syncs it: keep derived data in `~/Library/Caches` (the scripts do).
+- Killing a build script does not kill its `xcodebuild`/`ninja` children; a leftover one corrupts the next build in the same folder ("database is locked", wrong platform objects). Check `pgrep -fl xcodebuild` before rebuilding.
+- FFmpeg's configure autodetects host libraries (it found Homebrew's X11); `build_deps.sh` passes `--disable-autodetect` and limits pkg-config to the platform's own prefix. After a dependency rebuild, delete the game build's `CMakeCache.txt`: pkg-config results are cached.
+- The standalone test harnesses in `tests/` still link DXVK and MoltenVK from the old dylib builds: `/usr/bin/perl` and `/bin/sh` are SIP-protected and strip `DYLD_*` variables, so a harness started through `perl -e 'alarm ...'` loads Homebrew's MoltenVK 1.2.11. Set `$ENV{DYLD_LIBRARY_PATH}` inside perl before `exec`.
 - `MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0` hangs DXVK.
-- Rebuilding MoltenVK after a patch: `make macos` in `third_party/MoltenVK`; do not rerun `fetchDependencies`.
+- Rebuilding MoltenVK after a patch: `tools/scripts/build_moltenvk.sh <platform>` (SPIRV-Cross patches: the externals rebuild by themselves).
 - Game data paths with brackets break lldb's `run`. Symlink the game folder to a plain path, and use Xcode's lldb, not a toolchain one.
 - xlive ordinals are stdcall: a wrong argument count corrupts the guest stack far from the call site (that is how `XUserCheckPrivilege` cost a day).
 - The game's video planes are `D3DFMT_A8`, not L8.

@@ -129,6 +129,25 @@ int main(int argc, char** argv) {
     if (const char* e = std::getenv("DIRT2_GAME_DIR")) dir = e;
     for (int i = 1; i + 1 < argc; ++i)
         if (!std::strcmp(argv[i], "--game")) dir = argv[++i];
+#if defined(SDL_PLATFORM_IOS) || defined(SDL_PLATFORM_TVOS) || defined(SDL_PLATFORM_VISIONOS)
+    // The game data is copied into the app's Documents folder (Finder or the
+    // Files app): either the "Dirt 2" folder itself or its contents.
+    if (dir.empty())
+        if (const char* docs = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS)) {
+            for (std::string d : {std::string(docs) + "Dirt 2", std::string(docs)})
+                if (std::filesystem::exists(d + "/dirt2_game.exe")) {
+                    dir = d;
+                    break;
+                }
+            if (dir.empty()) {
+                const std::string msg = "Copy the \"Dirt 2\" game folder (the one with dirt2_game.exe) into this app's "
+                                        "Documents with Finder or the Files app, then start the app again.\n\n" +
+                                        std::string(docs);
+                SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "DiRT 2: game data missing", msg.c_str(), nullptr);
+                return 2;
+            }
+        }
+#endif
     if (dir.empty()) {
         std::fprintf(stderr, "usage: %s --game <folder with dirt2_game.exe>\n", argv[0]);
         return 2;

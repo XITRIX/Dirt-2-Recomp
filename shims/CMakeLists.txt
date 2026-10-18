@@ -21,8 +21,24 @@ add_library(dirt2_shims OBJECT
   video/bink_decoder.cpp
   audio/openal.cpp
   audio/vorbisfile.cpp)
+# Static libraries from build/deps/<platform> (build_deps.sh): link with their
+# private dependencies.
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(VORBISFILE REQUIRED IMPORTED_TARGET vorbisfile)
-pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil)
-target_link_libraries(dirt2_shims PUBLIC recomp_runtime dxvk_d3d9 SDL3::SDL3 OpenAL::OpenAL PkgConfig::VORBISFILE PkgConfig::FFMPEG)
+pkg_check_modules(VORBISFILE REQUIRED vorbisfile)
+pkg_check_modules(FFMPEG REQUIRED libavformat libavcodec libavutil)
+# pkg-config's "-framework X" pairs arrive as two list items: rejoin them.
+set(_deps_ldflags)
+set(_pending_framework OFF)
+foreach(flag ${VORBISFILE_STATIC_LDFLAGS} ${FFMPEG_STATIC_LDFLAGS})
+  if(_pending_framework)
+    list(APPEND _deps_ldflags "-framework ${flag}")
+    set(_pending_framework OFF)
+  elseif(flag STREQUAL "-framework")
+    set(_pending_framework ON)
+  else()
+    list(APPEND _deps_ldflags "${flag}")
+  endif()
+endforeach()
+target_include_directories(dirt2_shims PUBLIC ${VORBISFILE_STATIC_INCLUDE_DIRS} ${FFMPEG_STATIC_INCLUDE_DIRS})
+target_link_libraries(dirt2_shims PUBLIC recomp_runtime dxvk_d3d9 SDL3::SDL3 OpenAL::OpenAL ${_deps_ldflags})
 target_compile_options(dirt2_shims PRIVATE -Wall -Wno-unused-parameter -Wno-unused-function)

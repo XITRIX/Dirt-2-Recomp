@@ -11,7 +11,7 @@ Target executable: `dirt2_game.exe`, SHA-256 `49b1e00ea1d4bd02e633ceed63390b5cae
 | 3 | Headless boot on macOS to the main loop | In progress: boots through CRT, GFWL and engine init to `Direct3DCreate9` |
 | 4 | Frontend renders (DXVK d3d9 + MoltenVK), audio, input, Bink | In progress: 3D frontend and Bink videos render in correct colour with audio; open: flicker, ~15 fps in 3D scenes |
 | 5 | Playable race on macOS | |
-| 6 | Playable race on iOS | |
+| 6 | Playable race on iOS | In progress: signed device build and simulator build from the same static sources; not yet run on a device. The simulator GPU lacks descriptor indexing and subgroup control, so DXVK stops at adapter selection there |
 | 7 | tvOS, visionOS, performance | |
 
 ## Analysis results (milestone 1)
@@ -201,3 +201,16 @@ cmake --preset macos-arm64 && cmake --build build/macos-arm64
 ```
 
 Graphics prerequisites: `tools/scripts/build_graphics.sh` (MoltenVK + DXVK) and `brew install sdl3 glslang`.
+
+## Build system: one static recipe for every platform
+
+All third-party code is built from pinned sources as static libraries and linked into one executable, on macOS as on iOS: SDL3 3.4.18, OpenAL Soft 1.25.2, libogg 1.3.5, libvorbis 1.3.7, FFmpeg 7.1.1 (Bink decoders and demuxer only), MoltenVK 1.4.1 and DXVK 3.1.1 (d3d9 built static on Apple). Nothing is linked from Homebrew or `/usr/local`; the macOS binary loads only system libraries and frameworks (`package_macos.sh` checks this).
+
+Outputs are per platform (`build/<component>/<platform>`, platforms `macos`, `iphoneos`, `iphonesimulator`), so platforms build in parallel. DXVK and SDL resolve `vkGetInstanceProcAddr` and SDL's functions in the process; the link keeps them with `-u`.
+
+iOS specifics:
+
+- The app reads game data from its Documents folder (Finder or Files app); `UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace` are set.
+- Device entitlements: `extended-virtual-addressing` (the 4 GB guest space) and `increased-memory-limit`. The simulator refuses ad-hoc apps carrying them, so the simulator build is signed without.
+- The iOS simulator's GPU lacks `descriptorIndexing`, `shaderSampledImageArrayDynamicIndexing`, `samplerMirrorClampToEdge`, `occlusionQueryPrecise`, `computeFullSubgroups` and `subgroupSizeControl`. DXVK 3's binding model needs the first ones, so rendering can only be tested on a device; the simulator runs boot up to adapter selection. `imageCubeArray` (also missing there) is tolerated on Apple: D3D9 has no cube arrays.
+
