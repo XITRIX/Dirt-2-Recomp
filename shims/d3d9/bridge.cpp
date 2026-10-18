@@ -83,10 +83,37 @@ uint32_t guest_vtable(const VTableDesc& d) {
     return vt;
 }
 
+// Interfaces of distinct objects: one host pointer is never two of these at once.
+bool is_leaf(const VTableDesc* d) {
+    static const char* const leaves[] = {"IDirect3DSurface9",       "IDirect3DVolume9",          "IDirect3DTexture9",
+                                         "IDirect3DVolumeTexture9", "IDirect3DCubeTexture9",     "IDirect3DVertexBuffer9",
+                                         "IDirect3DIndexBuffer9",   "IDirect3DVertexShader9",    "IDirect3DPixelShader9",
+                                         "IDirect3DQuery9",         "IDirect3DVertexDeclaration9", "IDirect3DStateBlock9",
+                                         "IDirect3DSwapChain9"};
+    for (const char* n : leaves)
+        if (std::strcmp(d->name, n) == 0) return true;
+    return false;
+}
+
 uint32_t wrap_with(IUnknown* host, const VTableDesc& d) {
     if (!host) return 0;
     std::lock_guard lk(g_mu);
-    if (auto it = g_by_host.find(host); it != g_by_host.end()) return it->second;
+    if (auto it = g_by_host.find(host); it != g_by_host.end()) {
+        auto old = g_by_guest.find(it->second);
+        // A surface of a texture or swap chain dies with its container without the
+        // game's Release reaching zero, so its entry outlives it; DXVK then hands
+        // out the same address for a new object, e.g. a vertex buffer after Reset.
+        // Returning the dead surface's proxy for it made the game call
+        // GetContainer where it meant Lock and memcpy to the lock flags (0x2800).
+        if (old == g_by_guest.end() || old->second.desc == &d || !is_leaf(old->second.desc) || !is_leaf(&d))
+            return it->second;
+        static std::atomic<int> logged{0};
+        if (logged++ < 20)
+            rt::log("d3d9: host %p reused: %s proxy 0x%08X retired for a new %s", static_cast<void*>(host),
+                    old->second.desc->name, it->second, d.name);
+        g_by_guest.erase(old);
+        g_by_host.erase(it);
+    }
     const uint32_t p = rt::heap_alloc(16, true);
     wr32(p, guest_vtable(d));
     wr32(p + 4, kProxyMagic);
