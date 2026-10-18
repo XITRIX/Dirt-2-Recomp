@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(Dirt2Recomp LANGUAGES C CXX)
+project(Dirt2Recomp LANGUAGES C CXX OBJCXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -111,12 +111,12 @@ if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
   if(DIRT2_IOS)
     # App bundle; signing with entitlements is done by tools/scripts/package_ios.sh.
     set(DIRT2_BUNDLE_ID "com.daniilvinogradov.dirt2recomp" CACHE STRING "iOS bundle identifier")
-    add_executable(dirt2 MACOSX_BUNDLE platform/sdl/sdl_main.cpp)
+    add_executable(dirt2 MACOSX_BUNDLE platform/sdl/sdl_main.cpp platform/apple/text_prompt.mm)
     set_target_properties(dirt2 PROPERTIES
       MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/platform/apple/Info.plist.in"
       MACOSX_BUNDLE_GUI_IDENTIFIER "${DIRT2_BUNDLE_ID}")
   else()
-    add_executable(dirt2 platform/sdl/sdl_main.cpp)
+    add_executable(dirt2 platform/sdl/sdl_main.cpp platform/apple/text_prompt.mm)
   endif()
   # Looked up in the process at run time, so the linker must keep them: Vulkan's
   # entry points (DXVK, SDL) and the SDL functions DXVK's SDL3 WSI resolves
@@ -129,6 +129,7 @@ if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
       SDL_Vulkan_CreateSurface SDL_Vulkan_GetInstanceExtensions SDL_Vulkan_LoadLibrary SDL_free)
     target_link_options(dirt2 PRIVATE "-Wl,-u,_${sym}")
   endforeach()
+  set_source_files_properties(platform/apple/text_prompt.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
   target_link_libraries(dirt2 PRIVATE dirt2_shims dirt2_gen recomp_runtime dxvk_d3d9 SDL3::SDL3)
   # Community gamepad mappings, loaded from next to the executable at startup.
   add_custom_command(TARGET dirt2 POST_BUILD

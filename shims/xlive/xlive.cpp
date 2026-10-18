@@ -12,10 +12,12 @@
 // a --check-esp build.
 #include <atomic>
 #include <mutex>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
 #include "../shim.h"
+#include "../../platform/platform.h"
 
 using namespace shim;
 
@@ -155,7 +157,33 @@ STDCALL_ORD(xlive, 5291, 2) { return complete(a[1], 0); }      // XUserResetStat
 // ---- UI: nothing to show ----
 STDCALL_ORD(xlive, 5210, 3) { return 0; }  // XShowFriendRequestUI
 STDCALL_ORD(xlive, 5214, 3) { return 0; }  // XShowPlayerReviewUI
-STDCALL_ORD(xlive, 5216, 8) { return complete(a[7], ERROR_FUNCTION_FAILED); }  // XShowKeyboardUI
+// XShowKeyboardUI(user, flags, default, title, description, result, cchResult, overlapped):
+// the GFWL on-screen keyboard (name entry with a controller). A native text
+// prompt stands in for it; the overlapped stays pending until the user answers.
+STDCALL_ORD(xlive, 5216, 8) {
+    const std::string initial = a[2] ? from_utf16(a[2]) : "";
+    const std::string title = a[3] ? from_utf16(a[3]) : "";
+    const std::string message = a[4] ? from_utf16(a[4]) : "";
+    const uint32_t out = a[5], cch = a[6], ov = a[7];
+    rt::log("XShowKeyboardUI(\"%s\", \"%s\", default \"%s\", %u chars)", title.c_str(), message.c_str(),
+            initial.c_str(), cch);
+    auto run = [=] {
+        std::string text;
+        const bool ok = platform::prompt_text(title, message, initial, text);
+        if (ok && out && cch) {
+            std::u16string w = to_utf16(text);
+            if (w.size() > cch - 1) w.resize(cch - 1);
+            for (size_t i = 0; i < w.size(); ++i) wr16(out + 2 * uint32_t(i), uint16_t(w[i]));
+            wr16(out + 2 * uint32_t(w.size()), 0);
+        }
+        rt::log("XShowKeyboardUI -> %s \"%s\"", ok ? "ok" : "cancelled", text.c_str());
+        return ok ? uint32_t(0) : ERROR_CANCELLED;
+    };
+    if (!ov) return run();
+    wr32(ov + 0, ERROR_IO_PENDING);
+    std::thread([=] { complete(ov, run()); }).detach();
+    return ERROR_IO_PENDING;
+}
 STDCALL_ORD(xlive, 5250, 1) { return 0; }  // XShowAchievementsUI
 STDCALL_ORD(xlive, 5252, 3) { return 0; }  // XShowGamerCardUI
 STDCALL_ORD(xlive, 5260, 2) { return 0; }  // XShowSigninUI

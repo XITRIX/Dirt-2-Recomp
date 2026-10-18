@@ -208,7 +208,12 @@ int main(int argc, char** argv) {
     // connected but never delivers their input. Without it, Xbox/PlayStation/
     // Switch pads still use SDL's HIDAPI drivers and others use IOKit HID with
     // the gamecontrollerdb.txt mappings below. DIRT2_JOYSTICK_MFI=1 restores it.
+#if defined(SDL_PLATFORM_IOS) || defined(SDL_PLATFORM_TVOS) || defined(SDL_PLATFORM_VISIONOS)
+    // On iOS GameController (MFi) is the only way controllers reach an app.
+    SDL_SetHint(SDL_HINT_JOYSTICK_MFI, "1");
+#else
     SDL_SetHint(SDL_HINT_JOYSTICK_MFI, std::getenv("DIRT2_JOYSTICK_MFI") ? "1" : "0");
+#endif
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS)) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;

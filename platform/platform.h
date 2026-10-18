@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace platform {
 
@@ -18,5 +19,11 @@ void set_fullscreen(Window w, bool fullscreen);
 
 // Display size in pixels, for GetSystemMetrics / EnumDisplaySettings.
 void display_size(int* width, int* height);
+
+// Asks the user for a line of text in a native dialog (the system keyboard on
+// iOS). Blocks the calling thread, which must not be the main thread. Returns
+// false when the user cancels.
+bool prompt_text(const std::string& title, const std::string& message, const std::string& initial,
+                 std::string& result);
 
 }  // namespace platform

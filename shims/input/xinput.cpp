@@ -6,6 +6,9 @@
 #include <algorithm>
 #include <cstdlib>
 #include <mutex>
+#include <sstream>
+#include <string>
+#include <vector>
 
 #include "../shim.h"
 
@@ -121,6 +124,73 @@ PadState read_keyboard() {
     return s;
 }
 
+// DIRT2_INPUT_SCRIPT drives player 1 from a timeline, for reproducible test
+// runs (menus to a race) on every platform:
+//   "<seconds> <input>[+<input>...] [hold seconds, default 0.15]; ..."
+// inputs: A B X Y start back up down left right lb rb lt rt, and axes
+// lx=<-1..1> ly= rx= ry= (lt= rt= take 0..1). Times count from the first poll.
+struct ScriptStep {
+    double at = 0, hold = 0.15;
+    PadState pad;
+};
+
+std::vector<ScriptStep> parse_script(const char* text) {
+    std::vector<ScriptStep> steps;
+    std::stringstream all(text);
+    std::string item;
+    while (std::getline(all, item, ';')) {
+        std::stringstream in(item);
+        ScriptStep st;
+        std::string inputs;
+        if (!(in >> st.at >> inputs)) continue;
+        in >> st.hold;
+        std::stringstream parts(inputs);
+        std::string part;
+        while (std::getline(parts, part, '+')) {
+            const auto eq = part.find('=');
+            const std::string key = part.substr(0, eq);
+            const double v = eq == std::string::npos ? 1.0 : std::atof(part.c_str() + eq + 1);
+            const int16_t ax = int16_t(std::clamp(v, -1.0, 1.0) * 32767);
+            const uint8_t tr = uint8_t(std::clamp(v, 0.0, 1.0) * 255);
+            static const struct { const char* n; uint16_t b; } names[] = {
+                {"A", XI_A}, {"B", XI_B}, {"X", XI_X}, {"Y", XI_Y}, {"start", XI_START}, {"back", XI_BACK},
+                {"up", XI_DPAD_UP}, {"down", XI_DPAD_DOWN}, {"left", XI_DPAD_LEFT}, {"right", XI_DPAD_RIGHT},
+                {"lb", XI_LSHOULDER}, {"rb", XI_RSHOULDER}};
+            bool known = false;
+            for (auto& n : names)
+                if (key == n.n) { st.pad.buttons |= n.b; known = true; }
+            if (key == "lt") st.pad.lt = tr, known = true;
+            else if (key == "rt") st.pad.rt = tr, known = true;
+            else if (key == "lx") st.pad.lx = ax, known = true;
+            else if (key == "ly") st.pad.ly = ax, known = true;
+            else if (key == "rx") st.pad.rx = ax, known = true;
+            else if (key == "ry") st.pad.ry = ax, known = true;
+            if (!known) rt::log("input script: unknown input '%s'", key.c_str());
+        }
+        steps.push_back(st);
+    }
+    return steps;
+}
+
+// Adds the scripted inputs active now to player 1's state.
+void apply_script(PadState& s) {
+    static const char* text = std::getenv("DIRT2_INPUT_SCRIPT");
+    if (!text) return;
+    static const std::vector<ScriptStep> steps = parse_script(text);
+    static const Uint64 t0 = SDL_GetTicksNS();
+    const double now = double(SDL_GetTicksNS() - t0) / 1e9;
+    for (const auto& st : steps) {
+        if (now < st.at || now >= st.at + st.hold) continue;
+        s.buttons |= st.pad.buttons;
+        s.lt = std::max(s.lt, st.pad.lt);
+        s.rt = std::max(s.rt, st.pad.rt);
+        if (st.pad.lx) s.lx = st.pad.lx;
+        if (st.pad.ly) s.ly = st.pad.ly;
+        if (st.pad.rx) s.rx = st.pad.rx;
+        if (st.pad.ry) s.ry = st.pad.ry;
+    }
+}
+
 }  // namespace
 
 STDCALL_ORD(xinput1_3, 2, 2) {  // XInputGetState(index, XINPUT_STATE*)
@@ -135,6 +205,7 @@ STDCALL_ORD(xinput1_3, 2, 2) {  // XInputGetState(index, XINPUT_STATE*)
         trace_call(2, idx, ERROR_DEVICE_NOT_CONNECTED);
         return ERROR_DEVICE_NOT_CONNECTED;
     }
+    if (idx == 0) apply_script(s);
     if (!(s == g_last[idx])) {
         g_last[idx] = s;
         ++g_packet[idx];
