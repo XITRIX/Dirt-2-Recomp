@@ -41,28 +41,32 @@ using namespace shim;
 namespace {
 
 // ---------------------------------------------------------------------------
-// Proxies
+// Bridge core (shims/com/bridge_core.h): proxies, Arg<>, generic methods
 // ---------------------------------------------------------------------------
 
-struct VTableDesc {
-    const char* name;
-    const recomp_fn* fns;
-    uint32_t count;
-};
-template <typename I>
-const VTableDesc& vtable_desc();
-
+constexpr const char* kBridge = "d3d9";
 constexpr uint32_t kProxyMagic = 0x42443344;  // "D3DB"
+constexpr HRESULT kInvalidCall = D3DERR_INVALIDCALL;
 
-struct Entry {
-    IUnknown* host;
-    const VTableDesc* desc;
-};
+// Interfaces of distinct objects: one host pointer is never two of these at once.
+bool is_leaf_name(const char* name) {
+    static const char* const leaves[] = {"IDirect3DSurface9",       "IDirect3DVolume9",          "IDirect3DTexture9",
+                                         "IDirect3DVolumeTexture9", "IDirect3DCubeTexture9",     "IDirect3DVertexBuffer9",
+                                         "IDirect3DIndexBuffer9",   "IDirect3DVertexShader9",    "IDirect3DPixelShader9",
+                                         "IDirect3DQuery9",         "IDirect3DVertexDeclaration9", "IDirect3DStateBlock9",
+                                         "IDirect3DSwapChain9"};
+    for (const char* n : leaves)
+        if (std::strcmp(name, n) == 0) return true;
+    return false;
+}
 
-std::recursive_mutex g_mu;
-std::unordered_map<uint32_t, Entry> g_by_guest;
-std::unordered_map<IUnknown*, uint32_t> g_by_host;
-std::unordered_map<const VTableDesc*, uint32_t> g_vtables;
+template <typename I>
+uint32_t wrap(I* p);
+uint32_t wrap_by_iid(const GUID& iid, void* obj);
+void on_release(uint32_t proxy);
+
+#include "../com/bridge_core.h"
+
 std::atomic<uint32_t> g_marked_ps{0};  // debug: pixel shader whose CTAB names DIRT2_WATCH_PS_CONST
 
 // Vertex and index buffers keep a persistent guest shadow (they are locked
@@ -73,74 +77,6 @@ struct BufferShadow {
     std::vector<Lock> locks;
 };
 std::unordered_map<uint32_t, BufferShadow> g_shadows;
-
-uint32_t guest_vtable(const VTableDesc& d) {
-    auto it = g_vtables.find(&d);
-    if (it != g_vtables.end()) return it->second;
-    const uint32_t vt = rt::heap_alloc(d.count * 4);
-    for (uint32_t i = 0; i < d.count; ++i) wr32(vt + 4 * i, rt::alloc_thunk(d.fns[i]));
-    g_vtables[&d] = vt;
-    return vt;
-}
-
-// Interfaces of distinct objects: one host pointer is never two of these at once.
-bool is_leaf(const VTableDesc* d) {
-    static const char* const leaves[] = {"IDirect3DSurface9",       "IDirect3DVolume9",          "IDirect3DTexture9",
-                                         "IDirect3DVolumeTexture9", "IDirect3DCubeTexture9",     "IDirect3DVertexBuffer9",
-                                         "IDirect3DIndexBuffer9",   "IDirect3DVertexShader9",    "IDirect3DPixelShader9",
-                                         "IDirect3DQuery9",         "IDirect3DVertexDeclaration9", "IDirect3DStateBlock9",
-                                         "IDirect3DSwapChain9"};
-    for (const char* n : leaves)
-        if (std::strcmp(d->name, n) == 0) return true;
-    return false;
-}
-
-uint32_t wrap_with(IUnknown* host, const VTableDesc& d) {
-    if (!host) return 0;
-    std::lock_guard lk(g_mu);
-    if (auto it = g_by_host.find(host); it != g_by_host.end()) {
-        auto old = g_by_guest.find(it->second);
-        // A surface of a texture or swap chain dies with its container without the
-        // game's Release reaching zero, so its entry outlives it; DXVK then hands
-        // out the same address for a new object, e.g. a vertex buffer after Reset.
-        // Returning the dead surface's proxy for it made the game call
-        // GetContainer where it meant Lock and memcpy to the lock flags (0x2800).
-        if (old == g_by_guest.end() || old->second.desc == &d || !is_leaf(old->second.desc) || !is_leaf(&d))
-            return it->second;
-        static std::atomic<int> logged{0};
-        if (logged++ < 20)
-            rt::log("d3d9: host %p reused: %s proxy 0x%08X retired for a new %s", static_cast<void*>(host),
-                    old->second.desc->name, it->second, d.name);
-        g_by_guest.erase(old);
-        g_by_host.erase(it);
-    }
-    const uint32_t p = rt::heap_alloc(16, true);
-    wr32(p, guest_vtable(d));
-    wr32(p + 4, kProxyMagic);
-    g_by_guest[p] = Entry{host, &d};
-    g_by_host[host] = p;
-    return p;
-}
-
-IUnknown* to_host(uint32_t guest) {
-    if (!guest) return nullptr;
-    std::lock_guard lk(g_mu);
-    auto it = g_by_guest.find(guest);
-    if (it == g_by_guest.end()) {
-        rt::log("d3d9: unknown proxy 0x%08X", guest);
-        return nullptr;
-    }
-    return it->second.host;
-}
-
-void forget(uint32_t guest) {
-    std::lock_guard lk(g_mu);
-    auto it = g_by_guest.find(guest);
-    if (it == g_by_guest.end()) return;
-    g_by_host.erase(it->second.host);
-    g_by_guest.erase(it);
-    // The proxy memory is left in place: the game may still compare the pointer.
-}
 
 // Wraps with the object's most-derived interface when the static type is a base.
 template <typename I>
@@ -162,76 +98,11 @@ uint32_t wrap(I* p) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Argument conversion, one 32-bit guest stack slot per argument
-// ---------------------------------------------------------------------------
-
-template <typename T>
-constexpr bool is_interface_v = std::is_base_of_v<IUnknown, std::remove_cv_t<T>>;
-
-template <typename T, typename = void>
-struct Arg;
-
-template <typename T>
-struct Arg<T, std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>>> {
-    uint32_t s;
-    T get() const { return T(s); }
-    void done() {}
-};
-
+// D3D9 structs with pointers or HWNDs: converted by their own Arg<>.
 template <>
-struct Arg<float> {
-    uint32_t s;
-    float get() const { float f; std::memcpy(&f, &s, 4); return f; }
-    void done() {}
-};
-
-// Interface in.
-template <typename I>
-struct Arg<I*, std::enable_if_t<is_interface_v<I>>> {
-    uint32_t s;
-    I* get() const { return static_cast<I*>(to_host(s)); }
-    void done() {}
-};
-
-// Interface out: write the (possibly new) proxy back.
-template <typename I>
-struct Arg<I**, std::enable_if_t<is_interface_v<I>>> {
-    uint32_t s;
-    I* v = nullptr;
-    I** get() { return s ? &v : nullptr; }
-    void done() {
-        if (s) wr32(s, wrap(v));
-    }
-};
-
-// HANDLE* pSharedHandle (and other void** outs): must be NULL for D3D9Ex-less use.
+struct custom_arg<D3DPRESENT_PARAMETERS> : std::true_type {};
 template <>
-struct Arg<void**> {
-    uint32_t s;
-    void* v = nullptr;
-    void** get() { return s ? &v : nullptr; }
-    void done() {
-        if (s) wr32(s, 0);
-    }
-};
-
-// REFIID / REFGUID.
-template <>
-struct Arg<const GUID&> {
-    uint32_t s;
-    const GUID& get() const { return *reinterpret_cast<const GUID*>(rt::host_ptr(s)); }
-    void done() {}
-};
-
-// Pointers to pointer-free data: guest memory used in place.
-template <typename T>
-struct Arg<T*, std::enable_if_t<!is_interface_v<T> && !std::is_pointer_v<T> && !std::is_same_v<std::remove_cv_t<T>, D3DPRESENT_PARAMETERS> &&
-                                !std::is_same_v<std::remove_cv_t<T>, D3DDEVICE_CREATION_PARAMETERS>>> {
-    uint32_t s;
-    T* get() const { return s ? reinterpret_cast<T*>(rt::host_ptr(s)) : nullptr; }
-    void done() {}
-};
+struct custom_arg<D3DDEVICE_CREATION_PARAMETERS> : std::true_type {};
 
 // D3DPRESENT_PARAMETERS: 14 dwords in the guest, hDeviceWindow is a guest HWND.
 void pp_in(uint32_t g, D3DPRESENT_PARAMETERS& p) {
@@ -285,6 +156,7 @@ void present_window(const D3DPRESENT_PARAMETERS& p, bool fullscreen) {
 
 template <>
 struct Arg<D3DPRESENT_PARAMETERS*> {
+    static constexpr bool unsafe = false;
     uint32_t s;
     D3DPRESENT_PARAMETERS v{};
     uint32_t hwnd = 0;
@@ -317,6 +189,7 @@ struct Arg<D3DPRESENT_PARAMETERS*> {
 
 template <>
 struct Arg<D3DDEVICE_CREATION_PARAMETERS*> {
+    static constexpr bool unsafe = false;
     uint32_t s;
     D3DDEVICE_CREATION_PARAMETERS v{};
     D3DDEVICE_CREATION_PARAMETERS* get() { return s ? &v : nullptr; }
@@ -329,90 +202,9 @@ struct Arg<D3DDEVICE_CREATION_PARAMETERS*> {
     }
 };
 
-// ---------------------------------------------------------------------------
-// Generic method bridge
-// ---------------------------------------------------------------------------
-
-template <typename R>
-void set_result(X86* c, R r) {
-    if constexpr (std::is_same_v<R, float>) fpush(c, double(r));
-    else c->eax = uint32_t(r);
-}
-
-template <typename F, F M>
-struct BridgeImpl;
-
-template <typename C, typename R, typename... A, R (C::*M)(A...)>
-struct BridgeImpl<R (C::*)(A...), M> {
-    template <size_t... I>
-    static void run(X86* c, std::index_sequence<I...>) {
-        C* self = static_cast<C*>(to_host(rd32(c->esp + 4)));
-        std::tuple<Arg<A>...> args{Arg<A>{rd32(c->esp + 8 + 4 * uint32_t(I))}...};
-        if (!self) {
-            c->eax = uint32_t(D3DERR_INVALIDCALL);
-        } else if constexpr (std::is_void_v<R>) {
-            (self->*M)(std::get<I>(args).get()...);
-        } else {
-            set_result<R>(c, (self->*M)(std::get<I>(args).get()...));
-        }
-        (std::get<I>(args).done(), ...);
-        c->esp += 4 * (2 + uint32_t(sizeof...(A)));  // return address, this, arguments
-    }
-    static void call(X86* c) { run(c, std::index_sequence_for<A...>{}); }
-};
-
-template <auto M>
-struct Select {
-    static constexpr recomp_fn fn = &BridgeImpl<decltype(M), M>::call;
-};
-
-// Overrides: Select<&I::Method> specialisations pointing at hand-written bridges.
-#define OVERRIDE(I, M, F) \
-    template <>           \
-    struct Select<&I::M> { static constexpr recomp_fn fn = &F; };
-
-#define SLOT(I, M) Select<&I::M>::fn
-
-// ---- IUnknown ----
-
 void flush_shadows(uint32_t proxy);  // SYSTEMMEM shadows (defined with the lock code)
 void drop_shadows(uint32_t proxy);
-
-template <typename I>
-void QI(X86* c);
-template <typename I>
-void AddRefB(X86* c) {
-    IUnknown* self = to_host(rd32(c->esp + 4));
-    c->eax = self ? self->AddRef() : 0;
-    c->esp += 8;
-}
-template <typename I>
-void ReleaseB(X86* c) {
-    const uint32_t g = rd32(c->esp + 4);
-    IUnknown* self = to_host(g);
-    const ULONG r = self ? self->Release() : 0;
-    if (self && r == 0) {
-        forget(g);
-        drop_shadows(g);
-    }
-    c->eax = r;
-    c->esp += 8;
-}
-
-// Returns the guest proxy wrapping obj according to the requested IID.
-uint32_t wrap_by_iid(const GUID& iid, void* obj);
-
-template <typename I>
-void QI(X86* c) {
-    IUnknown* self = to_host(rd32(c->esp + 4));
-    const GUID& iid = *reinterpret_cast<const GUID*>(rt::host_ptr(rd32(c->esp + 8)));
-    const uint32_t out = rd32(c->esp + 12);
-    void* obj = nullptr;
-    const HRESULT hr = self ? self->QueryInterface(iid, &obj) : E_NOINTERFACE;
-    if (out) wr32(out, SUCCEEDED(hr) ? wrap_by_iid(iid, obj) : 0);
-    c->eax = uint32_t(hr);
-    c->esp += 16;
-}
+void on_release(uint32_t proxy) { drop_shadows(proxy); }
 
 // Hand-written bridges (defined below the generated vtables).
 void d3d_create_device(X86* c);

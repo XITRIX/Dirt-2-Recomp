@@ -1,0 +1,26 @@
+diff --git a/src/winemetal/unix/winemetal_unix.c b/src/winemetal/unix/winemetal_unix.c
+index e2f93ac..a0d424a 100644
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -1738,6 +1738,21 @@ static NTSTATUS
+ _CreateMetalViewFromHWND(void *obj) {
+   struct unixcall_create_metal_view_from_hwnd *params = obj;
+ 
++#ifdef DXMT_NATIVE
++  /* A native embedder has no Wine window: it passes the CAMetalLayer to
++   * present into as the HWND (DXGI_SWAP_CHAIN_DESC.OutputWindow).  The layer
++   * doubles as the "view" handle, so ReleaseMetalView (macdrv only) leaves
++   * it alone; the embedder owns it. */
++  if (params->hwnd && [(id)(uintptr_t)params->hwnd isKindOfClass:[CAMetalLayer class]]) {
++    CAMetalLayer *layer = (CAMetalLayer *)(uintptr_t)params->hwnd;
++    if (params->device)
++      layer.device = (id<MTLDevice>)params->device;
++    params->ret_view = (obj_handle_t)layer;
++    params->ret_layer = (obj_handle_t)layer;
++    return STATUS_SUCCESS;
++  }
++#endif
++
+   struct macdrv_win_data *(*pfn_get_win_data)(HWND hwnd) = NULL;
+   void (*pfn_release_win_data)(struct macdrv_win_data *data) = NULL;
+   macdrv_metal_view (*pfn_macdrv_view_create_metal_view)(macdrv_view v, macdrv_metal_device d) = NULL;
