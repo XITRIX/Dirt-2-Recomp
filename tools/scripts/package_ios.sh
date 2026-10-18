@@ -68,7 +68,7 @@ EOF
     cmake -S "$STUB" -B "$STUB/build" -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 > /dev/null
     xcodebuild -project "$STUB/build/ProfileStub.xcodeproj" -scheme dirt2 -destination "generic/platform=iOS" \
         -derivedDataPath "${DIRT2_XCODE_DD:-$HOME/Library/Caches/Dirt2Recomp/xcode}/profile-stub" \
-        -allowProvisioningUpdates -quiet build
+        -allowProvisioningUpdates -allowProvisioningDeviceRegistration -quiet build
     PROFILE=$(find_profile) || { echo "Xcode did not produce a matching profile" >&2; exit 1; }
 fi
 echo "profile: $PROFILE"
@@ -77,7 +77,21 @@ echo "profile: $PROFILE"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 security cms -D -i "$PROFILE" > "$WORK/profile.plist"
-/usr/libexec/PlistBuddy -x -c "Print :Entitlements" "$WORK/profile.plist" > "$WORK/ents.plist"
+# Signing entitlements, as Xcode builds them: ours (dirt2.entitlements) plus the
+# identity the profile assigns. The profile's own list holds wildcards
+# (icloud-services "*", keychain groups) and environment arrays that are not
+# valid in a signature.
+python3 - "$WORK/profile.plist" "$ENTS" "$WORK/ents.plist" <<'PY'
+import plistlib, sys
+profile = plistlib.load(open(sys.argv[1], "rb"))["Entitlements"]
+ents = plistlib.load(open(sys.argv[2], "rb"))
+for key in ("application-identifier", "com.apple.developer.team-identifier", "get-task-allow"):
+    if key in profile:
+        ents[key] = profile[key]
+if any(k.startswith("com.apple.developer.icloud") for k in ents):
+    ents["com.apple.developer.icloud-container-environment"] = "Development" if profile.get("get-task-allow") else "Production"
+plistlib.dump(ents, open(sys.argv[3], "wb"))
+PY
 # Sign with the profile certificate whose private key is in the keychain.
 KEYCHAIN_IDS=$(security find-identity -v -p codesigning | awk '{print $2}')
 IDENTITY=

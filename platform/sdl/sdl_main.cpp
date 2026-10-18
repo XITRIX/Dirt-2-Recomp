@@ -178,6 +178,7 @@ constexpr uint32_t WM_CLOSE = 0x10, WM_ACTIVATEAPP = 0x1C, WM_ACTIVATE = 0x06;
 // background (submitting GPU work there loses the Metal device for good).
 bool SDLCALL lifecycle_watch(void*, SDL_Event* e) {
     if (e->type == SDL_EVENT_WILL_ENTER_BACKGROUND) {
+        platform::cloud_saves_flush();
         shim::post_message(0, WM_ACTIVATE, 0, 0);
         shim::post_message(0, WM_ACTIVATEAPP, 0, 0);
         std::unique_lock lk(platform::g_bg_mu);
@@ -234,9 +235,9 @@ int main(int argc, char** argv) {
             if (dir.empty()) {
                 // The Files app lists an app's folder only once Documents holds
                 // something: leave the instructions there.
-                if (FILE* f = std::fopen((std::string(docs) + "Copy the Dirt 2 folder here.txt").c_str(), "w")) {
+                if (FILE* f = std::fopen((std::string(docs) + "put your game here.txt").c_str(), "w")) {
                     std::fputs("Copy the \"Dirt 2\" game folder (the one with dirt2_game.exe) into this folder, "
-                               "then start DiRT 2 again.\n", f);
+                               "then start DiRT 2 again. Saves sync through iCloud.\n", f);
                     std::fclose(f);
                 }
                 const std::string msg = "Copy the \"Dirt 2\" game folder (the one with dirt2_game.exe) into this app's "
@@ -298,6 +299,9 @@ int main(int argc, char** argv) {
     }
     if (std::filesystem::exists(data + "/gamecontrollerdb.txt"))
         SDL_AddGamepadMappingsFromFile((data + "/gamecontrollerdb.txt").c_str());
+
+    // Saves sync before the game reads them (C:\Users\Player\Documents maps into the data folder).
+    platform::cloud_saves_start(data + "/C/Users/Player/Documents/My Games/DiRT2/savegame");
 
     if (!rt::mem_init()) return 1;
     std::string err;

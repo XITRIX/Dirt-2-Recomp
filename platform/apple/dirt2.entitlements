@@ -8,6 +8,19 @@
 	<!-- Steady performance when the system lowers power levels. -->
 	<key>com.apple.developer.sustained-execution</key>
 	<true/>
+	<!-- Save-game sync through iCloud Drive (platform/apple/cloud_saves.mm). -->
+	<key>com.apple.developer.icloud-container-identifiers</key>
+	<array>
+		<string>iCloud.com.daniilvinogradov.dirt2recomp</string>
+	</array>
+	<key>com.apple.developer.ubiquity-container-identifiers</key>
+	<array>
+		<string>iCloud.com.daniilvinogradov.dirt2recomp</string>
+	</array>
+	<key>com.apple.developer.icloud-services</key>
+	<array>
+		<string>CloudDocuments</string>
+	</array>
 	<!-- The game's working set is 1.5-2 GB. -->
 	<key>com.apple.developer.kernel.increased-memory-limit</key>
 	<true/>
