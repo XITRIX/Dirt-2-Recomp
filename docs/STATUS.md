@@ -88,7 +88,7 @@ After editing `cases.txt`, run `tests/lifter/assemble.py` to regenerate `cases.b
 | d3dx9 | Constant tables from CTAB, built-in run-time shaders, input semantics, mip filter/fill |
 | dinput8 / xinput1_3 | Keyboard and mouse via SDL3; XInput on SDL3 gamepads (HID + `gamecontrollerdb.txt`, MFi driver off), keyboard fallback pad |
 | dsound | `GetDeviceID`, `DllGetClassObject` (hardware detection only) |
-| binkw32 | Bink player on FFmpeg (`shims/video`); intros skipped unless `DIRT2_PLAY_VIDEOS=1` |
+| binkw32 | Bink player on FFmpeg (`shims/video`); start-up logo stings skipped (`DIRT2_PLAY_VIDEOS=1` plays them); the trailer TV, tutorials and attract play |
 | OpenAL, ddraw, d3dcompiler | Not yet |
 
 Notable fixes found by booting:
@@ -192,6 +192,8 @@ Debug switches:
 | `DIRT2_SCREENSHOT_DIR` | Back-buffer capture |
 | `DIRT2_INPUT_TRACE` | First XInput call per pad/result and every pad state change |
 | `DIRT2_JOYSTICK_MFI=1` | Re-enable SDL's GameController (MFi) joystick driver |
+| `DIRT2_LOG_CS` | Log each InitializeCriticalSection with its caller |
+| `DIRT2_PLAY_VIDEOS=1` / `=0` | Also play the start-up logo stings / skip every video (default: logos skipped, the rest plays) |
 | `DIRT2_RENDERER=dx11` | Run the game's DX11 renderer through DXMT (default `dx9`, DXVK) |
 | `DIRT2_DUMP_HLSL=<dir>` | DX11 path: save the HLSL of run-time `D3DCompile` calls not served by the immediate-mode shaders |
 | `DXMT_LOG_LEVEL`, `DXMT_LOG_PATH` | DXMT's own log |

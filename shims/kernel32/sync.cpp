@@ -155,7 +155,11 @@ uint32_t modify(uint32_t h, F&& f) {
 }
 
 // ---- critical sections: host mutex index stored in LockSemaphore (+16) ----
-// Lookup is lock-free (fixed table of atomic pointers); only creation locks.
+// Lookup is lock-free (fixed table of atomic pointers); only creation and
+// deletion lock. DeleteCriticalSection recycles the slot (the DX11 renderer
+// creates and deletes them continually while streaming: never recycling ran
+// the table out mid-race). Host mutexes are never freed, so a lookup racing
+// a delete never touches freed memory; a recycled slot reuses its mutex.
 struct HostCS {
     std::recursive_mutex m;
 };
@@ -163,6 +167,30 @@ constexpr uint32_t kMaxCS = 1u << 16;
 std::mutex g_cs_mu;
 std::atomic<HostCS*> g_cs[kMaxCS];
 std::atomic<uint32_t> g_cs_count{0};
+uint32_t g_cs_owner[kMaxCS];         // guest CRITICAL_SECTION address per slot (under g_cs_mu)
+std::vector<uint32_t> g_cs_free;     // recycled slots (1-based)
+std::atomic<uint32_t> g_cs_inits{0}, g_cs_deletes{0};
+
+// A new slot for the critical section at p (g_cs_mu held).
+uint32_t cs_new_slot(uint32_t p) {
+    uint32_t slot;
+    if (!g_cs_free.empty()) {
+        slot = g_cs_free.back();
+        g_cs_free.pop_back();
+    } else {
+        const uint32_t n = g_cs_count.load();
+        if (n >= kMaxCS) rt::fatal("too many critical sections (%u live)", n);
+        g_cs[n].store(new HostCS, std::memory_order_release);
+        g_cs_count.store(n + 1, std::memory_order_release);
+        slot = n + 1;
+        if (slot % 4096 == 0)
+            rt::log("kernel32: %u critical sections live (%u created, %u deleted)", slot, g_cs_inits.load(),
+                    g_cs_deletes.load());
+    }
+    g_cs_owner[slot - 1] = p;
+    __atomic_store_n(reinterpret_cast<uint32_t*>(rt::host_ptr(p + 16)), slot, __ATOMIC_RELEASE);
+    return slot;
+}
 
 HostCS& cs_for(uint32_t p) {
     uint32_t slot = __atomic_load_n(reinterpret_cast<uint32_t*>(rt::host_ptr(p + 16)), __ATOMIC_ACQUIRE);
@@ -171,12 +199,31 @@ HostCS& cs_for(uint32_t p) {
     std::lock_guard lk(g_cs_mu);
     slot = rd32(p + 16);
     if (slot && slot <= g_cs_count.load()) return *g_cs[slot - 1].load();
-    const uint32_t n = g_cs_count.load();
-    if (n >= kMaxCS) rt::fatal("too many critical sections");
-    g_cs[n].store(new HostCS, std::memory_order_release);
-    g_cs_count.store(n + 1, std::memory_order_release);
-    __atomic_store_n(reinterpret_cast<uint32_t*>(rt::host_ptr(p + 16)), n + 1, __ATOMIC_RELEASE);
-    return *g_cs[n].load();
+    return *g_cs[cs_new_slot(p) - 1].load();
+}
+
+// InitializeCriticalSection*: zero the struct, keep this address's slot if it
+// already has one (initialised twice without a delete), else take a new one.
+void cs_init(uint32_t p) {
+    std::lock_guard lk(g_cs_mu);
+    ++g_cs_inits;
+    const uint32_t old = rd32(p + 16);
+    std::memset(rt::host_ptr(p), 0, 24);
+    wr32(p + 4, 0xFFFFFFFF);  // LockCount
+    if (old && old <= g_cs_count.load() && g_cs_owner[old - 1] == p)
+        __atomic_store_n(reinterpret_cast<uint32_t*>(rt::host_ptr(p + 16)), old, __ATOMIC_RELEASE);
+    else
+        cs_new_slot(p);
+}
+
+void cs_delete(uint32_t p) {
+    std::lock_guard lk(g_cs_mu);
+    ++g_cs_deletes;
+    const uint32_t slot = rd32(p + 16);
+    if (!slot || slot > g_cs_count.load() || g_cs_owner[slot - 1] != p) return;
+    g_cs_owner[slot - 1] = 0;
+    g_cs_free.push_back(slot);
+    wr32(p + 16, 0);
 }
 
 // ---- TLS slots: TEB + 0xE10 ----
@@ -309,12 +356,14 @@ STDCALL(kernel32, GetCurrentThread, 0) { return kCurrentThread; }
 
 // ---- critical sections ----
 STDCALL(kernel32, InitializeCriticalSection, 1) {
-    std::memset(rt::host_ptr(a[0]), 0, 24);
-    wr32(a[0] + 4, 0xFFFFFFFF);  // LockCount
-    cs_for(a[0]);
+    if (std::getenv("DIRT2_LOG_CS")) rt::log("InitializeCriticalSection(%08X) from %08X", a[0], rd32(c->esp));
+    cs_init(a[0]);
     return 0;
 }
-STDCALL(kernel32, DeleteCriticalSection, 1) { return 0; }
+STDCALL(kernel32, DeleteCriticalSection, 1) {
+    cs_delete(a[0]);
+    return 0;
+}
 STDCALL(kernel32, EnterCriticalSection, 1) {
     cs_for(a[0]).m.lock();
     wr32(a[0] + 8, rd32(a[0] + 8) + 1);
@@ -402,9 +451,7 @@ STDCALL(kernel32, DuplicateHandle, 7) {
 STDCALL(kernel32, EncodePointer, 1) { return a[0]; }
 STDCALL(kernel32, DecodePointer, 1) { return a[0]; }
 STDCALL(kernel32, InitializeCriticalSectionAndSpinCount, 2) {
-    std::memset(rt::host_ptr(a[0]), 0, 24);
-    wr32(a[0] + 4, 0xFFFFFFFF);
-    cs_for(a[0]);
+    cs_init(a[0]);
     return 1;
 }
 STDCALL(kernel32, FlsAlloc, 1) {

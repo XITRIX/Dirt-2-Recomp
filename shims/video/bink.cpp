@@ -45,6 +45,7 @@ struct Player {
     uint32_t next_set = 0;
     // Timing: wall-clock time at which frame 1 is due; paused time is excluded.
     Clock::time_point start{};
+    bool play = true;           // false: skipped (one black, silent frame)
     bool started = false, paused = false;
     Clock::time_point pause_at{};
     std::mutex mu;
@@ -110,9 +111,16 @@ BINK(BinkOpen, 8) {  // (const char* name, flags) -> HBINK
     const std::string win = a.str(0) ? a.str(0) : "";
     const std::string host = vfs::host_path(win);
     auto p = std::make_shared<Player>();
-    // Videos are skipped unless DIRT2_PLAY_VIDEOS=1: the clip reports a single
-    // frame, so the intro sequence finishes at once, and is silent.
-    static const bool play = std::getenv("DIRT2_PLAY_VIDEOS") != nullptr;
+    // The start-up stings (publisher and hardware logos) are skipped: the clip
+    // reports a single frame, so the intro sequence finishes at once, silently.
+    // Everything else plays (the trailer TV, tutorials, attract).
+    // DIRT2_PLAY_VIDEOS=1 plays the stings too, =0 skips every video.
+    const char* env = std::getenv("DIRT2_PLAY_VIDEOS");
+    std::string file = win.substr(win.find_last_of("\\/") + 1);
+    std::transform(file.begin(), file.end(), file.begin(), [](unsigned char ch) { return std::tolower(ch); });
+    const bool sting = file.find("sting") != std::string::npos;
+    const bool play = env ? std::strcmp(env, "0") != 0 : !sting;
+    p->play = play;
     if (!p->dec.open(host, play)) {
         rt::log("BinkOpen(%s): cannot open", win.c_str());
         return 0;
@@ -172,8 +180,7 @@ BINK(BinkDoFrame, 4) {
         p->started = true;
         if (p->audio) SDL_ResumeAudioStreamDevice(p->audio);
     }
-    static const bool play = std::getenv("DIRT2_PLAY_VIDEOS") != nullptr;
-    if (play) {
+    if (p->play) {
         if (p->dec.decode_next()) p->write_buffers();
     } else if (p->buffers) {
         // Skipped video: one black frame (Y=16, chroma neutral).
