@@ -1676,7 +1676,7 @@ index 1fdc5bf52..4538c09b9 100644
  extern VideoBootStrap KMSDRM_bootstrap;
  extern VideoBootStrap DUMMY_bootstrap;
 diff --git a/src/video/SDL_video.c b/src/video/SDL_video.c
-index 88f833ef8..456a61f25 100644
+index 88f833ef8..146176799 100644
 --- a/src/video/SDL_video.c
 +++ b/src/video/SDL_video.c
 @@ -131,6 +131,9 @@ static VideoBootStrap *bootstrap[] = {
@@ -1689,7 +1689,7 @@ index 88f833ef8..456a61f25 100644
  #ifdef SDL_VIDEO_DRIVER_KMSDRM
      &KMSDRM_bootstrap,
  #endif
-@@ -298,6 +301,13 @@ static Uint32 SDL_DefaultGraphicsBackends(SDL_VideoDevice *_this)
+@@ -298,6 +301,15 @@ static Uint32 SDL_DefaultGraphicsBackends(SDL_VideoDevice *_this)
      if (SDL_strcmp(_this->name, "openvr") == 0) {
          return SDL_WINDOW_OPENGL;
      }
@@ -1697,7 +1697,9 @@ index 88f833ef8..456a61f25 100644
 +#ifdef SDL_VIDEO_DRIVER_SWITCH
 +    // EGL is the only way to get anything on screen: a window created without
 +    // SDL_WINDOW_OPENGL could not be shown at all.
-+    if (SDL_strcmp(_this->name, "Switch") == 0 && _this->GL_CreateContext) {
++    // ...unless the app presents to the native window itself (SDL_SWITCH_NATIVE_WINDOW).
++    if (SDL_strcmp(_this->name, "Switch") == 0 && _this->GL_CreateContext &&
++        !SDL_GetHintBoolean("SDL_SWITCH_NATIVE_WINDOW", false)) {
 +        return SDL_WINDOW_OPENGL;
 +    }
  #endif
@@ -2408,10 +2410,10 @@ index 000000000..d9c1361f0
 +/* vi: set ts=4 sw=4 expandtab: */
 diff --git a/src/video/switch/SDL_switchvideo.c b/src/video/switch/SDL_switchvideo.c
 new file mode 100644
-index 000000000..0d812b0f8
+index 000000000..3c37a3f30
 --- /dev/null
 +++ b/src/video/switch/SDL_switchvideo.c
-@@ -0,0 +1,470 @@
+@@ -0,0 +1,473 @@
 +/*
 +  Simple DirectMedia Layer
 +  Copyright (C) 1997-2018 Sam Lantinga <slouken@libsdl.org>
@@ -2732,7 +2734,10 @@ index 000000000..0d812b0f8
 +        return SDL_SetError("Switch only supports one window");
 +    }
 +
-+    if (!_this->egl_data) {
++    // SDL_SWITCH_NATIVE_WINDOW=1: the app presents to nwindowGetDefault() itself
++    // (deko3d, NVN): no EGL surface may hold the window's buffers.
++    const bool native = SDL_GetHintBoolean("SDL_SWITCH_NATIVE_WINDOW", false);
++    if (!_this->egl_data && !native && !(window->flags & SDL_WINDOW_VULKAN)) {
 +        return SDL_SetError("EGL not initialized");
 +    }
 +
@@ -2748,8 +2753,8 @@ index 000000000..0d812b0f8
 +        return SDL_SetError("Could not set NWindow dimensions: 0x%x", rc);
 +    }
 +
-+    if (window->flags & SDL_WINDOW_VULKAN) {
-+        // the Vulkan swapchain configures the window's buffers itself
++    if ((window->flags & SDL_WINDOW_VULKAN) || native) {
++        // the Vulkan swapchain (or the app) configures the window's buffers itself
 +        window_data->egl_surface = EGL_NO_SURFACE;
 +    } else if ((window_data->egl_surface = SDL_EGL_CreateSurface(_this, window, nWindow)) == EGL_NO_SURFACE) {
 +        return SDL_SetError("Could not create GLES window surface");
