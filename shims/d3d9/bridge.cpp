@@ -23,6 +23,8 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <string>
+#include <thread>
 #include <tuple>
 #include <type_traits>
 #include <unordered_map>

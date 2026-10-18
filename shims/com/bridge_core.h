@@ -30,11 +30,18 @@
 //   void on_release(uint32_t proxy);                  drop per-proxy state
 // It then specialises custom_arg<T> for types with its own Arg<>, and includes
 // its generated vtables after its OVERRIDEs.
+// The standard headers below must already be included above that namespace:
+// included for the first time inside it, they would land in the wrong scope.
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
+#include <cstdlib>
 #include <cstring>
+#include <string>
+#include <thread>
 #include <mutex>
 #include <tuple>
 #include <type_traits>
@@ -400,7 +407,67 @@ struct Select {
     template <>           \
     struct Select<&I::M> { static constexpr recomp_fn fn = &F; };
 
-#define SLOT(I, M) Select<&I::M>::fn
+// ---- Call census (DIRT2_COUNT_CALLS=1) ----
+// Every generated slot counts its calls when enabled; every 10 s the totals so
+// far are logged, most called first. What a host backend has to implement, and
+// how hot each method is (the deko3d device, docs/SWITCH.md).
+
+struct CallCounter {
+    const char* name;
+    std::atomic<uint64_t> n{0};
+};
+
+inline bool count_calls() {
+    static const bool on = std::getenv("DIRT2_COUNT_CALLS") != nullptr;
+    return on;
+}
+
+inline CallCounter* register_counter(const char* name) {
+    static std::mutex mu;
+    static std::vector<CallCounter*> all;
+    std::lock_guard lk(mu);
+    if (all.empty())
+        std::thread([] {
+            for (;;) {
+                std::this_thread::sleep_for(std::chrono::seconds(10));
+                std::vector<std::pair<uint64_t, const char*>> v;
+                {
+                    std::lock_guard lk(mu);
+                    for (CallCounter* k : all) v.emplace_back(k->n.load(std::memory_order_relaxed), k->name);
+                }
+                std::sort(v.begin(), v.end(), [](auto& a, auto& b) { return a.first > b.first; });
+                rt::log("%s calls: %zu methods", kBridge, v.size());
+                for (size_t i = 0; i < v.size(); i += 12) {  // short lines: the log truncates at 2 KB
+                    std::string line;
+                    for (size_t j = i; j < v.size() && j < i + 12; ++j)
+                        line += std::string(" ") + v[j].second + "=" + std::to_string(v[j].first);
+                    rt::log("%s calls:%s", kBridge, line.c_str());
+                }
+            }
+        }).detach();
+    all.push_back(new CallCounter{name});
+    return all.back();
+}
+
+template <size_t N>
+struct SlotName {
+    char s[N];
+    constexpr SlotName(const char (&a)[N]) {
+        for (size_t i = 0; i < N; ++i) s[i] = a[i];
+    }
+};
+
+template <SlotName Name, recomp_fn F>
+void counted(X86* c) {
+    if (count_calls()) {
+        static CallCounter* const k = register_counter(Name.s);
+        k->n.fetch_add(1, std::memory_order_relaxed);
+    }
+    F(c);
+}
+
+#define SLOT(I, M) &counted<SlotName(#I "::" #M), Select<&I::M>::fn>
+
 
 // ---- IUnknown ----
 

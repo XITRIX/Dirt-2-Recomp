@@ -16,6 +16,8 @@
 #include <cstdlib>
 #include <map>
 #include <set>
+#include <string>
+#include <thread>
 #include <tuple>
 #include <vector>
 
