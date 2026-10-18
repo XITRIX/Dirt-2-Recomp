@@ -6,7 +6,8 @@ The game's own code is lifted mechanically. Windows, DirectX, OpenAL, Bink and G
 
 | Original | Replacement |
 |---|---|
-| Direct3D 9 | DXVK (d3d9) → Vulkan → MoltenVK → Metal |
+| Direct3D 11 (the default on iOS) | DXMT → Metal |
+| Direct3D 9 (the default on macOS for now) | DXVK (d3d9) → Vulkan → MoltenVK → Metal |
 | OpenAL / Rapture3D | OpenAL Soft |
 | XInput / DirectInput | SDL3 gamepad (GameController on Apple) |
 | Win32 window and messages | SDL3 |
@@ -26,12 +27,103 @@ platform/       SDL3 host and per-platform glue (platform/apple)
 generated/      recompiler output (not committed)
 ```
 
-## Building the recompiler
+## Build and install (macOS and iOS)
+
+You need:
+
+- **A Mac with Apple silicon**, and **Xcode 26 or later** (with the iOS SDK for iOS builds). Run Xcode once so it installs its components.
+- **Build tools from Homebrew:**
+
+  ```bash
+  brew install cmake ninja meson glslang pkg-config
+  ```
+
+  These are build tools only: every library the game uses is built from pinned sources by the scripts below. Python 3 comes with macOS.
+- **Your own copy of the game:** Colin McRae: DiRT 2, PC version 1.1 (the Steam release), meaning the folder that contains `dirt2_game.exe`. It is never copied into the repository.
+- **For iOS:** an Apple developer account (team), and an iPhone or iPad with Developer Mode on, connected by cable.
+
+### 1. Get the sources
+
+```bash
+git clone --recurse-submodules <repository url> Dirt2
+cd Dirt2
+```
+
+The folder name `Dirt2` is used in the commands below.
+
+### 2. Build the libraries (once; about 30–60 minutes)
+
+Each script builds for the platforms you list, into its own folder under `build/`:
+
+```bash
+tools/scripts/build_deps.sh macos iphoneos       # SDL3, OpenAL Soft, Ogg/Vorbis, FFmpeg (Bink)
+tools/scripts/build_graphics.sh macos iphoneos   # MoltenVK and DXVK (the DX9 path)
+tools/scripts/build_llvm.sh macos iphoneos       # LLVM 15 for DXMT's shader translator
+tools/scripts/build_dxmt.sh macos iphoneos       # DXMT (the DX11 path)
+```
+
+Leave out `iphoneos` if you only want the Mac build.
+
+### 3. Recompile the game (about 5 minutes)
+
+```bash
+cmake --preset macos-arm64
+cmake --build build/macos-arm64 --target recomp
+./build/macos-arm64/tools/recomp/recomp lift "<game folder>/dirt2_game.exe" --out generated \
+    --entries tools/recomp/config/entries.txt --hooks tools/recomp/config/hooks.txt --include-dead
+```
+
+This writes the game's code as C into `generated/`, which is never committed. Rerun it only when the recompiler or its config changes.
+
+### 4. macOS: build and play
 
 ```bash
 cmake --preset macos-arm64
 cmake --build build/macos-arm64
-./build/macos-arm64/tools/recomp/recomp analyze "<game dir>/dirt2_game.exe" --out generated
+./build/macos-arm64/dirt2 --game "<game folder>"
+```
+
+- **Renderer:** DX9 is the default on macOS. Run with `DIRT2_RENDERER=dx11` to use the DX11 path.
+- **Saves and settings:** these go to `~/Library/Application Support/Dirt2Recomp`.
+- **A shareable build:** `tools/scripts/package_macos.sh` writes `build/package/macos/DiRT2-macOS.zip`, without game data.
+
+### 5. iOS: build, sign, install
+
+```bash
+cmake --preset ios -DDIRT2_GAME_DIR="<game folder>"   # the app icon comes from the game's dirt2.ico
+cmake --build build/ios
+DIRT2_TEAM=<your team id> DIRT2_BUNDLE_ID=<your bundle id> tools/scripts/package_ios.sh device
+```
+
+- **Signing:** `package_ios.sh` signs the app with a provisioning profile that grants the entitlements the game needs: the 4 GB address space, the increased memory limit, and iCloud for save sync. If no such profile is installed, it asks Xcode to create one; the device must be registered to your team.
+- **Using your own bundle id:** change the iCloud container from `iCloud.com.daniilvinogradov.dirt2recomp` to `iCloud.<your bundle id>` in two places, `platform/apple/dirt2.entitlements` and `platform/apple/cloud_saves.mm`.
+
+Install it on the connected device:
+
+```bash
+xcrun devicectl list devices
+xcrun devicectl device install app --device <device id> build/ios/dirt2.app
+```
+
+**Copy the game data once.** In Finder, select the device, open the **Files** tab, and drag the game folder (the one with `dirt2_game.exe`) onto **DiRT 2**. On the device itself, the Files app shows the same folder under **On My iPhone** / **On My iPad**. After that, launch DiRT 2 from the home screen. A controller is recommended.
+
+### Troubleshooting
+
+- **"Device is not able to fulfill the requested usage assertion" during install:** the device is locked or asleep. Unlock it, keep it connected, and retry.
+- **Logs:**
+  - macOS: `~/Library/Application Support/Dirt2Recomp/dirt2.log`.
+  - iOS: copy the log off the device with
+
+    ```bash
+    xcrun devicectl device copy from --device <device id> --domain-type appDataContainer --domain-identifier <bundle id> --source "Library/Application Support/Dirt2Recomp/dirt2.log" --destination dirt2.log
+    ```
+  - The previous run's log is kept as `dirt2.prev.log`.
+- **More detail:** [HANDOVER.md](HANDOVER.md) covers the build system, shader warm-up data, pitfalls and the debugging switches.
+
+## The recompiler on its own
+
+```bash
+./build/macos-arm64/tools/recomp/recomp analyze "<game folder>/dirt2_game.exe" --out generated
 ```
 
 `generated/analysis.md` summarises function discovery, coverage, jump tables, the instruction mix and the import call sites. `generated/functions.csv` lists every function.
