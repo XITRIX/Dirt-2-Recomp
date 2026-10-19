@@ -375,6 +375,17 @@ DWORD VolumeTexture::SetLOD(DWORD lod) {
     core.lod = std::min<DWORD>(lod, core.img.levels - 1);
     return old;
 }
+HRESULT VolumeTexture::GetLevelDesc(UINT level, D3DVOLUME_DESC* d) {
+    if (!d || level >= core.img.levels) return D3DERR_INVALIDCALL;
+    d->Format = core.d3dfmt;
+    d->Type = D3DRTYPE_VOLUME;
+    d->Usage = core.usage;
+    d->Pool = core.pool;
+    d->Width = mip(core.img.width, level);
+    d->Height = mip(core.img.height, level);
+    d->Depth = mip(core.img.depth, level);
+    return D3D_OK;
+}
 HRESULT VolumeTexture::LockBox(UINT level, D3DLOCKED_BOX* out, const D3DBOX* box, DWORD flags) {
     if (!out || level >= core.img.levels || box) return D3DERR_INVALIDCALL;  // whole levels only
     const uint32_t w = mip(core.img.width, level), h = mip(core.img.height, level), d = mip(core.img.depth, level);

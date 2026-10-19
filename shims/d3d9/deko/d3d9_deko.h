@@ -177,6 +177,8 @@ public:
     STDMETHOD_(D3DRESOURCETYPE, GetType)() override { return D3DRTYPE_VOLUMETEXTURE; }
     STDMETHOD_(DWORD, SetLOD)(DWORD lod) override;
     STDMETHOD_(DWORD, GetLevelCount)() override { return core.img.levels; }
+    STDMETHOD_(DWORD, GetLOD)() override { return core.lod; }
+    STDMETHOD(GetLevelDesc)(UINT level, D3DVOLUME_DESC* desc) override;
     STDMETHOD(LockBox)(UINT level, D3DLOCKED_BOX* out, const D3DBOX* box, DWORD flags) override;
     STDMETHOD(UnlockBox)(UINT level) override;
     Alloc staging;
