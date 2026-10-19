@@ -124,6 +124,7 @@ bool find_shader(const DWORD* code, uint32_t* bytes, const PackMeta** meta, cons
         return false;
     }
     if (!it->second.loaded && !load_entry(it->second)) return false;
+    it->second.meta.name = key.substr(0, 12);
     *meta = &it->second.meta;
     *shader = &it->second.shader;
     return true;

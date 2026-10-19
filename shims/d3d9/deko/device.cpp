@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -217,7 +218,44 @@ bool Device::init() {
     std::memset(black.cpu(), 0, 256);
     upload(dummy_, 0, 0, black, 1, RECT{0, 0, 1, 1});
     make_back_buffer();
+    if (std::getenv("DIRT2_DEKO_SELFTEST")) self_test();
     return back_buffer_ && back_buffer_->ok();
+}
+
+void Device::self_test() {
+    Gpu& g = gpu();
+    rt::log("deko3d: self-test: 180 frames of cleared swap images");
+    auto t0 = std::chrono::steady_clock::now(), last = t0;
+    for (int i = 1; i <= 180; ++i) {
+        const int slot = g.acquire_swap_image();
+        DkImageView v;
+        dkImageViewDefaults(&v, &g.swap_images[slot]);
+        dkCmdBufBindRenderTarget(g.cmd, &v, nullptr);
+        const DkScissor sc{0, 0, g.swap_w, g.swap_h};
+        dkCmdBufSetScissors(g.cmd, 0, &sc, 1);
+        const float t = float(i % 60) / 60.0f;
+        dkCmdBufClearColorFloat(g.cmd, 0, DkColorMask_RGBA, t, 0.5f * (1.0f - t), 1.0f - t, 1.0f);
+        g.end_frame(slot);
+        if (i % 30 == 0) {
+            const auto now = std::chrono::steady_clock::now();
+            rt::log("deko3d: self-test frame %d, %.1f ms/frame", i,
+                    std::chrono::duration<double, std::milli>(now - last).count() / 30.0);
+            last = now;
+        }
+    }
+    rt::log("deko3d: self-test done in %.1f s", std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+    dirty_ = kAll;
+}
+
+void Device::sync_after_draw(const char* kind, uint32_t prims, uint32_t instances, int base, uint32_t start) {
+    ++draw_total_;
+    static const bool sync = std::getenv("DIRT2_DEKO_SYNC") != nullptr;
+    if (!sync) return;
+    char what[256];
+    std::snprintf(what, sizeof what, "draw %llu (%s: vs %s ps %s, %u primitives, %u instances, base %d, start %u, frame %u)",
+                  (unsigned long long)draw_total_, kind, vs_->meta->name.c_str(), ps_->meta->name.c_str(), prims,
+                  instances, base, start, present_count_);
+    gpu().flush(true, what);
 }
 
 void Device::make_back_buffer() {
@@ -1101,6 +1139,7 @@ HRESULT Device::DrawPrimitive(D3DPRIMITIVETYPE type, UINT start, UINT count) {
     uint32_t instances;
     if (!prepare_draw(type, &instances)) return D3D_OK;
     dkCmdBufDraw(gpu().cmd, primitive(type), vertex_count(type, count), 1, start, 0);
+    sync_after_draw("DrawPrimitive", count, 1, 0, start);
     return D3D_OK;
 }
 
@@ -1113,6 +1152,7 @@ HRESULT Device::DrawIndexedPrimitive(D3DPRIMITIVETYPE type, INT base, UINT, UINT
                           indices_->store.addr());
     indices_->store.used();
     dkCmdBufDrawIndexed(cmd, primitive(type), vertex_count(type, count), instances, start, base, 0);
+    sync_after_draw("DrawIndexedPrimitive", count, instances, base, start);
     return D3D_OK;
 }
 
@@ -1124,7 +1164,10 @@ HRESULT Device::DrawPrimitiveUP(D3DPRIMITIVETYPE type, UINT count, const void* d
     up_ = {true, a.gpu(), bytes, stride};
     dirty_ |= kVertexInput;
     uint32_t instances;
-    if (prepare_draw(type, &instances)) dkCmdBufDraw(gpu().cmd, primitive(type), vertex_count(type, count), 1, 0, 0);
+    if (prepare_draw(type, &instances)) {
+        dkCmdBufDraw(gpu().cmd, primitive(type), vertex_count(type, count), 1, 0, 0);
+        sync_after_draw("DrawPrimitiveUP", count, 1, 0, 0);
+    }
     up_.active = false;
     // D3D9 unbinds stream 0 after a UP draw.
     set_ref(streams_[0].vb, static_cast<VertexBuffer*>(nullptr));
@@ -1148,6 +1191,7 @@ HRESULT Device::DrawIndexedPrimitiveUP(D3DPRIMITIVETYPE type, UINT min_index, UI
     if (prepare_draw(type, &instances)) {
         dkCmdBufBindIdxBuffer(gpu().cmd, isize == 4 ? DkIdxFormat_Uint32 : DkIdxFormat_Uint16, ix.gpu());
         dkCmdBufDrawIndexed(gpu().cmd, primitive(type), n, 1, 0, 0, 0);
+        sync_after_draw("DrawIndexedPrimitiveUP", count, 1, 0, 0);
     }
     up_.active = false;
     set_ref(streams_[0].vb, static_cast<VertexBuffer*>(nullptr));

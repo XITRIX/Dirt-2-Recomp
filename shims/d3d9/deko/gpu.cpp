@@ -229,13 +229,13 @@ void Gpu::begin_list() {
     descriptors_dirty = true;
 }
 
-void Gpu::flush(bool wait) {
+void Gpu::flush(bool wait, const char* what) {
     submit(queue, dkCmdBufFinishList(cmd), wait ? "a wait-for-idle submit" : "a flush");
     if (wait) {
         // dkQueueWaitIdle has no timeout: wait on a fence instead.
         DkFence f{};
         dkQueueSignalFence(queue, &f, true);
-        wait_fence(&f, "a read-back");
+        wait_fence(&f, what);
     }
     else dkQueueFlush(queue);
     begin_list();

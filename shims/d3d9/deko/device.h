@@ -124,6 +124,9 @@ private:
     };
 
     bool prepare_draw(D3DPRIMITIVETYPE type, uint32_t* instances);
+    // DIRT2_DEKO_SYNC=1: waits for the GPU after each draw; a draw still running after 2 s is logged.
+    void sync_after_draw(const char* kind, uint32_t prims, uint32_t instances, int base, uint32_t start);
+    void self_test();  // DIRT2_DEKO_SELFTEST=1: clear and present 180 frames, nothing from the game
     void flush_targets();
     void flush_viewport();
     void flush_raster_state();
@@ -186,6 +189,7 @@ private:
         uint32_t size = 0, stride = 0;
     } up_;
     uint32_t present_count_ = 0, fps_presents_ = 0;
+    uint64_t draw_total_ = 0;
     uint64_t fps_t0_ = 0;
 };
 

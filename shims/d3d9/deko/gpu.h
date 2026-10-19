@@ -120,7 +120,7 @@ struct Gpu {
     // Records the per-list state (descriptor tables) at the start of a command list.
     void begin_list();
     // Submits what is recorded so far; with wait, blocks until the GPU is idle.
-    void flush(bool wait);
+    void flush(bool wait, const char* what = "a read-back");
     // Ends the frame: submit, signal its fence, present swap image `slot`, start the next frame.
     void end_frame(int present_slot);
     int acquire_swap_image();
