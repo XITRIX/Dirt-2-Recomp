@@ -1021,7 +1021,7 @@ void Device::flush_textures() {
             const int idx = base + s.reg;
             if (idx >= kSamplers) continue;
             TextureCore* t = core_of(textures_[idx]);
-            const int image = t ? t->img.descriptor() : dummy_.descriptor();
+            const int image = t && t->img.mem ? t->img.descriptor() : dummy_.descriptor();
             const DkResHandle h = dkMakeTextureHandle(uint32_t(image), uint32_t(sampler_id(idx)));
             dkCmdBufBindTextures(cmd, stage, s.reg, &h, 1);
         }

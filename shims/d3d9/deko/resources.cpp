@@ -80,6 +80,8 @@ const FormatInfo* format_info(D3DFORMAT f) {
         {fourcc('I', 'N', 'T', 'Z'), make(DkImageFormat_Z24S8, 1, 4, true)},
         {fourcc('D', 'F', '2', '4'), make(DkImageFormat_Z24S8, 1, 4, true)},
         {fourcc('D', 'F', '1', '6'), make(DkImageFormat_Z16, 1, 2, true)},
+        // Render target without colour storage, for depth-only passes: no image.
+        {fourcc('N', 'U', 'L', 'L'), make(DkImageFormat_None, 1, 0)},
     };
     auto it = table.find(uint32_t(f));
     if (it == table.end()) {
@@ -233,6 +235,15 @@ bool init_core(TextureCore& c, Device* d, DkImageType type, UINT w, UINT h, UINT
     if (levels == 0 || (usage & D3DUSAGE_AUTOGENMIPMAP)) levels = (usage & D3DUSAGE_AUTOGENMIPMAP) ? 1 : full_levels(w, h, depth);
     for (int i = 0; i < 4; ++i) c.img.swizzle[i] = c.fmt->swizzle[i];
     const uint32_t layers = type == DkImageType_Cubemap ? 6 : 1;
+    if (c.fmt->dk == DkImageFormat_None) {  // NULL format: sizes only, nothing to draw into or sample
+        c.img.type = type;
+        c.img.width = std::max<UINT>(w, 1);
+        c.img.height = std::max<UINT>(h, 1);
+        c.img.levels = std::max<UINT>(levels, 1);
+        c.img.layers = layers;
+        c.surfaces.assign(size_t(layers) * c.img.levels, nullptr);
+        return true;
+    }
     if (!c.img.create(type, c.fmt->dk, w, h, depth, levels, layers, image_flags(usage, *c.fmt))) return false;
     c.surfaces.assign(size_t(layers) * c.img.levels, nullptr);
     return true;
@@ -392,7 +403,8 @@ Surface::Surface(Device* d, IUnknown* container, TextureCore* t, uint32_t ly, ui
 Surface::Surface(Device* d, UINT w, UINT h, D3DFORMAT f, DWORD u, D3DPOOL p, bool cpu_only)
     : width(w), height(h), d3dfmt(f), fmt(format_info(f)), usage(u), pool(p), dev_(d) {
     if (!fmt) return;
-    if (cpu_only) {
+    if (fmt->dk == DkImageFormat_None) {  // NULL-format render target: no storage
+    } else if (cpu_only) {
         cpu_pitch = row_pitch(*fmt, w);
         cpu = gpu().readback.alloc(cpu_pitch * level_rows(*fmt, h), 256);
     } else {
@@ -412,7 +424,7 @@ Surface::~Surface() {
     if (fmt) dev_->Release();
 }
 
-bool Surface::ok() const { return tex || own.mem || cpu; }
+bool Surface::ok() const { return tex || own.mem || cpu || (fmt && fmt->dk == DkImageFormat_None); }
 
 HRESULT Surface::QueryInterface(REFIID riid, void** out) { return StubIDirect3DSurface9::QueryInterface(riid, out); }
 ULONG Surface::AddRef() { return container_ ? container_->AddRef() : StubIDirect3DSurface9::AddRef(); }
@@ -464,7 +476,7 @@ HRESULT Surface::UnlockRect() {
 }
 
 GpuImage* Surface::image() {
-    if (tex) return &tex->img;
+    if (tex) return tex->img.mem ? &tex->img : nullptr;
     return own.mem ? &own : nullptr;
 }
 

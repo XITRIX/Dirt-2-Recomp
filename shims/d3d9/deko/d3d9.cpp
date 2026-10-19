@@ -64,6 +64,7 @@ HRESULT D3D9::CheckDeviceFormat(UINT adapter, D3DDEVTYPE, D3DFORMAT, DWORD usage
     if (!f) return D3DERR_NOTAVAILABLE;
     if ((usage & D3DUSAGE_DEPTHSTENCIL) && !f->depth) return D3DERR_NOTAVAILABLE;
     if ((usage & D3DUSAGE_RENDERTARGET) && (f->depth || f->block > 1)) return D3DERR_NOTAVAILABLE;
+    if (f->dk == DkImageFormat_None && !(usage & D3DUSAGE_RENDERTARGET)) return D3DERR_NOTAVAILABLE;  // NULL
     return D3D_OK;
 }
 
