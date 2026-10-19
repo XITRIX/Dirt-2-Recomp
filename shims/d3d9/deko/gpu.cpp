@@ -30,6 +30,24 @@ void debug_cb(void*, const char* context, DkResult result, const char* message) 
     rt::log("deko3d: %s: %s (result %d)", context, message ? message : "", int(result));
 }
 
+// Submits a command list and reports a queue in error (a GPU fault) once.
+void submit(DkQueue q, DkCmdList list, const char* where) {
+    dkQueueSubmitCommands(q, list);
+    static bool reported = false;
+    if (!reported && dkQueueIsInErrorState(q)) {
+        reported = true;
+        rt::log("deko3d: the queue is in an error state after %s (GPU fault)", where);
+    }
+}
+
+// Waits for a fence; a wait over 2 s is logged (a GPU hang shows up in the log).
+void wait_fence(DkFence* f, const char* what) {
+    if (dkFenceWait(f, 2'000'000'000) == DkResult_Success) return;
+    rt::log("deko3d: %s has not finished after 2 s: the GPU may be hung", what);
+    dkFenceWait(f, -1);
+    rt::log("deko3d: %s finished", what);
+}
+
 // The command buffer ran out of the frame's memory: give it another chunk.
 void add_cmd_mem(void*, DkCmdBuf cmd, size_t min_size) {
     Gpu& g = gpu();
@@ -212,8 +230,13 @@ void Gpu::begin_list() {
 }
 
 void Gpu::flush(bool wait) {
-    dkQueueSubmitCommands(queue, dkCmdBufFinishList(cmd));
-    if (wait) dkQueueWaitIdle(queue);
+    submit(queue, dkCmdBufFinishList(cmd), wait ? "a wait-for-idle submit" : "a flush");
+    if (wait) {
+        // dkQueueWaitIdle has no timeout: wait on a fence instead.
+        DkFence f{};
+        dkQueueSignalFence(queue, &f, true);
+        wait_fence(&f, "a read-back");
+    }
     else dkQueueFlush(queue);
     begin_list();
 }
@@ -221,7 +244,7 @@ void Gpu::flush(bool wait) {
 int Gpu::acquire_swap_image() { return dkQueueAcquireImage(queue, swapchain); }
 
 void Gpu::end_frame(int present_slot) {
-    dkQueueSubmitCommands(queue, dkCmdBufFinishList(cmd));
+    submit(queue, dkCmdBufFinishList(cmd), "a frame");
     dkQueueSignalFence(queue, &cur().fence, true);
     cur().submitted = true;
     if (present_slot >= 0) dkQueuePresentImage(queue, swapchain, present_slot);
@@ -230,7 +253,7 @@ void Gpu::end_frame(int present_slot) {
 
     // Reuse the next frame's memory once its GPU work is done.
     Frame& f = cur();
-    if (f.submitted) dkFenceWait(&f.fence, -1);
+    if (f.submitted) wait_fence(&f.fence, "the frame before last");
     f.submitted = false;
     for (auto& fn : f.on_done) fn();
     f.on_done.clear();

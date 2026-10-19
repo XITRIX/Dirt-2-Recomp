@@ -293,13 +293,19 @@ HRESULT Device::Present(const RECT*, const RECT*, HWND, const RGNDATA*) {
     dirty_ = kAll;
     // Per-frame cache maintenance: CPU writes to memory the GPU may hold in L2.
     dkCmdBufBarrier(g.cmd, DkBarrier_None, DkInvalidateFlags_L2Cache | DkInvalidateFlags_Image | DkInvalidateFlags_Shader);
-    if (++present_count_ % 300 == 0) {
-        const uint64_t now = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                          std::chrono::steady_clock::now().time_since_epoch()).count());
-        if (fps_t0_)
-            rt::log("deko3d: %u presents, %.1f fps, %u draws/frame, %u skipped", present_count_,
-                    300.0 / (double(now - fps_t0_) / 1e9), draws_ / 300, skipped_draws_ / 300);
+    ++present_count_;
+    if (present_count_ <= 5) rt::log("deko3d: Present %u (%u draws, %u skipped so far)", present_count_, draws_, skipped_draws_);
+    // Frame rate every 300 presents or 5 s, whichever comes first (loading screens present rarely).
+    const uint64_t now = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                      std::chrono::steady_clock::now().time_since_epoch()).count());
+    if (!fps_t0_) fps_t0_ = now;
+    const uint32_t frames = present_count_ - fps_presents_;
+    if (frames >= 300 || now - fps_t0_ >= 5'000'000'000ull) {
+        const double secs = double(now - fps_t0_) / 1e9;
+        rt::log("deko3d: %u presents, %.1f fps, %u draws/frame, %u skipped", present_count_, frames / secs,
+                frames ? draws_ / frames : 0, frames ? skipped_draws_ / frames : 0);
         fps_t0_ = now;
+        fps_presents_ = present_count_;
         draws_ = skipped_draws_ = 0;
     }
     return D3D_OK;

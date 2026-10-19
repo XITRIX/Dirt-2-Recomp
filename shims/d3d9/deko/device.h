@@ -185,7 +185,7 @@ private:
         DkGpuAddr addr = 0;
         uint32_t size = 0, stride = 0;
     } up_;
-    uint32_t present_count_ = 0;
+    uint32_t present_count_ = 0, fps_presents_ = 0;
     uint64_t fps_t0_ = 0;
 };
 
