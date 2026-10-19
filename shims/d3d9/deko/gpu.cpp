@@ -172,7 +172,10 @@ bool Gpu::init() {
 
     DkQueueMaker qm;
     dkQueueMakerDefaults(&qm, device);
-    qm.flags = DkQueueFlags_Graphics | DkQueueFlags_HighPrio;
+    // No Zcull: its coarse per-tile depth went stale across the game's depth
+    // target use and rejected whole 4x4 tiles of draws (the frontend's depth
+    // MRT came out 72% empty, the focus pass then filled the screen with noise).
+    qm.flags = DkQueueFlags_Graphics | DkQueueFlags_HighPrio | DkQueueFlags_DisableZcull;
     qm.commandMemorySize = 1u << 20;
     qm.flushThreshold = 256u << 10;
     queue = dkQueueCreate(&qm);
