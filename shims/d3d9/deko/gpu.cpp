@@ -233,8 +233,11 @@ void Gpu::flush(bool wait, const char* what) {
     submit(queue, dkCmdBufFinishList(cmd), wait ? "a wait-for-idle submit" : "a flush");
     if (wait) {
         // dkQueueWaitIdle has no timeout: wait on a fence instead.
+        // As deko3d's own waitIdle: signal, then flush (the signal's flush
+        // argument only flushes caches; without dkQueueFlush nothing is submitted).
         DkFence f{};
         dkQueueSignalFence(queue, &f, true);
+        dkQueueFlush(queue);
         wait_fence(&f, what);
     }
     else dkQueueFlush(queue);
