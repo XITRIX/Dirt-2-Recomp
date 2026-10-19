@@ -136,6 +136,11 @@ private:
     // DIRT2_DEKO_SYNC=1: the same after any other GPU operation (printf-style description).
     void sync(const char* fmt, ...) __attribute__((format(printf, 2, 3)));
     void self_test();  // DIRT2_DEKO_SELFTEST=1: clear and present 180 frames, nothing from the game
+    // DIRT2_DEKO_DUMP=<frame>: every render target drawn into during that frame
+    // is saved as <data>/dump/NN_WxH_fmtF.bmp after it, with value statistics and
+    // the shaders that drew into it logged (first-bound order).
+    void dump_note_draw();
+    void dump_targets();
     void flush_targets();
     void flush_viewport();
     void flush_raster_state();
@@ -199,6 +204,13 @@ private:
     } up_;
     uint32_t present_count_ = 0, fps_presents_ = 0;
     uint64_t draw_total_ = 0;
+    uint32_t dump_frame_ = 0;
+    struct DumpTarget {
+        Surface* surface;
+        uint32_t draws = 0;
+        std::vector<std::string> shaders;  // "vs/ps", first few distinct
+    };
+    std::vector<DumpTarget> dump_;
     uint64_t fps_t0_ = 0;
 };
 

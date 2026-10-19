@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdarg>
 #include <cstdlib>
+#include <filesystem>
 #include <cstring>
 
 #include "recomp/host.h"
@@ -219,6 +220,7 @@ bool Device::init() {
     std::memset(black.cpu(), 0, 256);
     upload(dummy_, 0, 0, black, 4, RECT{0, 0, 1, 1});
     make_back_buffer();
+    if (const char* d = std::getenv("DIRT2_DEKO_DUMP")) dump_frame_ = uint32_t(std::atoi(d));
     if (std::getenv("DIRT2_DEKO_SELFTEST")) self_test();
     return back_buffer_ && back_buffer_->ok();
 }
@@ -330,6 +332,7 @@ HRESULT Device::GetBackBuffer(UINT, UINT, D3DBACKBUFFER_TYPE, IDirect3DSurface9*
 
 HRESULT Device::Present(const RECT*, const RECT*, HWND, const RGNDATA*) {
     Gpu& g = gpu();
+    if (dump_frame_ && present_count_ + 1 == dump_frame_) dump_targets();
     const int slot = g.acquire_swap_image();
     if (GpuImage* bb = back_buffer_->image()) {
         DkImageView src = bb->view(0, 0, false);
@@ -1183,7 +1186,124 @@ bool Device::prepare_draw(D3DPRIMITIVETYPE, uint32_t* instances) {
     }
     dirty_ = 0;
     ++draws_;
+    if (dump_frame_ && present_count_ + 1 == dump_frame_) dump_note_draw();
     return true;
+}
+
+void Device::dump_note_draw() {
+    Surface* s = targets_[0];
+    if (!s) return;
+    auto it = std::find_if(dump_.begin(), dump_.end(), [&](const DumpTarget& t) { return t.surface == s; });
+    if (it == dump_.end()) {
+        s->AddRef();
+        dump_.push_back({s});
+        it = dump_.end() - 1;
+    }
+    ++it->draws;
+    const std::string name = vs_->meta->name + "/" + ps_->meta->name;
+    if (it->shaders.size() < 6 && std::find(it->shaders.begin(), it->shaders.end(), name) == it->shaders.end())
+        it->shaders.push_back(name);
+}
+
+namespace {
+float half_to_float(uint16_t v) {
+    const uint32_t sgn = v >> 15, e = (v >> 10) & 31, m = v & 1023;
+    float r = e == 0 ? std::ldexp(float(m), -24) : e == 31 ? (m ? NAN : INFINITY) : std::ldexp(float(m | 1024), int(e) - 25);
+    return sgn ? -r : r;
+}
+}  // namespace
+
+void Device::dump_targets() {
+    const char* data = std::getenv("DIRT2_DATA_DIR");
+    const std::string dir = std::string(data ? data : ".") + "/dump";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    rt::log("deko3d: dumping %zu render targets of frame %u to %s", dump_.size(), dump_frame_, dir.c_str());
+    int index = 0;
+    for (DumpTarget& t : dump_) {
+        Surface* s = t.surface;
+        GpuImage* img = s->image();
+        ++index;
+        if (!img) continue;
+        const uint32_t w = s->width, h = s->height, bpp = s->fmt->bytes;
+        const uint32_t pitch = w * bpp;
+        Alloc a = gpu().readback.alloc(pitch * h, 256);
+        if (!a) continue;
+        read_image(*img, s->tex ? s->layer : 0, s->tex ? s->level : 0, a, pitch, RECT{0, 0, LONG(w), LONG(h)});
+        // To 8-bit BGRA, with statistics of the stored values.
+        std::vector<uint8_t> out(size_t(w) * h * 4);
+        double sum[3] = {}, mn = 1e30, mx = -1e30;
+        uint64_t nans = 0, infs = 0;
+        for (uint32_t y = 0; y < h; ++y)
+            for (uint32_t x = 0; x < w; ++x) {
+                const uint8_t* p = a.cpu() + size_t(y) * pitch + size_t(x) * bpp;
+                float c[3] = {0, 0, 0};
+                switch (s->fmt->dk) {
+                    case DkImageFormat_BGRA8_Unorm: c[0] = p[2] / 255.f; c[1] = p[1] / 255.f; c[2] = p[0] / 255.f; break;
+                    case DkImageFormat_RGBA8_Unorm: c[0] = p[0] / 255.f; c[1] = p[1] / 255.f; c[2] = p[2] / 255.f; break;
+                    case DkImageFormat_RGB10A2_Unorm: {
+                        uint32_t v;
+                        std::memcpy(&v, p, 4);
+                        c[0] = (v & 1023) / 1023.f; c[1] = ((v >> 10) & 1023) / 1023.f; c[2] = ((v >> 20) & 1023) / 1023.f;
+                        break;
+                    }
+                    case DkImageFormat_RGBA16_Float: case DkImageFormat_RG16_Float: case DkImageFormat_R16_Float: {
+                        const uint32_t n = s->fmt->dk == DkImageFormat_R16_Float ? 1 : s->fmt->dk == DkImageFormat_RG16_Float ? 2 : 3;
+                        for (uint32_t k = 0; k < n; ++k) {
+                            uint16_t hv;
+                            std::memcpy(&hv, p + 2 * k, 2);
+                            c[k] = half_to_float(hv);
+                        }
+                        break;
+                    }
+                    case DkImageFormat_RGBA16_Unorm:
+                        for (int k = 0; k < 3; ++k) {
+                            uint16_t v;
+                            std::memcpy(&v, p + 2 * k, 2);
+                            c[k] = v / 65535.f;
+                        }
+                        break;
+                    case DkImageFormat_R32_Float: std::memcpy(&c[0], p, 4); c[1] = c[2] = c[0]; break;
+                    default: break;
+                }
+                uint8_t* o = &out[(size_t(y) * w + x) * 4];
+                for (int k = 0; k < 3; ++k) {
+                    const float v = c[k];
+                    if (std::isnan(v)) ++nans;
+                    else if (std::isinf(v)) ++infs;
+                    else {
+                        sum[k] += v;
+                        mn = std::min<double>(mn, v);
+                        mx = std::max<double>(mx, v);
+                    }
+                    const float t8 = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : (std::isnan(v) ? 1.0f : 0.0f);
+                    o[2 - k] = uint8_t(t8 * 255.0f + 0.5f);
+                }
+                o[3] = 255;
+            }
+        gpu().defer([a] { gpu().readback.free_now(a); });
+        char path[512];
+        std::snprintf(path, sizeof path, "%s/%02d_%ux%u_fmt%u.bmp", dir.c_str(), index, w, h, uint32_t(s->d3dfmt));
+        if (std::FILE* f = std::fopen(path, "wb")) {
+            const uint32_t size = w * 4 * h;
+            uint8_t hdr[54] = {'B', 'M'};
+            auto put32 = [&](int off, uint32_t v) { std::memcpy(hdr + off, &v, 4); };
+            put32(2, 54 + size); put32(10, 54); put32(14, 40); put32(18, w);
+            put32(22, uint32_t(-int32_t(h)));
+            hdr[26] = 1; hdr[28] = 32; put32(34, size);
+            std::fwrite(hdr, 1, 54, f);
+            std::fwrite(out.data(), 1, out.size(), f);
+            std::fclose(f);
+        }
+        const double n = double(w) * h;
+        std::string shaders;
+        for (auto& x : t.shaders) shaders += " " + x;
+        rt::log("deko3d: dump %02d %ux%u fmt %u%s level %u: %u draws, mean %.3f %.3f %.3f, min %.3f max %.3f, NaN %llu Inf %llu; shaders%s",
+                index, w, h, uint32_t(s->d3dfmt), s->tex ? " (texture)" : "", s->tex ? s->level : 0, t.draws, sum[0] / n,
+                sum[1] / n, sum[2] / n, mn, mx, (unsigned long long)nans, (unsigned long long)infs, shaders.c_str());
+        s->Release();
+    }
+    dump_.clear();
 }
 
 // ---- draws ----
