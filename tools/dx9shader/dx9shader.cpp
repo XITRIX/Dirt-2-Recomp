@@ -66,6 +66,25 @@ std::string json_str(const std::string& s) {
     return o + "\"";
 }
 
+// Vertex shader outputs start at zero: D3D9 hardware (and the translators
+// that run these games) read unwritten output components as 0, while an
+// uninitialised GLSL output carries leftover register contents on Maxwell:
+// the game's depth pass wrote a TEXCOORD's z that its vertex shader never set.
+std::string zero_outputs(const std::string& glsl) {
+    std::string init;
+    size_t pos = 0;
+    while ((pos = glsl.find(") out vec4 ", pos)) != std::string::npos) {
+        const size_t name = pos + 11, end = glsl.find(';', name);
+        init += "    " + glsl.substr(name, end - name) + " = vec4(0.0);\n";
+        pos = end;
+    }
+    const size_t body = glsl.find("void main()\n{\n");
+    if (init.empty() || body == std::string::npos) return glsl;
+    std::string out = glsl;
+    out.insert(body + 14, init);
+    return out;
+}
+
 struct Result {
     std::string glsl, json, error;
     bool vertex = false;
@@ -132,6 +151,7 @@ Result translate(const std::vector<unsigned char>& code) {
         }
         for (const auto& s : res.sampled_images) glsl.unset_decoration(s.id, spv::DecorationDescriptorSet);
         r.glsl = glsl.compile();
+        if (r.vertex) r.glsl = zero_outputs(r.glsl);
 
         js << "{\n  \"stage\": \"" << (r.vertex ? "vertex" : "pixel") << "\", \"version\": \"" << pd->major_ver << "_"
            << pd->minor_ver << "\", \"instructions\": " << pd->instruction_count << ",\n";
