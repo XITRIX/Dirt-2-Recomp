@@ -108,6 +108,8 @@ public:
                                       const void* indices, D3DFORMAT index_format, const void* data,
                                       UINT stride) override;
 
+    // Reads an image region into CPU-readable memory: copy, wait for the GPU, invalidate the CPU cache.
+    void read_image(GpuImage& img, uint32_t layer, uint32_t level, const Alloc& out, uint32_t pitch_bytes, const RECT& r);
     // Copies of a surface region (StretchRect, UpdateSurface).
     void blit(Surface* src, const RECT* src_rect, Surface* dst, const RECT* dst_rect, bool linear);
     // Records an upload of staging memory into an image level/layer.

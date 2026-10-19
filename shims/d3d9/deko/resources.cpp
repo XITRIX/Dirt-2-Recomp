@@ -277,8 +277,18 @@ HRESULT TextureCore::lock(uint32_t layer, uint32_t level, D3DLOCKED_RECT* out, c
     Staging s;
     s.rect = r;
     s.pitch = row_pitch(*fmt, uint32_t(r.right - r.left));
-    s.mem = gpu().cur().transient.alloc(s.pitch * level_rows(*fmt, uint32_t(r.bottom - r.top)), 256);
-    if (flags & D3DLOCK_READONLY) log_unimplemented("texture read-back (LockRect D3DLOCK_READONLY)");
+    const uint32_t bytes = s.pitch * level_rows(*fmt, uint32_t(r.bottom - r.top));
+    if ((usage & D3DUSAGE_RENDERTARGET) && img.mem) {
+        // A render target's contents live on the GPU only: read them back (a GPU
+        // wait, as on DXVK). The game reads its 1x1 luminance targets this way.
+        s.mem = gpu().readback.alloc(bytes, 256);
+        s.readback = true;
+        s.readonly = (flags & D3DLOCK_READONLY) != 0;
+        dev->read_image(img, layer, level, s.mem, s.pitch, r);
+    } else {
+        s.mem = gpu().cur().transient.alloc(bytes, 256);
+        if (flags & D3DLOCK_READONLY) log_unimplemented("texture read-back (LockRect D3DLOCK_READONLY)");
+    }
     out->pBits = s.mem.cpu();
     out->Pitch = INT(s.pitch);
     locks[layer << 8 | level] = s;
@@ -290,7 +300,8 @@ HRESULT TextureCore::unlock(uint32_t layer, uint32_t level) {
     if (it == locks.end()) return D3DERR_INVALIDCALL;
     const Staging s = it->second;
     locks.erase(it);
-    dev->upload(img, layer, level, s.mem, s.pitch, s.rect);
+    if (!s.readonly) dev->upload(img, layer, level, s.mem, s.pitch, s.rect);
+    if (s.readback) gpu().defer([m = s.mem] { gpu().readback.free_now(m); });
     return D3D_OK;
 }
 
@@ -482,11 +493,28 @@ HRESULT Surface::LockRect(D3DLOCKED_RECT* out, const RECT* rect, DWORD flags) {
         out->Pitch = INT(cpu_pitch);
         return D3D_OK;
     }
-    log_unimplemented("IDirect3DSurface9::LockRect on a render target");
+    if (own.mem && fmt->dk != DkImageFormat_None) {  // a standalone render target: read back
+        const RECT r = rect ? *rect : RECT{0, 0, LONG(width), LONG(height)};
+        rt_lock = TextureCore::Staging{};
+        rt_lock.rect = r;
+        rt_lock.pitch = row_pitch(*fmt, uint32_t(r.right - r.left));
+        rt_lock.mem = gpu().readback.alloc(rt_lock.pitch * level_rows(*fmt, uint32_t(r.bottom - r.top)), 256);
+        rt_lock.readback = true;
+        rt_lock.readonly = (flags & D3DLOCK_READONLY) != 0;
+        dev_->read_image(own, 0, 0, rt_lock.mem, rt_lock.pitch, r);
+        out->pBits = rt_lock.mem.cpu();
+        out->Pitch = INT(rt_lock.pitch);
+        return D3D_OK;
+    }
     return D3DERR_INVALIDCALL;
 }
 HRESULT Surface::UnlockRect() {
     if (tex) return tex->unlock(layer, level);
+    if (rt_lock.mem) {
+        if (!rt_lock.readonly) dev_->upload(own, 0, 0, rt_lock.mem, rt_lock.pitch, rt_lock.rect);
+        gpu().defer([m = rt_lock.mem] { gpu().readback.free_now(m); });
+        rt_lock = TextureCore::Staging{};
+    }
     return D3D_OK;
 }
 

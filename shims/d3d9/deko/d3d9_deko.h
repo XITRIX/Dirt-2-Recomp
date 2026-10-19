@@ -125,6 +125,8 @@ struct TextureCore {
         Alloc mem;
         uint32_t pitch = 0;
         RECT rect{};
+        bool readback = false;  // a render target's contents, read back (readback pool)
+        bool readonly = false;
     };
     std::unordered_map<uint32_t, Staging> locks;
 
@@ -216,6 +218,7 @@ public:
     GpuImage own;                // standalone
     Alloc cpu;                   // CPU-only surface memory (readback pool)
     uint32_t cpu_pitch = 0;
+    TextureCore::Staging rt_lock;  // a locked standalone render target (read back)
 
 private:
     Device* dev_;

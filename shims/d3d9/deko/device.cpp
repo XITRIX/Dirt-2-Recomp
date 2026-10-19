@@ -462,6 +462,16 @@ HRESULT Device::CreateOffscreenPlainSurface(UINT w, UINT h, D3DFORMAT f, D3DPOOL
     return D3D_OK;
 }
 
+void Device::read_image(GpuImage& img, uint32_t layer, uint32_t level, const Alloc& out, uint32_t pitch_bytes,
+                        const RECT& r) {
+    const DkImageView v = img.view(level, layer, false);
+    const DkImageRect rect{uint32_t(r.left), uint32_t(r.top), 0, uint32_t(r.right - r.left), uint32_t(r.bottom - r.top), 1};
+    const DkCopyBuf dst{out.gpu(), pitch_bytes, 0};
+    dkCmdBufCopyImageToBuffer(gpu().cmd, &v, &rect, &dst, 0);
+    gpu().flush(true, "a render target read-back");
+    dkMemBlockFlushCpuCache(out.block, out.offset, out.size);
+}
+
 // DkCopyBuf's rowLength and imageHeight are byte strides (deko3d dk_image.cpp),
 // not pixel counts: a pixel pitch made the copy engine walk the wrong rows and
 // hung the GPU on block-compressed uploads.
