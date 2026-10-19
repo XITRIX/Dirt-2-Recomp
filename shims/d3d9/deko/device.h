@@ -111,8 +111,9 @@ public:
     // Copies of a surface region (StretchRect, UpdateSurface).
     void blit(Surface* src, const RECT* src_rect, Surface* dst, const RECT* dst_rect, bool linear);
     // Records an upload of staging memory into an image level/layer.
-    void upload(GpuImage& img, uint32_t layer, uint32_t level, const Alloc& data, uint32_t pitch_pixels, const RECT& r,
-                uint32_t z = 0, uint32_t depth = 1);
+    // pitch_bytes: the staging rows' pitch; slice_bytes: between volume slices (0: rows x pitch).
+    void upload(GpuImage& img, uint32_t layer, uint32_t level, const Alloc& data, uint32_t pitch_bytes, const RECT& r,
+                uint32_t z = 0, uint32_t depth = 1, uint32_t slice_bytes = 0);
 
 private:
     static constexpr int kSamplers = 20;  // 16 pixel + 4 vertex (D3DVERTEXTEXTURESAMPLER0 = 257 -> 16)

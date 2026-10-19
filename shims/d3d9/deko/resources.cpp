@@ -290,7 +290,7 @@ HRESULT TextureCore::unlock(uint32_t layer, uint32_t level) {
     if (it == locks.end()) return D3DERR_INVALIDCALL;
     const Staging s = it->second;
     locks.erase(it);
-    dev->upload(img, layer, level, s.mem, (s.pitch / fmt->bytes) * fmt->block, s.rect);
+    dev->upload(img, layer, level, s.mem, s.pitch, s.rect);
     return D3D_OK;
 }
 
@@ -402,7 +402,9 @@ HRESULT VolumeTexture::LockBox(UINT level, D3DLOCKED_BOX* out, const D3DBOX* box
 HRESULT VolumeTexture::UnlockBox(UINT level) {
     if (!staging || level != staging_level) return D3DERR_INVALIDCALL;
     const uint32_t w = mip(core.img.width, level), h = mip(core.img.height, level), d = mip(core.img.depth, level);
-    core.dev->upload(core.img, 0, level, staging, w, RECT{0, 0, LONG(w), LONG(h)}, 0, d);
+    const uint32_t pitch = row_pitch(*core.fmt, w);
+    core.dev->upload(core.img, 0, level, staging, pitch, RECT{0, 0, LONG(w), LONG(h)}, 0, d,
+                     pitch * level_rows(*core.fmt, h));
     staging = {};
     return D3D_OK;
 }

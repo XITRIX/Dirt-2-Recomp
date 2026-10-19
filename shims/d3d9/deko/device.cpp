@@ -217,7 +217,7 @@ bool Device::init() {
     dummy_.create(DkImageType_2D, DkImageFormat_RGBA8_Unorm, 1, 1, 1, 1, 1, DkImageFlags_Usage2DEngine);
     Alloc black = g.cur().transient.alloc(256, 256);
     std::memset(black.cpu(), 0, 256);
-    upload(dummy_, 0, 0, black, 1, RECT{0, 0, 1, 1});
+    upload(dummy_, 0, 0, black, 4, RECT{0, 0, 1, 1});
     make_back_buffer();
     if (std::getenv("DIRT2_DEKO_SELFTEST")) self_test();
     return back_buffer_ && back_buffer_->ok();
@@ -462,16 +462,19 @@ HRESULT Device::CreateOffscreenPlainSurface(UINT w, UINT h, D3DFORMAT f, D3DPOOL
     return D3D_OK;
 }
 
-void Device::upload(GpuImage& img, uint32_t layer, uint32_t level, const Alloc& data, uint32_t pitch_pixels,
-                    const RECT& r, uint32_t z, uint32_t depth) {
+// DkCopyBuf's rowLength and imageHeight are byte strides (deko3d dk_image.cpp),
+// not pixel counts: a pixel pitch made the copy engine walk the wrong rows and
+// hung the GPU on block-compressed uploads.
+void Device::upload(GpuImage& img, uint32_t layer, uint32_t level, const Alloc& data, uint32_t pitch_bytes,
+                    const RECT& r, uint32_t z, uint32_t depth, uint32_t slice_bytes) {
     const DkImageView v = img.view(level, layer, false);
     const DkImageRect rect{uint32_t(r.left), uint32_t(r.top), z, uint32_t(r.right - r.left), uint32_t(r.bottom - r.top),
                            depth};
-    const DkCopyBuf src{data.gpu(), pitch_pixels, 0};
+    const DkCopyBuf src{data.gpu(), pitch_bytes, slice_bytes};
     dkCmdBufCopyBufferToImage(gpu().cmd, &src, &v, &rect, 0);
-    sync("upload (image format %d %ux%ux%u, %u levels, level %u layer %u, rect %ld,%ld %ldx%ld depth %u, row %u px)",
+    sync("upload (image format %d %ux%ux%u, %u levels, level %u layer %u, rect %ld,%ld %ldx%ld depth %u, pitch %u bytes)",
          int(img.format), img.width, img.height, img.depth, img.levels, level, layer, long(r.left), long(r.top),
-         long(r.right - r.left), long(r.bottom - r.top), depth, pitch_pixels);
+         long(r.right - r.left), long(r.bottom - r.top), depth, pitch_bytes);
 }
 
 void Device::blit(Surface* src, const RECT* sr, Surface* dst, const RECT* dr, bool linear) {
@@ -518,7 +521,7 @@ HRESULT Device::UpdateSurface(IDirect3DSurface9* src, const RECT* sr, IDirect3DS
                         s->cpu.cpu() + (size_t(r.top) / s->fmt->block + row) * s->cpu_pitch +
                             size_t(r.left) / s->fmt->block * s->fmt->bytes,
                         pitch);
-        upload(*d->image(), d->layer, d->level, st, (pitch / d->fmt->bytes) * d->fmt->block, dr);
+        upload(*d->image(), d->layer, d->level, st, pitch, dr);
         return D3D_OK;
     }
     blit(s, &r, d, &dr, false);
@@ -546,7 +549,7 @@ HRESULT Device::GetRenderTargetData(IDirect3DSurface9* rt, IDirect3DSurface9* ds
     if (!s || !d || !s->image() || !d->cpu) return D3DERR_INVALIDCALL;
     const DkImageView v = s->view();
     const DkImageRect r{0, 0, 0, std::min(s->width, d->width), std::min(s->height, d->height), 1};
-    const DkCopyBuf out{d->cpu.gpu(), d->cpu_pitch / d->fmt->bytes * d->fmt->block, 0};
+    const DkCopyBuf out{d->cpu.gpu(), d->cpu_pitch, 0};  // byte pitch
     dkCmdBufCopyImageToBuffer(gpu().cmd, &v, &r, &out, 0);
     // The game reads it right away: submit and wait (a stall; the luminance
     // read-back does this every frame, see docs/SWITCH.md).
