@@ -465,15 +465,16 @@ HRESULT Device::CreateOffscreenPlainSurface(UINT w, UINT h, D3DFORMAT f, D3DPOOL
 void Device::clear_new_image(GpuImage& img, bool depth) {
     DkCmdBuf cmd = gpu().cmd;
     const uint32_t faces = img.type == DkImageType_Cubemap ? 6 : 1;
-    for (uint32_t f = 0; f < faces; ++f) {
-        const DkImageView v = img.view(0, f, false);
-        if (depth) dkCmdBufBindRenderTargets(cmd, nullptr, 0, &v);
-        else dkCmdBufBindRenderTarget(cmd, &v, nullptr);
-        const DkScissor sc{0, 0, img.width, img.height};
-        dkCmdBufSetScissors(cmd, 0, &sc, 1);
-        if (depth) dkCmdBufClearDepthStencil(cmd, true, 1.0f, 0xFF, 0);
-        else dkCmdBufClearColorFloat(cmd, 0, DkColorMask_RGBA, 0.0f, 0.0f, 0.0f, 0.0f);
-    }
+    for (uint32_t level = 0; level < img.levels; ++level)
+        for (uint32_t f = 0; f < faces; ++f) {
+            const DkImageView v = img.view(level, f, false);
+            if (depth) dkCmdBufBindRenderTargets(cmd, nullptr, 0, &v);
+            else dkCmdBufBindRenderTarget(cmd, &v, nullptr);
+            const DkScissor sc{0, 0, mip(img.width, level), mip(img.height, level)};
+            dkCmdBufSetScissors(cmd, 0, &sc, 1);
+            if (depth) dkCmdBufClearDepthStencil(cmd, true, 1.0f, 0xFF, 0);
+            else dkCmdBufClearColorFloat(cmd, 0, DkColorMask_RGBA, 0.0f, 0.0f, 0.0f, 0.0f);
+        }
     dirty_ |= kTargets | kViewport;
 }
 
