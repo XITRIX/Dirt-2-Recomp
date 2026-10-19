@@ -208,6 +208,10 @@ private:
     uint32_t present_count_ = 0, fps_presents_ = 0;
     uint64_t draw_total_ = 0;
     uint32_t dump_frame_ = 0;
+    // DIRT2_FRAME_DUMP=<frame>: the distinct output states of that frame's MRT draws are logged.
+    uint32_t state_log_frame_ = 0;
+    std::vector<std::string> state_log_;
+    void log_mrt_state();
     struct DumpTarget {
         Surface* surface;
         uint32_t draws = 0;

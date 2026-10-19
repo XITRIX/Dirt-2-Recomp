@@ -581,8 +581,19 @@ void dump_write(IDirect3DDevice9* dev) {
                     }
                     o[3] = 255;
                 }
-            sys->UnlockRect();
             char path[512];
+            // The raw texels of the full-size 4-byte targets too (rows packed): the
+            // bits of float targets, and the alpha the bitmap leaves out.
+            if (d.Width >= 1280 && (d.Format == D3DFMT_R32F || d.Format == D3DFMT_A8R8G8B8 || d.Format == D3DFMT_X8R8G8B8)) {
+                std::snprintf(path, sizeof path, "%s/%02zu_%ux%u_fmt%u.raw", dir.c_str(), k + 1, d.Width, d.Height,
+                              uint32_t(d.Format));
+                if (std::FILE* f = std::fopen(path, "wb")) {
+                    for (uint32_t y = 0; y < d.Height; ++y)
+                        std::fwrite(static_cast<const uint8_t*>(lr.pBits) + size_t(y) * lr.Pitch, 1, size_t(d.Width) * 4, f);
+                    std::fclose(f);
+                }
+            }
+            sys->UnlockRect();
             std::snprintf(path, sizeof path, "%s/%02zu_%ux%u_fmt%u.bmp", dir.c_str(), k + 1, d.Width, d.Height, uint32_t(d.Format));
             if (std::FILE* f = std::fopen(path, "wb")) {
                 const uint32_t size = d.Width * 4 * d.Height;

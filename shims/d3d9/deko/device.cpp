@@ -221,6 +221,7 @@ bool Device::init() {
     upload(dummy_, 0, 0, black, 4, RECT{0, 0, 1, 1});
     make_back_buffer();
     if (const char* d = std::getenv("DIRT2_DEKO_DUMP")) dump_frame_ = uint32_t(std::atoi(d));
+    if (const char* d = std::getenv("DIRT2_FRAME_DUMP")) state_log_frame_ = uint32_t(std::atoi(d));
     if (std::getenv("DIRT2_DEKO_SELFTEST")) self_test();
     return back_buffer_ && back_buffer_->ok();
 }
@@ -1208,7 +1209,24 @@ bool Device::prepare_draw(D3DPRIMITIVETYPE, uint32_t* instances) {
     dirty_ = 0;
     ++draws_;
     if (dump_frame_ && present_count_ + 1 == dump_frame_) dump_note_draw();
+    if (state_log_frame_ && present_count_ + 1 == state_log_frame_ && targets_[1]) log_mrt_state();
     return true;
+}
+
+void Device::log_mrt_state() {
+    char s[320];
+    std::snprintf(s, sizeof s,
+                  "ps %s outputs %X; blend %u src %u dst %u op %u sep %u asrc %u adst %u aop %u; write %X %X; "
+                  "alphatest %u func %u ref %u; z %u write %u func %u; formats %u %u",
+                  ps_ && ps_->meta ? ps_->meta->name.c_str() : "-", ps_ && ps_->meta ? ps_->meta->color_outputs : 0,
+                  rs_[D3DRS_ALPHABLENDENABLE], rs_[D3DRS_SRCBLEND], rs_[D3DRS_DESTBLEND], rs_[D3DRS_BLENDOP],
+                  rs_[D3DRS_SEPARATEALPHABLENDENABLE], rs_[D3DRS_SRCBLENDALPHA], rs_[D3DRS_DESTBLENDALPHA],
+                  rs_[D3DRS_BLENDOPALPHA], rs_[D3DRS_COLORWRITEENABLE], rs_[D3DRS_COLORWRITEENABLE1],
+                  rs_[D3DRS_ALPHATESTENABLE], rs_[D3DRS_ALPHAFUNC], rs_[D3DRS_ALPHAREF], rs_[D3DRS_ZENABLE],
+                  rs_[D3DRS_ZWRITEENABLE], rs_[D3DRS_ZFUNC], uint32_t(targets_[0] ? targets_[0]->d3dfmt : 0), uint32_t(targets_[1]->d3dfmt));
+    if (std::find(state_log_.begin(), state_log_.end(), s) != state_log_.end()) return;
+    state_log_.push_back(s);
+    rt::log("deko3d: MRT draw state: %s", s);
 }
 
 void Device::dump_note_draw() {
