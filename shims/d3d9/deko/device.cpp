@@ -1,7 +1,7 @@
-// IDirect3DDevice9 on deko3d (see device.h). Conventions follow DXVK's D3D9
-// (build/src/dxvk/src/d3d9): the viewport carries D3D9's half-pixel offset and
-// a Y flip (negative height), front faces are clockwise, and deko3d's default
-// device already has D3D's depth range (0..1) and upper-left origin.
+// IDirect3DDevice9 on deko3d (see device.h). deko3d's default device already
+// has D3D's conventions (depth 0..1, upper-left origin with NDC +Y at the top),
+// so the viewport only carries D3D9's half-pixel offset; front faces are
+// clockwise; depth bias and the rest follow DXVK's D3D9 (build/src/dxvk/src/d3d9).
 // No <switch.h> here: libnx and DXVK's Windows headers do not mix.
 #include "device.h"
 
@@ -901,7 +901,10 @@ void Device::flush_targets() {
 void Device::flush_viewport() {
     const D3DVIEWPORT9& vp = viewport_;
     const float zbias = vp.MinZ >= 0.5f ? 0.0f : 0.001f;  // as DXVK: no degenerate depth range
-    const DkViewport v{float(vp.X) + 0.5f, float(vp.Y + vp.Height) + 0.5f, float(vp.Width), -float(vp.Height),
+    // deko3d's upper-left origin is D3D's convention (it already maps NDC +Y to
+    // the top); DXVK's Vulkan-style negative height would flip twice and wrap
+    // the viewport rectangle. Only D3D9's half-pixel offset is added.
+    const DkViewport v{float(vp.X) + 0.5f, float(vp.Y) + 0.5f, float(vp.Width), float(vp.Height),
                        std::clamp(vp.MinZ, 0.0f, 1.0f), std::clamp(std::max(vp.MaxZ, vp.MinZ + zbias), 0.0f, 1.0f)};
     dkCmdBufSetViewports(gpu().cmd, 0, &v, 1);
     RECT r{LONG(vp.X), LONG(vp.Y), LONG(vp.X + vp.Width), LONG(vp.Y + vp.Height)};
