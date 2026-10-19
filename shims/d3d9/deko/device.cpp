@@ -834,7 +834,7 @@ HRESULT Device::CreatePixelShader(const DWORD* code, IDirect3DPixelShader9** out
 HRESULT Device::SetPixelShader(IDirect3DPixelShader9* shader) {
     if (ps_ != shader) {
         set_ref(ps_, static_cast<PixelShader*>(shader));
-        dirty_ |= kShaders | kTextures | kPsConst;
+        dirty_ |= kShaders | kTextures | kPsConst | kBlend;  // kBlend: the colour write masks follow its outputs
     }
     return D3D_OK;
 }
@@ -983,7 +983,11 @@ void Device::flush_blend_state() {
     dkColorWriteStateDefaults(&cw);
     const D3DRENDERSTATETYPE masks[4] = {D3DRS_COLORWRITEENABLE, D3DRS_COLORWRITEENABLE1, D3DRS_COLORWRITEENABLE2,
                                          D3DRS_COLORWRITEENABLE3};
-    for (uint32_t i = 0; i < 4; ++i) dkColorWriteStateSetMask(&cw, i, rs_[masks[i]] & 0xF);
+    // Targets the pixel shader does not write keep their contents, as on D3D9:
+    // Maxwell would write the output registers' leftovers (a game pass bound a
+    // depth target it did not write and filled it with garbage).
+    const uint32_t outputs = ps_ && ps_->meta ? ps_->meta->color_outputs : 1;
+    for (uint32_t i = 0; i < 4; ++i) dkColorWriteStateSetMask(&cw, i, (outputs >> i & 1) ? rs_[masks[i]] & 0xF : 0);
     dkCmdBufBindColorWriteState(cmd, &cw);
 
     if (rs_[D3DRS_ALPHABLENDENABLE]) {

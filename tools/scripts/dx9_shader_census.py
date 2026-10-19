@@ -108,7 +108,8 @@ def shader_meta(j):
     u8 stage (0 vertex, 1 pixel), u8 inputs, u8 samplers, u8 uniforms, u32 uniform block bytes;
     inputs {u8 usage, u8 index, u8 register, u8 0}; samplers {u8 register, u8 type, u16 0};
     uniforms {u8 type, u8 0, u16 register, u16 count, u16 0}, in the block's order (the
-    uniform list without the shader's own constant arrays, which MojoShader embeds)."""
+    uniform list without the shader's own constant arrays, which MojoShader embeds);
+    then u32 colour outputs written (bit n = oCn; pixel shaders)."""
     ins = []
     for a in j["inputs"]:
         reg = int(re.sub(r"\D", "", a["name"]) or 0)
@@ -120,11 +121,18 @@ def shader_meta(j):
     uni = [struct.pack("<BBHHH", UNIFORM_TYPES[u["type"]], 0, u["register"], max(u["count"], 1), 0) for u in live]
     block = 16 * sum(max(u["count"], 1) for u in live)
     head = struct.pack("<4BI", 0 if j["stage"] == "vertex" else 1, len(ins), len(smp), len(uni), block)
-    return head + b"".join(ins + smp + uni)
+    # Pixel shaders: the colour targets written (bit per oCn). On Maxwell an
+    # unwritten output writes garbage, so the device masks the other targets.
+    colors = 0
+    if j["stage"] == "pixel":
+        for o in j["outputs"]:
+            if o["usage"] == "COLOR" and o["index"] < 8:
+                colors |= 1 << o["index"]
+    return head + b"".join(ins + smp + uni) + struct.pack("<I", colors)
 
 
 def write_pack(path, entries):
-    """dirt2.dkshpack: "DKSP", u32 version 1, u32 count; then count entries sorted by key
+    """dirt2.dkshpack: "DKSP", u32 version 2, u32 count; then count entries sorted by key
     {sha256 of the d3dbc[32], u32 dksh offset, u32 dksh size, u32 meta offset, u32 meta size};
     then the data. The device looks shaders up by the SHA-256 of what the game passes."""
     entries = sorted(entries)
@@ -137,7 +145,7 @@ def write_pack(path, entries):
         data += meta
         data += b"\0" * (-len(data) % 4)
         table += key + struct.pack("<4I", d_off, len(dksh), m_off, len(meta))
-    open(path, "wb").write(b"DKSP" + struct.pack("<II", 1, len(entries)) + table + data)
+    open(path, "wb").write(b"DKSP" + struct.pack("<II", 2, len(entries)) + table + data)
 
 
 def main():

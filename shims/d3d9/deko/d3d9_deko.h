@@ -244,6 +244,7 @@ struct PackMeta {
     std::vector<Sampler> samplers;
     std::vector<Uniform> uniforms;  // in the uniform block's order, 16 bytes per register
     uint32_t block_bytes = 0;
+    uint32_t color_outputs = 1;  // pixel shaders: bit n set when it writes oCn
     std::string name;  // first 12 hex digits of the bytecode's SHA-256 (the pack key), for logs
 };
 

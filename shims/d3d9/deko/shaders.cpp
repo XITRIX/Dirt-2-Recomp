@@ -47,6 +47,7 @@ bool load_entry(PackEntry& e) {
     for (int i = 0; i < ni; ++i, p += 4) e.meta.inputs.push_back({p[0], p[1], p[2]});
     for (int i = 0; i < ns; ++i, p += 4) e.meta.samplers.push_back({p[0], p[1]});
     for (int i = 0; i < nu; ++i, p += 8) e.meta.uniforms.push_back({p[0], rd16(p + 2), rd16(p + 4)});
+    e.meta.color_outputs = rd32(p);
 
     DkshHeader h;
     std::memcpy(&h, g_pack.data() + e.dksh_off, sizeof h);
@@ -80,8 +81,8 @@ bool load_shader_pack(const std::string& path) {
     std::fseek(f, 0, SEEK_SET);
     const bool ok = std::fread(g_pack.data(), 1, g_pack.size(), f) == g_pack.size();
     std::fclose(f);
-    if (!ok || g_pack.size() < 12 || std::memcmp(g_pack.data(), "DKSP", 4) != 0 || rd32(&g_pack[4]) != 1) {
-        rt::log("deko3d: %s is not a version 1 shader pack", path.c_str());
+    if (!ok || g_pack.size() < 12 || std::memcmp(g_pack.data(), "DKSP", 4) != 0 || rd32(&g_pack[4]) != 2) {
+        rt::log("deko3d: %s is not a version 2 shader pack (rerun tools/scripts/dx9_shader_census.py)", path.c_str());
         return false;
     }
     const uint32_t n = rd32(&g_pack[8]);
