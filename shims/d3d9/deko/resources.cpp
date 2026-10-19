@@ -38,13 +38,15 @@ FormatInfo make(DkImageFormat f, uint8_t block, uint8_t bytes, bool depth = fals
 
 }  // namespace
 
+// X8 formats are stored with alpha (BGRX8/RGBX8 are not certain to be
+// renderable on Maxwell) and sampled with alpha forced to 1.
 const FormatInfo* format_info(D3DFORMAT f) {
     using S = DkImageSwizzle;
     static const std::unordered_map<uint32_t, FormatInfo> table = {
         {D3DFMT_A8R8G8B8, make(DkImageFormat_BGRA8_Unorm, 1, 4)},
-        {D3DFMT_X8R8G8B8, make(DkImageFormat_BGRX8_Unorm, 1, 4)},
+        {D3DFMT_X8R8G8B8, make(DkImageFormat_BGRA8_Unorm, 1, 4, false, {S::DkImageSwizzle_Red, S::DkImageSwizzle_Green, S::DkImageSwizzle_Blue, S::DkImageSwizzle_One})},
         {D3DFMT_A8B8G8R8, make(DkImageFormat_RGBA8_Unorm, 1, 4)},
-        {D3DFMT_X8B8G8R8, make(DkImageFormat_RGBX8_Unorm, 1, 4)},
+        {D3DFMT_X8B8G8R8, make(DkImageFormat_RGBA8_Unorm, 1, 4, false, {S::DkImageSwizzle_Red, S::DkImageSwizzle_Green, S::DkImageSwizzle_Blue, S::DkImageSwizzle_One})},
         {D3DFMT_A2B10G10R10, make(DkImageFormat_RGB10A2_Unorm, 1, 4)},
         {D3DFMT_A2R10G10B10, make(DkImageFormat_RGB10A2_Unorm, 1, 4, false,
                                   {S::DkImageSwizzle_Blue, S::DkImageSwizzle_Green, S::DkImageSwizzle_Red, S::DkImageSwizzle_Alpha})},

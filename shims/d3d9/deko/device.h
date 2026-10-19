@@ -126,6 +126,8 @@ private:
     bool prepare_draw(D3DPRIMITIVETYPE type, uint32_t* instances);
     // DIRT2_DEKO_SYNC=1: waits for the GPU after each draw; a draw still running after 2 s is logged.
     void sync_after_draw(const char* kind, uint32_t prims, uint32_t instances, int base, uint32_t start);
+    // DIRT2_DEKO_SYNC=1: the same after any other GPU operation (printf-style description).
+    void sync(const char* fmt, ...) __attribute__((format(printf, 2, 3)));
     void self_test();  // DIRT2_DEKO_SELFTEST=1: clear and present 180 frames, nothing from the game
     void flush_targets();
     void flush_viewport();

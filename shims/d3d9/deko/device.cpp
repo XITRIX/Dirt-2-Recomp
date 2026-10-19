@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdarg>
 #include <cstdlib>
 #include <cstring>
 
@@ -247,6 +248,17 @@ void Device::self_test() {
     dirty_ = kAll;
 }
 
+void Device::sync(const char* fmt, ...) {
+    static const bool on = std::getenv("DIRT2_DEKO_SYNC") != nullptr;
+    if (!on) return;
+    char what[256];
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(what, sizeof what, fmt, ap);
+    va_end(ap);
+    gpu().flush(true, what);
+}
+
 void Device::sync_after_draw(const char* kind, uint32_t prims, uint32_t instances, int base, uint32_t start) {
     ++draw_total_;
     static const bool sync = std::getenv("DIRT2_DEKO_SYNC") != nullptr;
@@ -326,6 +338,7 @@ HRESULT Device::Present(const RECT*, const RECT*, HWND, const RGNDATA*) {
         const DkImageRect sr{0, 0, 0, bb->width, bb->height, 1};
         const DkImageRect dr{0, 0, 0, g.swap_w, g.swap_h, 1};
         dkCmdBufBlitImage(g.cmd, &src, &sr, &dst, &dr, DkBlitFlag_FilterLinear, 0);
+        sync("Present blit (format %d %ux%u -> swap image %d)", int(bb->format), bb->width, bb->height, slot);
     }
     g.end_frame(slot);
     dirty_ = kAll;
@@ -456,6 +469,9 @@ void Device::upload(GpuImage& img, uint32_t layer, uint32_t level, const Alloc& 
                            depth};
     const DkCopyBuf src{data.gpu(), pitch_pixels, 0};
     dkCmdBufCopyBufferToImage(gpu().cmd, &src, &v, &rect, 0);
+    sync("upload (image format %d %ux%ux%u, %u levels, level %u layer %u, rect %ld,%ld %ldx%ld depth %u, row %u px)",
+         int(img.format), img.width, img.height, img.depth, img.levels, level, layer, long(r.left), long(r.top),
+         long(r.right - r.left), long(r.bottom - r.top), depth, pitch_pixels);
 }
 
 void Device::blit(Surface* src, const RECT* sr, Surface* dst, const RECT* dr, bool linear) {
@@ -474,6 +490,8 @@ void Device::blit(Surface* src, const RECT* sr, Surface* dst, const RECT* dr, bo
         dkCmdBufCopyImage(gpu().cmd, &sv, &srect, &dv, &drect, 0);
     else
         dkCmdBufBlitImage(gpu().cmd, &sv, &srect, &dv, &drect, linear ? DkBlitFlag_FilterLinear : 0, 0);
+    sync("blit (format %d %ux%u -> format %d %ux%u)", int(si->format), srect.width, srect.height, int(di->format),
+         drect.width, drect.height);
 }
 
 HRESULT Device::StretchRect(IDirect3DSurface9* src, const RECT* sr, IDirect3DSurface9* dst, const RECT* dr,
@@ -549,6 +567,7 @@ HRESULT Device::ColorFill(IDirect3DSurface9* surface, const RECT* rect, D3DCOLOR
     argb_to_float(color, c);
     dkCmdBufClearColorFloat(cmd, 0, DkColorMask_RGBA, c[0], c[1], c[2], c[3]);
     dirty_ |= kTargets | kViewport;
+    sync("ColorFill (format %d %ux%u)", int(s->image()->format), s->width, s->height);
     return D3D_OK;
 }
 
@@ -617,6 +636,8 @@ HRESULT Device::Clear(DWORD count, const D3DRECT* rects, DWORD flags, D3DCOLOR c
                                       uint8_t(stencil));
     }
     dirty_ |= kViewport;  // the scissor
+    sync("Clear (flags %lX, %lu rects, target format %d)", (unsigned long)flags, (unsigned long)count,
+         targets_[0] && targets_[0]->image() ? int(targets_[0]->image()->format) : -1);
     return D3D_OK;
 }
 

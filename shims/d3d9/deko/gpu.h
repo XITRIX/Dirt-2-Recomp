@@ -142,7 +142,9 @@ struct GpuImage {
     bool create(DkImageType t, DkImageFormat f, uint32_t w, uint32_t h, uint32_t d, uint32_t levels, uint32_t layers,
                 uint32_t flags);
     void destroy();  // deferred: memory and descriptor are returned after the frame
-    DkImageView view(uint32_t level = 0, uint32_t layer = 0, bool all = false) const;
+    // all: every level and layer; sampled: with the format's swizzle (texture
+    // descriptors only: render targets and copies take the image as stored).
+    DkImageView view(uint32_t level = 0, uint32_t layer = 0, bool all = false, bool sampled = false) const;
     int descriptor();  // writes the image descriptor on first use
 };
 

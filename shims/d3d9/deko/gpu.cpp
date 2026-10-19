@@ -304,10 +304,11 @@ void GpuImage::destroy() {
     desc = -1;
 }
 
-DkImageView GpuImage::view(uint32_t level, uint32_t layer, bool all) const {
+DkImageView GpuImage::view(uint32_t level, uint32_t layer, bool all, bool sampled) const {
     DkImageView v;
     dkImageViewDefaults(&v, &image);
-    for (int i = 0; i < 4; ++i) v.swizzle[i] = swizzle[i];
+    if (sampled)
+        for (int i = 0; i < 4; ++i) v.swizzle[i] = swizzle[i];
     if (!all) {
         v.mipLevelOffset = uint8_t(level);
         v.mipLevelCount = 1;
@@ -324,7 +325,7 @@ int GpuImage::descriptor() {
     if (desc >= 0) return desc;
     Gpu& g = gpu();
     desc = g.image_ids.take();
-    const DkImageView v = view(0, 0, true);
+    const DkImageView v = view(0, 0, true, true);
     dkImageDescriptorInitialize(&g.image_desc()[desc], &v, false, false);
     g.descriptors_dirty = true;
     return desc;
