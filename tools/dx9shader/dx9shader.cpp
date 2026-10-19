@@ -170,7 +170,8 @@ Result translate(const std::vector<unsigned char>& code) {
             static const char* types[] = {"float4", "int4", "bool"};
             const MOJOSHADER_uniform& u = pd->uniforms[i];
             js << (i ? ", " : "") << "{\"type\": \"" << (u.type >= 0 && u.type < 3 ? types[u.type] : "?")
-               << "\", \"register\": " << u.index << ", \"count\": " << u.array_count << "}";
+               << "\", \"register\": " << u.index << ", \"count\": " << u.array_count
+               << ", \"constant\": " << (u.constant ? "true" : "false") << "}";
         }
         js << "],\n  \"constants\": " << pd->constant_count << "\n}\n";
         r.json = js.str();

@@ -107,14 +107,18 @@ def shader_meta(j):
     """Binary interface record for the deko3d device (shims/d3d9/deko/shaders.cpp, PackMeta):
     u8 stage (0 vertex, 1 pixel), u8 inputs, u8 samplers, u8 uniforms, u32 uniform block bytes;
     inputs {u8 usage, u8 index, u8 register, u8 0}; samplers {u8 register, u8 type, u16 0};
-    uniforms {u8 type, u8 0, u16 register, u16 count, u16 0}, in the block's order."""
+    uniforms {u8 type, u8 0, u16 register, u16 count, u16 0}, in the block's order (the
+    uniform list without the shader's own constant arrays, which MojoShader embeds)."""
     ins = []
     for a in j["inputs"]:
         reg = int(re.sub(r"\D", "", a["name"]) or 0)
         ins.append(struct.pack("<4B", USAGES.index(a["usage"]) if a["usage"] in USAGES else 0xFF, a["index"], reg, 0))
     smp = [struct.pack("<BBH", s["register"], SAMPLER_TYPES.get(s["type"], 0), 0) for s in j["samplers"]]
-    uni = [struct.pack("<BBHHH", UNIFORM_TYPES[u["type"]], 0, u["register"], max(u["count"], 1), 0) for u in j["uniforms"]]
-    block = 16 * sum(max(u["count"], 1) for u in j["uniforms"])
+    # Constant arrays the shader defines itself (def) are embedded in its code,
+    # not in the uniform block: leaving them in shifted every real constant.
+    live = [u for u in j["uniforms"] if not u.get("constant")]
+    uni = [struct.pack("<BBHHH", UNIFORM_TYPES[u["type"]], 0, u["register"], max(u["count"], 1), 0) for u in live]
+    block = 16 * sum(max(u["count"], 1) for u in live)
     head = struct.pack("<4BI", 0 if j["stage"] == "vertex" else 1, len(ins), len(smp), len(uni), block)
     return head + b"".join(ins + smp + uni)
 
