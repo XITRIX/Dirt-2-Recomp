@@ -194,6 +194,9 @@ private:
     // Sampler descriptors by D3D9 sampler state.
     std::map<std::array<DWORD, 10>, int> samplers_;
     uint32_t draws_ = 0, skipped_draws_ = 0;
+    // A copy, blit, upload or clear wrote an image: the next draw waits for it
+    // and invalidates the texture cache first (deko3d leaves hazards to the caller).
+    bool copy_barrier_ = false;
     uint64_t list_seen_ = ~0ull;  // gpu().list_id this device last recorded its state into
     GpuImage dummy_;              // 1x1 black texture for samplers without one
     // DrawPrimitiveUP / DrawIndexedPrimitiveUP: stream 0 is transient memory for one draw.

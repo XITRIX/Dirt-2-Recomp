@@ -340,6 +340,7 @@ HRESULT Device::Present(const RECT*, const RECT*, HWND, const RGNDATA*) {
         dkImageViewDefaults(&dst, &g.swap_images[slot]);
         const DkImageRect sr{0, 0, 0, bb->width, bb->height, 1};
         const DkImageRect dr{0, 0, 0, g.swap_w, g.swap_h, 1};
+        dkCmdBufBarrier(g.cmd, DkBarrier_Full, 0);  // the frame's rendering done before the blit reads it
         dkCmdBufBlitImage(g.cmd, &src, &sr, &dst, &dr, DkBlitFlag_FilterLinear, 0);
         sync("Present blit (format %d %ux%u -> swap image %d)", int(bb->format), bb->width, bb->height, slot);
     }
@@ -479,10 +480,12 @@ void Device::clear_new_image(GpuImage& img, bool depth) {
             else dkCmdBufClearColorFloat(cmd, 0, DkColorMask_RGBA, 0.0f, 0.0f, 0.0f, 0.0f);
         }
     dirty_ |= kTargets | kViewport;
+    copy_barrier_ = true;
 }
 
 void Device::read_image(GpuImage& img, uint32_t layer, uint32_t level, const Alloc& out, uint32_t pitch_bytes,
                         const RECT& r) {
+    dkCmdBufBarrier(gpu().cmd, DkBarrier_Full, 0);  // the image's rendering must be done before the copy reads it
     const DkImageView v = img.view(level, layer, false);
     const DkImageRect rect{uint32_t(r.left), uint32_t(r.top), 0, uint32_t(r.right - r.left), uint32_t(r.bottom - r.top), 1};
     const DkCopyBuf dst{out.gpu(), pitch_bytes, 0};
@@ -501,6 +504,7 @@ void Device::upload(GpuImage& img, uint32_t layer, uint32_t level, const Alloc& 
                            depth};
     const DkCopyBuf src{data.gpu(), pitch_bytes, slice_bytes};
     dkCmdBufCopyBufferToImage(gpu().cmd, &src, &v, &rect, 0);
+    copy_barrier_ = true;
     sync("upload (image format %d %ux%ux%u, %u levels, level %u layer %u, rect %ld,%ld %ldx%ld depth %u, pitch %u bytes)",
          int(img.format), img.width, img.height, img.depth, img.levels, level, layer, long(r.left), long(r.top),
          long(r.right - r.left), long(r.bottom - r.top), depth, pitch_bytes);
@@ -518,10 +522,12 @@ void Device::blit(Surface* src, const RECT* sr, Surface* dst, const RECT* dr, bo
     const RECT d = dr ? *dr : RECT{0, 0, LONG(dst->width), LONG(dst->height)};
     const DkImageRect srect{uint32_t(s.left), uint32_t(s.top), 0, uint32_t(s.right - s.left), uint32_t(s.bottom - s.top), 1};
     const DkImageRect drect{uint32_t(d.left), uint32_t(d.top), 0, uint32_t(d.right - d.left), uint32_t(d.bottom - d.top), 1};
+    dkCmdBufBarrier(gpu().cmd, DkBarrier_Full, 0);  // the source's rendering done before the copy reads it
     if (srect.width == drect.width && srect.height == drect.height && si->format == di->format)
         dkCmdBufCopyImage(gpu().cmd, &sv, &srect, &dv, &drect, 0);
     else
         dkCmdBufBlitImage(gpu().cmd, &sv, &srect, &dv, &drect, linear ? DkBlitFlag_FilterLinear : 0, 0);
+    copy_barrier_ = true;
     sync("blit (format %d %ux%u -> format %d %ux%u)", int(si->format), srect.width, srect.height, int(di->format),
          drect.width, drect.height);
 }
@@ -569,6 +575,7 @@ HRESULT Device::UpdateTexture(IDirect3DBaseTexture9* src, IDirect3DBaseTexture9*
             const DkImageRect r{0, 0, 0, mip(d->img.width, m), mip(d->img.height, m), mip(d->img.depth, m)};
             dkCmdBufCopyImage(gpu().cmd, &sv, &r, &dv, &r, 0);
         }
+    copy_barrier_ = true;
     return D3D_OK;
 }
 
@@ -579,6 +586,7 @@ HRESULT Device::GetRenderTargetData(IDirect3DSurface9* rt, IDirect3DSurface9* ds
     const DkImageView v = s->view();
     const DkImageRect r{0, 0, 0, std::min(s->width, d->width), std::min(s->height, d->height), 1};
     const DkCopyBuf out{d->cpu.gpu(), d->cpu_pitch, 0};  // byte pitch
+    dkCmdBufBarrier(gpu().cmd, DkBarrier_Full, 0);  // rendering into rt done before the copy reads it
     dkCmdBufCopyImageToBuffer(gpu().cmd, &v, &r, &out, 0);
     // The game reads it right away: submit and wait (a stall; the luminance
     // read-back does this every frame, see docs/SWITCH.md).
@@ -599,6 +607,7 @@ HRESULT Device::ColorFill(IDirect3DSurface9* surface, const RECT* rect, D3DCOLOR
     argb_to_float(color, c);
     dkCmdBufClearColorFloat(cmd, 0, DkColorMask_RGBA, c[0], c[1], c[2], c[3]);
     dirty_ |= kTargets | kViewport;
+    copy_barrier_ = true;
     sync("ColorFill (format %d %ux%u)", int(s->image()->format), s->width, s->height);
     return D3D_OK;
 }
@@ -902,6 +911,10 @@ HRESULT Device::GetIndices(IDirect3DIndexBuffer9** out) {
 // ---- state -> deko3d ----
 
 void Device::flush_targets() {
+    // Render-to-texture: what was drawn into the previous targets must be done,
+    // and the texture cache invalidated, before anything samples it. Without this
+    // the game's blur passes read their inputs as freshly cleared (zeros).
+    dkCmdBufBarrier(gpu().cmd, DkBarrier_Fragments, DkInvalidateFlags_Image);
     DkImageView views[4];
     DkImageView const* ptrs[4];
     uint32_t n = 0;
@@ -1167,6 +1180,10 @@ bool Device::prepare_draw(D3DPRIMITIVETYPE, uint32_t* instances) {
     if (dirty_ == kAll) {
         dkCmdBufBindUniformBuffer(cmd, DkStage_Vertex, 0, ubo_[0].gpu(), kUboSize);
         dkCmdBufBindUniformBuffer(cmd, DkStage_Fragment, 0, ubo_[1].gpu(), kUboSize);
+    }
+    if (copy_barrier_) {
+        dkCmdBufBarrier(cmd, DkBarrier_Full, DkInvalidateFlags_Image);
+        copy_barrier_ = false;
     }
     if (dirty_ & kTargets) flush_targets();
     if (dirty_ & kViewport) flush_viewport();
