@@ -1,6 +1,7 @@
 // IDirect3D9 on deko3d: adapter queries, capabilities, CreateDevice, and the
 // Direct3DCreate9 the D3D9 bridge calls (shims/d3d9/bridge.cpp).
 #include <atomic>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 
@@ -21,7 +22,10 @@ void trace(const char* what) {
 HRESULT D3D9::GetAdapterIdentifier(UINT adapter, DWORD, D3DADAPTER_IDENTIFIER9* id) {
     trace("GetAdapterIdentifier");
     if (adapter || !id) return D3DERR_INVALIDCALL;
-    std::memset(id, 0, sizeof *id);
+    // Up to WHQLLevel only: the host struct is 4 bytes longer than the game's
+    // (DXVK's headers align it to 8 for DriverVersion; D3D9's pack it to 4),
+    // and clearing the padding overwrote the field after it in the game's object.
+    std::memset(id, 0, offsetof(D3DADAPTER_IDENTIFIER9, WHQLLevel) + sizeof id->WHQLLevel);
     std::snprintf(id->Driver, sizeof id->Driver, "deko3d");
     std::snprintf(id->Description, sizeof id->Description, "NVIDIA Tegra X1 (deko3d)");
     std::snprintf(id->DeviceName, sizeof id->DeviceName, "\\\\.\\DISPLAY1");
