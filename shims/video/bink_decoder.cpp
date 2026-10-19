@@ -42,7 +42,10 @@ void Decoder::close() {
 
 bool Decoder::open(const std::string& path, bool with_audio) {
     close();
-    if (avformat_open_input(&fmt_, path.c_str(), nullptr, nullptr) < 0 || avformat_find_stream_info(fmt_, nullptr) < 0)
+    // Through FFmpeg's file protocol explicitly: on the Switch, "sdmc:/..." reads
+    // as a URL with an unknown "sdmc" protocol and the open fails.
+    const std::string url = "file:" + path;
+    if (avformat_open_input(&fmt_, url.c_str(), nullptr, nullptr) < 0 || avformat_find_stream_info(fmt_, nullptr) < 0)
         return false;
     vstream_ = av_find_best_stream(fmt_, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
     if (vstream_ < 0 || !(vdec_ = open_codec(fmt_->streams[vstream_]))) return false;
