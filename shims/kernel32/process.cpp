@@ -175,6 +175,17 @@ STDCALL(kernel32, ExitProcess, 1) {
 }
 STDCALL(kernel32, TerminateProcess, 2) {
     rt::log("TerminateProcess(%u)", a[1]);
+    // The CRT ends here on an invalid parameter (0xC000000D) or abort: the code
+    // addresses on the guest stack name the game functions on the way in.
+    std::string chain;
+    for (uint32_t k = 0; k < 256; ++k) {
+        const uint32_t v = rd32(c->esp + 4 * k);
+        if (v < 0x00401000 || v >= 0x01280000) continue;  // .text
+        char s[24];
+        std::snprintf(s, sizeof s, " +%X:%08X", 4 * k, v);
+        chain += s;
+    }
+    rt::log("TerminateProcess: return addresses on the guest stack:%s", chain.c_str());
     std::fflush(nullptr);
     std::_Exit(int(a[1]));
 }
