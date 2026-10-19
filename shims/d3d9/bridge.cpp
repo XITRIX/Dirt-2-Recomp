@@ -14,6 +14,7 @@
 #include <d3d9.h>
 
 #include <cstdlib>
+#include <cstring>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -33,6 +34,7 @@
 
 #include "../../platform/platform.h"
 #include "../shim.h"
+#include "recomp/sha256.h"
 
 namespace shim {
 void* host_window(uint32_t hwnd);
@@ -433,6 +435,180 @@ void dev_set_vertex_shader(X86* c) {
 void dev_create_pixel_shader(X86* c) { dev_create_shader<true>(c); }
 void dev_create_vertex_shader(X86* c) { dev_create_shader<false>(c); }
 std::atomic<uint32_t> g_cur_ps{0};
+// ---- Frame dump (DIRT2_FRAME_DUMP=<frame>, every renderer) ----
+// During that frame, every render target drawn into is recorded with its draw
+// count, the shaders that drew into it (SHA-256 prefixes of their bytecode: the
+// Switch shader pack's keys) and what its first draw sampled (s<i>=#<target> for
+// an earlier target of the frame). At that frame's Present each target is read
+// back with GetRenderTargetData and saved as <data>/framedump/NN_WxH_fmtF.bmp,
+// with value statistics. Compare a Switch dump with a Mac (DXVK) one target by
+// target. On deko3d an A2R10G10B10 target reads back red/blue swapped (it is
+// stored as RGB10A2); the statistics name the channels as stored.
+std::atomic<uint32_t> g_present_count{0};
+
+uint32_t dump_frame() {
+    static const uint32_t f = std::getenv("DIRT2_FRAME_DUMP") ? uint32_t(std::atoi(std::getenv("DIRT2_FRAME_DUMP"))) : 0;
+    return f;
+}
+
+struct DumpEntry {
+    IDirect3DSurface9* surface;
+    uint32_t draws = 0;
+    std::vector<std::string> shaders;
+    std::string inputs;  // of the first draw
+};
+std::vector<DumpEntry> g_dump;
+
+std::string shader_key(IUnknown* sh, bool pixel) {
+    if (!sh) return "-";
+    UINT size = 0;
+    auto get = [&](void* data) {
+        return pixel ? static_cast<IDirect3DPixelShader9*>(sh)->GetFunction(data, &size)
+                     : static_cast<IDirect3DVertexShader9*>(sh)->GetFunction(data, &size);
+    };
+    if (FAILED(get(nullptr)) || !size) return "?";
+    std::vector<uint8_t> code(size);
+    get(code.data());
+    return recomp::sha256_hex(code.data(), code.size()).substr(0, 12);
+}
+
+void dump_note_target(IDirect3DDevice9* dev, DWORD index);
+
+void dump_note_draw(IDirect3DDevice9* dev) {
+    if (!dump_frame() || g_present_count + 1 != dump_frame()) return;
+    for (DWORD i = 0; i < 4; ++i) dump_note_target(dev, i);
+}
+
+// One bound render target (index > 0: a further MRT target of the draw).
+void dump_note_target(IDirect3DDevice9* dev, DWORD index) {
+    IDirect3DSurface9* rt = nullptr;
+    if (FAILED(dev->GetRenderTarget(index, &rt)) || !rt) return;
+    auto it = std::find_if(g_dump.begin(), g_dump.end(), [&](const DumpEntry& e) { return e.surface == rt; });
+    if (it == g_dump.end()) {
+        g_dump.push_back({rt});  // keeps the reference
+        it = g_dump.end() - 1;
+        std::string in;
+        for (DWORD i = 0; i < 8; ++i) {
+            IDirect3DBaseTexture9* t = nullptr;
+            if (FAILED(dev->GetTexture(i, &t)) || !t) continue;
+            std::string what = "tex";
+            if (t->GetType() == D3DRTYPE_TEXTURE) {
+                IDirect3DSurface9* s0 = nullptr;
+                if (SUCCEEDED(static_cast<IDirect3DTexture9*>(t)->GetSurfaceLevel(0, &s0)) && s0) {
+                    for (size_t k = 0; k < g_dump.size(); ++k)
+                        if (g_dump[k].surface == s0) what = "#" + std::to_string(k + 1);
+                    s0->Release();
+                }
+            }
+            in += " s" + std::to_string(i) + "=" + what;
+            t->Release();
+        }
+        it->inputs = (index ? " (MRT target " + std::to_string(index) + ")" : std::string()) + in;
+    } else {
+        rt->Release();
+    }
+    ++it->draws;
+    IDirect3DVertexShader9* vs = nullptr;
+    IDirect3DPixelShader9* ps = nullptr;
+    dev->GetVertexShader(&vs);
+    dev->GetPixelShader(&ps);
+    const std::string name = shader_key(vs, false) + "/" + shader_key(ps, true);
+    if (vs) vs->Release();
+    if (ps) ps->Release();
+    if (it->shaders.size() < 6 && std::find(it->shaders.begin(), it->shaders.end(), name) == it->shaders.end())
+        it->shaders.push_back(name);
+}
+
+float dump_half(uint16_t v) {
+    const uint32_t sgn = v >> 15, e = (v >> 10) & 31, m = v & 1023;
+    float r = e == 0 ? std::ldexp(float(m), -24) : e == 31 ? (m ? NAN : INFINITY) : std::ldexp(float(m | 1024), int(e) - 25);
+    return sgn ? -r : r;
+}
+
+void dump_write(IDirect3DDevice9* dev) {
+    const char* data = std::getenv("DIRT2_DATA_DIR");
+    const std::string dir = std::string(data ? data : ".") + "/framedump";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    rt::log("d3d9: frame dump: %zu render targets of frame %u to %s", g_dump.size(), dump_frame(), dir.c_str());
+    for (size_t k = 0; k < g_dump.size(); ++k) {
+        DumpEntry& e = g_dump[k];
+        D3DSURFACE_DESC d{};
+        e.surface->GetDesc(&d);
+        IDirect3DSurface9* sys = nullptr;
+        bool ok = SUCCEEDED(dev->CreateOffscreenPlainSurface(d.Width, d.Height, d.Format, D3DPOOL_SYSTEMMEM, &sys, nullptr)) &&
+                  SUCCEEDED(dev->GetRenderTargetData(e.surface, sys));
+        D3DLOCKED_RECT lr{};
+        ok = ok && SUCCEEDED(sys->LockRect(&lr, nullptr, D3DLOCK_READONLY));
+        double sum[3] = {}, mn = 1e30, mx = -1e30;
+        uint64_t nans = 0, infs = 0;
+        if (ok) {
+            std::vector<uint8_t> out(size_t(d.Width) * d.Height * 4);
+            for (uint32_t y = 0; y < d.Height; ++y)
+                for (uint32_t x = 0; x < d.Width; ++x) {
+                    const uint8_t* p = static_cast<const uint8_t*>(lr.pBits) + size_t(y) * lr.Pitch;
+                    float c[3] = {0, 0, 0};
+                    uint32_t v32;
+                    switch (d.Format) {
+                        case D3DFMT_A8R8G8B8: case D3DFMT_X8R8G8B8:
+                            p += x * 4; c[0] = p[2] / 255.f; c[1] = p[1] / 255.f; c[2] = p[0] / 255.f; break;
+                        case D3DFMT_A8B8G8R8: case D3DFMT_X8B8G8R8:
+                            p += x * 4; c[0] = p[0] / 255.f; c[1] = p[1] / 255.f; c[2] = p[2] / 255.f; break;
+                        case D3DFMT_A2R10G10B10:
+                            std::memcpy(&v32, p + x * 4, 4);
+                            c[0] = ((v32 >> 20) & 1023) / 1023.f; c[1] = ((v32 >> 10) & 1023) / 1023.f; c[2] = (v32 & 1023) / 1023.f;
+                            break;
+                        case D3DFMT_A16B16G16R16:
+                            for (int i = 0; i < 3; ++i) { uint16_t h; std::memcpy(&h, p + x * 8 + 2 * i, 2); c[i] = h / 65535.f; }
+                            break;
+                        case D3DFMT_A16B16G16R16F:
+                            for (int i = 0; i < 3; ++i) { uint16_t h; std::memcpy(&h, p + x * 8 + 2 * i, 2); c[i] = dump_half(h); }
+                            break;
+                        case D3DFMT_G16R16F:
+                            for (int i = 0; i < 2; ++i) { uint16_t h; std::memcpy(&h, p + x * 4 + 2 * i, 2); c[i] = dump_half(h); }
+                            break;
+                        case D3DFMT_R16F: { uint16_t h; std::memcpy(&h, p + x * 2, 2); c[0] = c[1] = c[2] = dump_half(h); break; }
+                        case D3DFMT_R32F: std::memcpy(&c[0], p + x * 4, 4); c[1] = c[2] = c[0]; break;
+                        default: break;
+                    }
+                    uint8_t* o = &out[(size_t(y) * d.Width + x) * 4];
+                    for (int i = 0; i < 3; ++i) {
+                        const float v = c[i];
+                        if (std::isnan(v)) ++nans;
+                        else if (std::isinf(v)) ++infs;
+                        else { sum[i] += v; mn = std::min<double>(mn, v); mx = std::max<double>(mx, v); }
+                        o[2 - i] = uint8_t((std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 1.0f) * 255.0f + 0.5f);
+                    }
+                    o[3] = 255;
+                }
+            sys->UnlockRect();
+            char path[512];
+            std::snprintf(path, sizeof path, "%s/%02zu_%ux%u_fmt%u.bmp", dir.c_str(), k + 1, d.Width, d.Height, uint32_t(d.Format));
+            if (std::FILE* f = std::fopen(path, "wb")) {
+                const uint32_t size = d.Width * 4 * d.Height;
+                uint8_t hdr[54] = {'B', 'M'};
+                auto put32 = [&](int off, uint32_t v) { std::memcpy(hdr + off, &v, 4); };
+                put32(2, 54 + size); put32(10, 54); put32(14, 40); put32(18, d.Width);
+                put32(22, uint32_t(-int32_t(d.Height)));
+                hdr[26] = 1; hdr[28] = 32; put32(34, size);
+                std::fwrite(hdr, 1, 54, f);
+                std::fwrite(out.data(), 1, out.size(), f);
+                std::fclose(f);
+            }
+        }
+        if (sys) sys->Release();
+        const double n = double(d.Width) * d.Height;
+        std::string shaders;
+        for (auto& x : e.shaders) shaders += " " + x;
+        rt::log("d3d9: frame dump %02zu %ux%u fmt %u: %u draws, mean %.3f %.3f %.3f, min %.3f max %.3f, NaN %llu Inf %llu;%s%s; shaders%s",
+                k + 1, d.Width, d.Height, uint32_t(d.Format), e.draws, sum[0] / n, sum[1] / n, sum[2] / n, mn, mx,
+                (unsigned long long)nans, (unsigned long long)infs, ok ? "" : " (read-back failed)", e.inputs.c_str(),
+                shaders.c_str());
+        e.surface->Release();
+    }
+    g_dump.clear();
+}
+
 void dev_set_pixel_shader(X86* c) {
     const Args a{c};
     g_cur_ps = a[1];
@@ -464,6 +640,7 @@ void dev_draw_primitive_up(X86* c) {  // (type, count, data, stride)
     const Args a{c};
     auto* self = static_cast<IDirect3DDevice9*>(to_host(a[0]));
     if (watch_ps() && g_cur_ps == watch_ps()) log_vertices("DrawPrimitiveUP", rt::host_ptr(a[3]), a[4]);
+    if (self) dump_note_draw(self);
     c->eax = self ? uint32_t(self->DrawPrimitiveUP(D3DPRIMITIVETYPE(a[1]), a[2], rt::host_ptr(a[3]), a[4]))
                   : uint32_t(D3DERR_INVALIDCALL);
     c->esp += 4 * 6;
@@ -471,6 +648,7 @@ void dev_draw_primitive_up(X86* c) {  // (type, count, data, stride)
 void dev_draw_primitive(X86* c) {  // (type, start vertex, count)
     const Args a{c};
     auto* self = static_cast<IDirect3DDevice9*>(to_host(a[0]));
+    if (self) dump_note_draw(self);
     if (self && watch_ps() && g_cur_ps == watch_ps()) {
         IDirect3DVertexBuffer9* vb = nullptr;
         UINT off = 0, stride = 0;
@@ -638,6 +816,7 @@ void dev_draw_primitive(X86* c) {  // (type, start vertex, count)
 void dev_draw_indexed_primitive(X86* c) {  // (type, base vertex, min index, num vertices, start index, prim count)
     const Args a{c};
     auto* self = static_cast<IDirect3DDevice9*>(to_host(a[0]));
+    if (self) dump_note_draw(self);
     if (self && watch_ps() && g_cur_ps == watch_ps()) {
         IDirect3DVertexBuffer9* vb = nullptr;
         UINT off = 0, stride = 0;
@@ -869,6 +1048,8 @@ void dev_present(X86* c) {
     static std::atomic<uint32_t> frames{0};
     static auto t0 = std::chrono::steady_clock::now();
     const uint32_t frame = ++frames;
+    if (self && dump_frame() && frame == dump_frame()) dump_write(self);
+    g_present_count = frame;
     if (self) capture_back_buffer(self, frame);
     if (frame == 1) rt::log("d3d9: first Present");
     static const bool log_present = std::getenv("DIRT2_LOG_PRESENT") != nullptr;
