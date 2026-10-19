@@ -3,6 +3,7 @@
 #include <cstring>
 #include <mutex>
 #include <set>
+#include <tuple>
 
 #include "device.h"
 #include "recomp/host.h"
@@ -212,8 +213,10 @@ namespace {
 
 uint32_t image_flags(DWORD usage, const FormatInfo& f) {
     uint32_t flags = DkImageFlags_Usage2DEngine;  // blits and copies
-    if ((usage & (D3DUSAGE_RENDERTARGET | D3DUSAGE_DEPTHSTENCIL)) || f.depth)
-        flags |= DkImageFlags_UsageRender | DkImageFlags_HwCompression;
+    // No DkImageFlags_HwCompression: a compressed surface must be decompressed
+    // before it is sampled (deko3d does so only for swap chain images), and
+    // render targets sampled compressed came out in dark 4x4 blocks.
+    if ((usage & (D3DUSAGE_RENDERTARGET | D3DUSAGE_DEPTHSTENCIL)) || f.depth) flags |= DkImageFlags_UsageRender;
     return flags;
 }
 
@@ -234,6 +237,16 @@ bool init_core(TextureCore& c, Device* d, DkImageType type, UINT w, UINT h, UINT
     c.pool = pool;
     c.fmt = format_info(f);
     if (!c.fmt) return false;
+    {
+        // Bring-up: each kind of texture once (type, format, usage, pool, size).
+        static std::mutex mu;
+        static std::set<std::tuple<int, uint32_t, DWORD, int, UINT, UINT, UINT>> seen;
+        std::lock_guard lk(mu);
+        if (seen.insert({int(type), uint32_t(f), usage, int(pool), w, h, depth}).second && seen.size() <= 200)
+            rt::log("deko3d: texture %s %ux%ux%u, %u levels, format %u (0x%X), usage %lX, pool %d",
+                    type == DkImageType_3D ? "3D" : type == DkImageType_Cubemap ? "cube" : "2D", w, h, depth, levels,
+                    uint32_t(f), uint32_t(f), (unsigned long)usage, int(pool));
+    }
     if (levels == 0 || (usage & D3DUSAGE_AUTOGENMIPMAP)) levels = (usage & D3DUSAGE_AUTOGENMIPMAP) ? 1 : full_levels(w, h, depth);
     for (int i = 0; i < 4; ++i) c.img.swizzle[i] = c.fmt->swizzle[i];
     const uint32_t layers = type == DkImageType_Cubemap ? 6 : 1;
