@@ -462,6 +462,21 @@ HRESULT Device::CreateOffscreenPlainSurface(UINT w, UINT h, D3DFORMAT f, D3DPOOL
     return D3D_OK;
 }
 
+void Device::clear_new_image(GpuImage& img, bool depth) {
+    DkCmdBuf cmd = gpu().cmd;
+    const uint32_t faces = img.type == DkImageType_Cubemap ? 6 : 1;
+    for (uint32_t f = 0; f < faces; ++f) {
+        const DkImageView v = img.view(0, f, false);
+        if (depth) dkCmdBufBindRenderTargets(cmd, nullptr, 0, &v);
+        else dkCmdBufBindRenderTarget(cmd, &v, nullptr);
+        const DkScissor sc{0, 0, img.width, img.height};
+        dkCmdBufSetScissors(cmd, 0, &sc, 1);
+        if (depth) dkCmdBufClearDepthStencil(cmd, true, 1.0f, 0xFF, 0);
+        else dkCmdBufClearColorFloat(cmd, 0, DkColorMask_RGBA, 0.0f, 0.0f, 0.0f, 0.0f);
+    }
+    dirty_ |= kTargets | kViewport;
+}
+
 void Device::read_image(GpuImage& img, uint32_t layer, uint32_t level, const Alloc& out, uint32_t pitch_bytes,
                         const RECT& r) {
     const DkImageView v = img.view(level, layer, false);

@@ -108,6 +108,10 @@ public:
                                       const void* indices, D3DFORMAT index_format, const void* data,
                                       UINT stride) override;
 
+    // Clears a new render target (level 0, every face): colour to 0, depth to 1, as
+    // DXVK initialises images. Pool memory is reused, and leftover data in a float
+    // target poisoned the game's luminance average (the picture faded to black).
+    void clear_new_image(GpuImage& img, bool depth);
     // Reads an image region into CPU-readable memory: copy, wait for the GPU, invalidate the CPU cache.
     void read_image(GpuImage& img, uint32_t layer, uint32_t level, const Alloc& out, uint32_t pitch_bytes, const RECT& r);
     // Copies of a surface region (StretchRect, UpdateSurface).

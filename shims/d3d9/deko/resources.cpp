@@ -211,6 +211,17 @@ HRESULT IndexBuffer::GetDesc(D3DINDEXBUFFER_DESC* d) {
 
 namespace {
 
+// The sampling swizzle: the format's, except that a render target holds what
+// the GPU wrote in the image's own channel order, so a swizzle that corrects
+// D3D's layout of uploaded data (A2R10G10B10's red/blue) must not apply.
+void set_swizzle(DkImageSwizzle out[4], const FormatInfo& f, DWORD usage) {
+    for (int i = 0; i < 4; ++i) out[i] = f.swizzle[i];
+    if ((usage & D3DUSAGE_RENDERTARGET) && out[0] == DkImageSwizzle_Blue && out[2] == DkImageSwizzle_Red) {
+        out[0] = DkImageSwizzle_Red;
+        out[2] = DkImageSwizzle_Blue;
+    }
+}
+
 uint32_t image_flags(DWORD usage, const FormatInfo& f) {
     uint32_t flags = DkImageFlags_Usage2DEngine;  // blits and copies
     // No DkImageFlags_HwCompression: a compressed surface must be decompressed
@@ -248,7 +259,7 @@ bool init_core(TextureCore& c, Device* d, DkImageType type, UINT w, UINT h, UINT
                     uint32_t(f), uint32_t(f), (unsigned long)usage, int(pool));
     }
     if (levels == 0 || (usage & D3DUSAGE_AUTOGENMIPMAP)) levels = (usage & D3DUSAGE_AUTOGENMIPMAP) ? 1 : full_levels(w, h, depth);
-    for (int i = 0; i < 4; ++i) c.img.swizzle[i] = c.fmt->swizzle[i];
+    set_swizzle(c.img.swizzle, *c.fmt, usage);
     const uint32_t layers = type == DkImageType_Cubemap ? 6 : 1;
     if (c.fmt->dk == DkImageFormat_None) {  // NULL format: sizes only, nothing to draw into or sample
         c.img.type = type;
@@ -260,6 +271,7 @@ bool init_core(TextureCore& c, Device* d, DkImageType type, UINT w, UINT h, UINT
         return true;
     }
     if (!c.img.create(type, c.fmt->dk, w, h, depth, levels, layers, image_flags(usage, *c.fmt))) return false;
+    if ((usage & (D3DUSAGE_RENDERTARGET | D3DUSAGE_DEPTHSTENCIL)) || c.fmt->depth) d->clear_new_image(c.img, c.fmt->depth);
     c.surfaces.assign(size_t(layers) * c.img.levels, nullptr);
     return true;
 }
@@ -447,8 +459,8 @@ Surface::Surface(Device* d, UINT w, UINT h, D3DFORMAT f, DWORD u, D3DPOOL p, boo
         cpu_pitch = row_pitch(*fmt, w);
         cpu = gpu().readback.alloc(cpu_pitch * level_rows(*fmt, h), 256);
     } else {
-        for (int i = 0; i < 4; ++i) own.swizzle[i] = fmt->swizzle[i];
-        own.create(DkImageType_2D, fmt->dk, w, h, 1, 1, 1, image_flags(u, *fmt));
+        set_swizzle(own.swizzle, *fmt, u);
+        if (own.create(DkImageType_2D, fmt->dk, w, h, 1, 1, 1, image_flags(u, *fmt))) d->clear_new_image(own, fmt->depth);
     }
     dev_->AddRef();
 }
