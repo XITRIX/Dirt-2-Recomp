@@ -7,7 +7,7 @@ from pathlib import Path
 import hashlib,json,shutil,subprocess,zipfile,sys,argparse
 root=Path.cwd();build=root/'build/switch-dxvk'
 parser=argparse.ArgumentParser()
-for flag in ['standalone-preflight','startup-watchdog','no-disk-shader-cache','exposure-trace','preflight','shader-preload','fresh-exposure','async-exposure','primary','performance-trace','indirect-profile']:
+for flag in ['standalone-preflight','startup-watchdog','no-disk-shader-cache','exposure-trace','preflight','shader-preload','fresh-exposure','async-exposure','primary','performance-trace','indirect-profile','parallel-jobs','com-cache']:
  parser.add_argument('--'+flag,action='store_true')
 parser.add_argument('--output-dir',type=Path,default=root/'build/package/switch-dx11')
 args=parser.parse_args()
@@ -39,6 +39,11 @@ if args.indirect_profile:
  if not args.performance_trace: raise SystemExit('--indirect-profile requires --performance-trace')
  with (sd/'env.txt').open('a') as f:f.write('DIRT2_PROFILE_INDIRECT=1\n')
  with (sd/'README.txt').open('a') as f:f.write('Samples active indirect guest calls at100Hz; reports inclusive wall-context for hot threads. No thread suspension. Adds two atomic stores per indirect call while enabled.\n')
+if args.parallel_jobs:
+ with (sd/'env.txt').open('a') as f:f.write('DIRT2_SWITCH_PARALLEL_JOBS=1\n')
+ with (sd/'README.txt').open('a') as f:f.write('CPU comparison: private five-worker job map uses existing parallel engine tasks; solver and softbody workers remain disjoint.\n')
+if args.com_cache:
+ with (sd/'env.txt').open('a') as f:f.write('DIRT2_COM_CACHE=1\n')
 if args.performance_trace:
  with (sd/'env.txt').open('a') as f:f.write('DIRT2_PROFILE=1\nDIRT2_DX11_PERF=1\n')
  with (sd/'README.txt').open('a') as f:f.write('Performance trace: guest CPU usage every ten seconds, DXVK counters and Present timing every five seconds in dirt2.log. Does not pause threads or add GPU timestamp waits.\n')
@@ -74,14 +79,16 @@ if archive_line:
  variant=archive.parent/'manifest.json'
  if archive.is_file() and variant.is_file():
   cpu=json.loads(variant.read_text())
-  if cpu.get('inline_guest_memory'):
+  if cpu.get('inline_guest_memory') or cpu.get('compiler'):
    with archive.open('rb') as f: digest=hashlib.file_digest(f,'sha256').hexdigest()
    if digest != cpu['archive_sha256']: raise SystemExit('CPU variant archive digest mismatch')
-   manifest['cpu_variant']={'inline_memory_chunks':[Path(item['source']).stem for item in cpu['sources']], 'tso':cpu['tso'], 'baseline_sha256':cpu['baseline_sha256'], 'archive_sha256':digest}
+   manifest['cpu_variant']={'compiler':cpu.get('compiler','gcc'), 'compiler_version':cpu.get('compiler_version'), 'full_generated':cpu.get('full_generated',False), 'source_count':len(cpu['sources']), 'forced_memory_inline':cpu['inline_guest_memory'], 'tso':cpu['tso'], 'baseline_sha256':cpu['baseline_sha256'], 'archive_sha256':digest}
    shutil.copyfile(variant,out/'cpu-variant.json')
 manifest['exposure_trace'] = exposure_trace
 manifest['performance_trace'] = args.performance_trace
 manifest['indirect_profile'] = args.indirect_profile
+manifest['parallel_jobs'] = args.parallel_jobs
+manifest['com_cache'] = args.com_cache
 manifest['shader_preload'] = args.shader_preload
 manifest['fresh_exposure'] = args.fresh_exposure
 manifest['async_exposure'] = args.async_exposure

@@ -137,7 +137,7 @@ waits for Horizon to terminate the title, preserving GPU memory until process
 termination. It neither closes HID beneath SDL nor returns to hbloader over live
 native threads. Guest-entry return uses the same path and keeps the main event
 pump running until the exit callback executes. Normal termination closes the
-title to HOME; it does not chainload hbmenu. Hardware validation is pending.
+title to HOME; it does not chainload hbmenu. The user confirmed this closes cleanly.
 
 SDK disassembly confirms the bundled _appletCleanup supports mode1 and installs
 the application-exit callback, matching the upstream implementation:
@@ -200,3 +200,62 @@ Existing eight Unicorn differential shards pass when run outside the sandbox
 (JIT execution fails with SIGILL inside it). The complete Switch build passes.
 Hardware FPS and image/physics results remain pending. Detailed100Hz indirect
 sampling is off; the same low-frequency CPU/driver counters are retained.
+
+## Broader CPU build after the first hardware comparison
+
+User confirms Quit now works. The314-second6fb23422 run is preserved under
+build/performance/switch-20261020-223332. The145–270 second race window has median
+11.7FPS,85.566ms/frame,Present0.0575ms. Worker264 remains about93% of a core.
+Earlier race median was11.6FPS. These are different race moments/settings (the
+new settings are1280x720), so they establish no controlled FPS improvement.
+
+The next combined experiment has three parts:
+
+1. Recompile **all540 generated objects** with Apple Clang21 targeting bare-metal
+   AArch64/Cortex-A57 against the same devkitA64 newlib headers. Preserve the
+   original TSO, PIC, architecture and aliasing options; no forced memory
+   inlining. Disable FP contraction and host math errno, with fast-math off.
+   Generated C has no native TLS, so GCC's soft-TLS flag is removed for these C
+   objects only; native C++/SDL/DXVK/NVK remain on the original SDK compiler.
+2. Opt into a private five-worker version of the shipped8-core job graph.
+   Four-core XML leaves collision/handling/AI/cloth/pfx/solver job groups empty.
+   The new map collapses existing parallel workers onto simulation roles and
+   two grass workers. Solver and soft-body workers remain disjoint, as required
+   by the shipped graph. The role mapping is tested against that graph exactly.
+   No host affinity, priority, physics timestep, damage or visual options change.
+3. Enable the previously tested COM proxy lookup cache in this package. The
+   previous Mac comparison showed less lookup CPU work but no isolated FPS gain.
+
+For f_010716F0 the baseline GCC static body has476 calls/64 vector arithmetic
+instructions; Clang has39 calls/109 vector arithmetic instructions. These are
+static counts, not dynamic CPU time. Generated archive text grows from136841053
+bytes to161301576 bytes, so instruction-cache behavior is an explicit tradeoff.
+The pool has five workers versus eight in the4-core map (each guest host stack
+is16MiB on Switch), reducing stack reservations. Runtime effects remain untested.
+
+The CPU archive builder now supports resumable, input-hashed full builds:
+
+```sh
+python3 tools/scripts/build_switch_cpu_variant.py --all --compiler clang \
+  --no-force-inline --jobs 6 --output build/switch-cpu-clang
+```
+
+Clang uses `--target=aarch64-none-elf`, the original compiler's sysroot,
+`-mno-outline-atomics -fno-math-errno -ffp-contract=off`. The floating-point
+contract/errno options are documented in the compiler manual:
+https://clang.llvm.org/docs/UsersManual.html#controlling-floating-point-behavior
+
+Validation:1346 Unicorn differential instruction cases pass with the selected
+math/TSO options; GCC/Clang emit identical CPU/SIMD/SEH layouts; all three runtime/topology tests pass, and the optional proxy
+cache passes its sanitizer regression. All540 Switch objects compile and the
+full native game links. The benchmark command-line hook is opt-in through
+DIRT2_BENCHMARK_FILE; both A/W getters use the same string. An isolated Mac run
+using the shipped example stayed in attract mode, so it did **not** provide a
+race CPU reference. It was stopped; real saves/assets were untouched. The generic
+explicit-archive option was used only to avoid rebuilding unchanged Mac guest
+code for that attempt, and the Mac cache was reset to normal source builds.
+
+The combined package uses --parallel-jobs --com-cache and retains the lightweight
+CPU/driver counters, fresh/async exposure and disk-cache disable. Its normal
+launch does not enable the unfinished automatic benchmark path. No FPS gain,
+physics improvement or30FPS result has been established for this build yet.

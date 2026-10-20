@@ -18,3 +18,13 @@ add_test(NAME runtime_memory_inline COMMAND runtime_memory_inline)
 foreach(target runtime_dispatch_cache runtime_memory_inline)
   target_compile_options(${target} PRIVATE -UNDEBUG)
 endforeach()
+
+# Compare the experimental scheduler against the game's existing parallel map.
+if(EXISTS "${DIRT2_GAME_DIR}/system/workerMap8Core.xml")
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_executable(switch_worker_topology ../switch/test_worker_topology.cpp)
+  target_include_directories(switch_worker_topology PRIVATE ${CMAKE_SOURCE_DIR})
+  add_test(NAME switch_worker_topology COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/switch/test_worker_topology.py $<TARGET_FILE:switch_worker_topology>
+    "${DIRT2_GAME_DIR}/system/workerMap8Core.xml")
+endif()

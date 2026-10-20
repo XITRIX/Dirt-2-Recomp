@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <iterator>
 #include "resolution_restrictions.h"
+#include "worker_topology.h"
 #include "../../shims/vfs.h"
 #include <string>
 
@@ -107,6 +108,26 @@ void install_resolution_restrictions() {
     if (!output) { rt::log("Switch: cannot write minimum-resolution override"); return; }
     vfs::set_override(relative, path);
     rt::log("Switch: minimum resolution 640x360; private settings override installed");
+}
+
+
+void install_worker_topology() {
+    const char* setting = std::getenv("DIRT2_SWITCH_PARALLEL_JOBS");
+    if (!setting || std::string_view(setting) != "1") return;
+    const std::string directory = vfs::data_dir() + "/switch-overrides";
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    const std::string path = directory + "/workerMapSwitch.xml";
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    const std::string xml = parallel_worker_map();
+    output.write(xml.data(), std::streamsize(xml.size()));
+    output.close();
+    if (!output) { rt::log("Switch: cannot write parallel worker override"); return; }
+    // Override either normal selector without modifying the user's settings or
+    // installed assets. The serial2-core map is deliberately left alone.
+    vfs::set_override("system/workerMap4Core.xml", path);
+    vfs::set_override("system/workerMap8Core.xml", path);
+    rt::log("Switch: parallel job map enabled:3 simulation workers,2 grass workers; solver/softbody disjoint");
 }
 
 

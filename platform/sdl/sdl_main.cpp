@@ -36,6 +36,7 @@ int read_metalfx_setting(const std::string& path);
 namespace switch_platform {
 bool check_launch_mode();
 void install_resolution_restrictions();
+void install_worker_topology();
 void report_missing_game(const std::string& dir);
 }  // namespace switch_platform
 #endif
@@ -780,6 +781,7 @@ int main(int argc, char** argv) {
     if (chdir(dir.c_str()) != 0) rt::log("warning: cannot chdir to %s", dir.c_str());
 #if defined(SDL_PLATFORM_SWITCH)
     switch_platform::install_resolution_restrictions();
+    switch_platform::install_worker_topology();
 #endif
     shim::install_resolution_labels();
     shim::install_menu_patches(platform::metalfx_supported());

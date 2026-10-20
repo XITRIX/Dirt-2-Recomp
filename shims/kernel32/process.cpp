@@ -19,7 +19,20 @@ using namespace shim;
 namespace {
 
 const std::string kExePath = std::string(vfs::kInstallDir) + "\\dirt2_game.exe";
-const std::string kCmdLine = "\"" + kExePath + "\"";
+const std::string& guest_command_line() {
+    static const std::string line = [] {
+        std::string result = "\"" + kExePath + "\"";
+        // The game's shipped example_benchmark.xml documents this native mode.
+        // Opt-in only; the normal launcher, settings and save flow are unchanged.
+        if (const char* file = std::getenv("DIRT2_BENCHMARK_FILE"); file && *file) {
+            if (std::strlen(file) > 512 || std::strpbrk(file, "\"\r\n"))
+                rt::fatal("Invalid benchmark filename");
+            result += " -benchmark \"" + std::string(file) + "\"";
+        }
+        return result;
+    }();
+    return line;
+}
 
 // Module handles for DLLs we provide: base addresses that never hold memory.
 struct Module {
@@ -104,13 +117,14 @@ uint32_t processor_count() {
 
 // ---- process and modules ----
 STDCALL(kernel32, GetCommandLineA, 0) {
-    if (!g_cmd_a) g_cmd_a = rt::guest_strdup(kCmdLine);
+    if (!g_cmd_a) g_cmd_a = rt::guest_strdup(guest_command_line());
     return g_cmd_a;
 }
 STDCALL(kernel32, GetCommandLineW, 0) {
     if (!g_cmd_w) {
-        g_cmd_w = rt::heap_alloc(uint32_t(kCmdLine.size() * 2 + 2));
-        copy_out_w(g_cmd_w, uint32_t(kCmdLine.size() + 1), kCmdLine);
+        const std::string& line = guest_command_line();
+        g_cmd_w = rt::heap_alloc(uint32_t(line.size() * 2 + 2));
+        copy_out_w(g_cmd_w, uint32_t(line.size() + 1), line);
     }
     return g_cmd_w;
 }

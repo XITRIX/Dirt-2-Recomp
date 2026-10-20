@@ -1,3 +1,62 @@
+## CURRENT: GLOBAL CPU PATCH BUILT; FTP INTERRUPTED BEFORE ACTIVATION
+
+UserCONFIRMSQuitworks. Newlogsdownloadedbuild/performance/switch-20261020-223332:
+314s session;145–270s racewindowmedian11.7FPS/85.566ms,Present0.0575ms,worker264~93%core.
+No demonstratedgainvs11.6prior; differentmoments/resolution1280x720notcontrolledAB.
+Logendscleanapplicationexitnotificationhandlerready,userconfirmedHOMEexit.
+
+BIGGERCOMBINEDPATCH:
+- FULL540generatedobjects compiledwithAppleClang21targetaarch64-none-elf against
+sameSDKnewlib. TSO/PIC/A57+crypto flagsremain;fastmathOFF,fpcontractOFF,matherrnoOFF,
+nooutlineatomics. RemoveGCCsoftTLSflagsONLYgeneratedC(nonoativeTLS). NativesC++ /
+SDL/DXVK/NVKstillGCC SDK. Morevectorization/lesshelpercalls,code17.9%larger tradeoff.
+- OptinDIRT2_SWITCH_PARALLEL_JOBS=1 installsprivateVFSoverridesforworkerMap4/8Core,
+5workersderivedfrom8coremap (3simulation+2grass),solver/softbodyDISJOINT. Alljob
+names/rolecollapsedmembershipsvalidatedagainstshipped8map. Fewer16MBhoststacks
+thanold8worker4Coremap. RuntimejobmapvalidationPENDING.
+- OptinCOMproxycacheenabledincombinedpackage(DIRT2_COM_CACHE=1),sanitizerregressionPASS.
+
+VALIDATION:1346x86UnicorncasesPASSwithstrictmath/TSOflags; CPU/SIMD/SEHGCC/Clang
+layoutfixturePASS;runtime3CTestPASS(dispatch,memory,workergraph);proxyASAN/UBSANPASS;
+full540sourcearchivecompile+nativeSwitchlinkPASS. NoFPSgain/30FPSclaim untilhardware.
+
+BUILD18a21d0286a42d17b409b8dd9e4763ba04d0e270, SHA
+4bde22ecde1d9d339fb882827eae523c1f3be4b45a496c5ec5f69197cc24e509,
+191280937B. Packagebuild/package/switch-cpu-global;ELF/nmunder symbols.
+ManifestinstalledFALSE. FirstFTPstagedenv/README, NROsendtimedout. NOACTIVATION,
+old6fb23422stillactive. Retryconnecttimedout. AskeduserreopenFTPkeepawake.
+/tmp/dirt2-global-install.py installercontainscredentials,removebeforeend. Staging
+remote*.upload-* mayremain;canremoveONLYthosetaskownedpartialstagesafterinstall.
+Oldbackupsretained. NextinstallverifiedallstagedthenactivateNROlast,manifesttrueonly
+onCOMPLETE. Usertestsunchangedsettings30smenu+2minsameCroatiarace,checkphysics/visuals.
+
+Repro tools/scripts/build_switch_cpu_variant.py --all --compiler clang --no-force-inline
+--jobs 6 --output build/switch-cpu-clang. CMakeprimarycurrentlyimports
+build/switch-cpu-clang/libdirt2_gen.a. BuildscriptDIRT2_SWITCH_CPU_ARCHIVE override needed
+orfullscriptwillselectoriginalGCCarchive. GenericDIRT2_GENERATED_ARCHIVEoptionadded
+forfastMacnativeiteration;MaccacheRESETtoempty(sourcebuilds)aftertest.
+
+Macbenchmarkattempt:addedoptinDIRT2_BENCHMARK_FILE GetCmdLineA/Wargumenthook from
+shippedexample_benchmark.xml instructions. NativeMacbuildPASS(reusedreadonlycopied
+oldMacgeneratedarchive,ABIlayoutunchanged). IsolatedMacsave/settingsrun stayedattract
+menu;NOTusableRACEprofile. StoppedPID68176. NootherMacgameleft. NoUIautomationused.
+OptionalbenchmarkargNOTenabledinSwitchpackage; donotclaimautomatedbenchmarkworks.
+Detailsdocs/SWITCH_PERFORMANCE.md. Source changes checkpointed for hardware comparison.
+
+## CURRENT CONSOLE: CPU COMPARISON INSTALLED/VERIFIED
+
+Build6fb2342237bd3d894df016a92a53b9626fd71b16 installed successfully throughFTP,
+fullRETR/SHA256 verified env/README/NRO; timestampedbackups retained. Manifest
+build/package/switch-cpu-inline/manifest.json installedtrue. Installer66600COMPLETE.
+Priorlogs/envpreservedbefore-install-20261020-222450. Logstillprior438df7fa330s
+session; cleanAMexitbuild1acehasnotproducednewsessionlog. ThusQuitresultpending.
+
+Containsperthreaddispatchcachefix + fourchunkmemoryinlineCPUexperiment +cleanAM
+exit. CPU/DXVKlowfrequencytraceON, detailed100HzsamplerOFF. User to test30smenu,
+2minsameCroatiarace,unchangedsettings,thenQuitandreopenFTP; reportFPS, wheelmotion,
+andQuitresult. No measuredFPSgainor30FPSyet. Checksourcecommit19b417f and
+variantmanifest/matchingELFsymbols. Credentialsinstallerremovedaftercompletion.
+
 ## CURRENT: CPU COMPARISON BUILD READY, FTP TIMED OUT
 
 User asked continue performance. Implemented/tested two changes:
