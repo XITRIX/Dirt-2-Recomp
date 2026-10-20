@@ -14,8 +14,12 @@ target_compile_definitions(memory_inline PRIVATE RECOMP_INLINE_GUEST_MEMORY=1 VA
 add_executable(runtime_memory_inline test_memory_inline.cpp $<TARGET_OBJECTS:memory_baseline> $<TARGET_OBJECTS:memory_inline>)
 add_test(NAME runtime_memory_inline COMMAND runtime_memory_inline)
 
+add_executable(runtime_pc_sampling test_pc_sampling.cpp)
+target_include_directories(runtime_pc_sampling PRIVATE ${CMAKE_SOURCE_DIR}/runtime/include)
+add_test(NAME runtime_pc_sampling COMMAND runtime_pc_sampling)
+
 # Assertions are the regression checks, including release test builds.
-foreach(target runtime_dispatch_cache runtime_memory_inline)
+foreach(target runtime_dispatch_cache runtime_memory_inline runtime_pc_sampling)
   target_compile_options(${target} PRIVATE -UNDEBUG)
 endforeach()
 

@@ -1,3 +1,32 @@
+## Current: Clang race trace collected; instruction sampler installed and verified
+
+User confirms race loads with the stock worker map, but no visible FPS gain.
+Disabling only DIRT2_SWITCH_PARALLEL_JOBS fixed the prior loading stall. Keep it 0.
+Evidence: build/performance/switch-clang-stock-20261020-232334/analysis.json.
+Late race window318–345s median10.25FPS,97.302ms frame,0.0645ms Present;
+worker26492.7–93.7% core. Short window, not controlled scene comparison; no gain claim.
+GPU/CS waits negligible. Full Clang CPU archive/COM cache remain enabled.
+
+New opt-in DIRT2_PROFILE_PC samples only guest worker264 around20Hz with jitter.
+Pins its pthread handle under registry mutex; pauses, reads native PC/LR, resumes
+before allocation/logging. Failed reads still resume; unsupported loader SVC hints
+skip sampling; repeated kernel errors disable it. Unexpected resume failure invokes
+kernel panic rather than continuing with a paused worker. No stack walking.
+Snapshots are wall samples, not CPU-weighted; all PC/LR bins retained per10s window.
+Both sampler modes cannot combine. Normal packages do not enable instruction sampling.
+
+Validation: native ASAN/UBSAN failure-order tests and CTest runtime_pc_sampling PASS;
+full Switch cross-build PASS. tools/scripts/analyze_switch_pc.py attributes logged
+relative PCs using the EXACT archived nm file. Use corresponding ELF disassembly
+before optimizing a hotspot; do not assume inclusive contexts are self CPU costs.
+Package build/package/switch-cpu-pc-profile, buildba6d11682ffc46460a04c034c26cc909aab6b3fa,
+SHA2567e610adba371bcc50951cd79402c2c24f3be416d2fe424c774df244632da0fa6.
+Matching ELF/nm archived in package symbols/. FTP installation COMPLETE: all three
+files staged and fully retrieved/hash verified, then activated env/README/NRO last.
+Manifest installed=true. Prior active files retained as timestamped backups.
+Next hardware test: race2min, Quit, FTP; inspect prof-pc samples/errors and match symbols.
+This diagnostic adds overhead;30FPS target remains unmet. DX9 fallback untouched.
+
 ## CURRENT CONSOLE: STOCK JOB MAP RESTORED; RACE LOADING RETEST NEEDED
 
 User18a21d02 globaltestreachedmenu butraceloadedforever (statcards/spinneractive).

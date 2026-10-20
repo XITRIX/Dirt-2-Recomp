@@ -7,10 +7,12 @@ from pathlib import Path
 import hashlib,json,shutil,subprocess,zipfile,sys,argparse
 root=Path.cwd();build=root/'build/switch-dxvk'
 parser=argparse.ArgumentParser()
-for flag in ['standalone-preflight','startup-watchdog','no-disk-shader-cache','exposure-trace','preflight','shader-preload','fresh-exposure','async-exposure','primary','performance-trace','indirect-profile','parallel-jobs','com-cache']:
+for flag in ['standalone-preflight','startup-watchdog','no-disk-shader-cache','exposure-trace','preflight','shader-preload','fresh-exposure','async-exposure','primary','performance-trace','indirect-profile','pc-profile','parallel-jobs','com-cache']:
  parser.add_argument('--'+flag,action='store_true')
 parser.add_argument('--output-dir',type=Path,default=root/'build/package/switch-dx11')
 args=parser.parse_args()
+if args.pc_profile and (not args.performance_trace or args.indirect_profile):
+ raise SystemExit('--pc-profile requires --performance-trace and cannot combine with --indirect-profile')
 out=args.output_dir;sd=out/'sd/switch/dirt2-dx11';sd.mkdir(parents=True,exist_ok=True)
 standalone=args.standalone_preflight;watchdog=args.startup_watchdog
 no_disk_cache=args.no_disk_shader_cache;exposure_trace=args.exposure_trace
@@ -35,6 +37,9 @@ if no_disk_cache:
 if exposure_trace:
  with (sd/'env.txt').open('a') as f:f.write('DIRT2_LOG_EXPOSURE=1\nDIRT2_EXPOSURE_TRACE_SECONDS=600\n')
  with (sd/'README.txt').open('a') as f:f.write('Records small float texture readbacks and frame timing in exposure.csv for ten minutes. Writes are batched; tracing adds no extra GPU readbacks or waits.\n')
+if args.pc_profile:
+ with (sd/'env.txt').open('a') as f:f.write('DIRT2_PROFILE_PC=1\nDIRT2_PROFILE_PC_TID=264\n')
+ with (sd/'README.txt').open('a') as f:f.write('Diagnostic instruction sampling: briefly pauses guest worker264 around20 times/second, captures PC/LR and resumes before logging. Adds profiling overhead; not a performance repair. Disabled automatically if kernel access is unavailable.\n')
 if args.indirect_profile:
  if not args.performance_trace: raise SystemExit('--indirect-profile requires --performance-trace')
  with (sd/'env.txt').open('a') as f:f.write('DIRT2_PROFILE_INDIRECT=1\n')
@@ -46,7 +51,7 @@ if args.com_cache:
  with (sd/'env.txt').open('a') as f:f.write('DIRT2_COM_CACHE=1\n')
 if args.performance_trace:
  with (sd/'env.txt').open('a') as f:f.write('DIRT2_PROFILE=1\nDIRT2_DX11_PERF=1\n')
- with (sd/'README.txt').open('a') as f:f.write('Performance trace: guest CPU usage every ten seconds, DXVK counters and Present timing every five seconds in dirt2.log. Does not pause threads or add GPU timestamp waits.\n')
+ with (sd/'README.txt').open('a') as f:f.write('Performance trace: guest CPU usage every ten seconds, DXVK counters and Present timing every five seconds in dirt2.log. CPU accounting adds no pauses or GPU timestamp waits; optional instruction sampling is described separately.\n')
 if args.shader_preload:
  bundle=root/'build/shaders/dx11/dirt2.dx11-shaders'
  shutil.copyfile(bundle,sd/bundle.name)
@@ -87,6 +92,7 @@ if archive_line:
 manifest['exposure_trace'] = exposure_trace
 manifest['performance_trace'] = args.performance_trace
 manifest['indirect_profile'] = args.indirect_profile
+manifest['pc_profile'] = args.pc_profile
 manifest['parallel_jobs'] = args.parallel_jobs
 manifest['com_cache'] = args.com_cache
 manifest['shader_preload'] = args.shader_preload
