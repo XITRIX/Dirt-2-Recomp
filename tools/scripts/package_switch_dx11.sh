@@ -39,8 +39,8 @@ if args.indirect_profile:
  if not args.performance_trace: raise SystemExit('--indirect-profile requires --performance-trace')
  with (sd/'env.txt').open('a') as f:f.write('DIRT2_PROFILE_INDIRECT=1\n')
  with (sd/'README.txt').open('a') as f:f.write('Samples active indirect guest calls at100Hz; reports inclusive wall-context for hot threads. No thread suspension. Adds two atomic stores per indirect call while enabled.\n')
+with (sd/'env.txt').open('a') as f:f.write('DIRT2_SWITCH_PARALLEL_JOBS=' + ('1' if args.parallel_jobs else '0') + '\n')
 if args.parallel_jobs:
- with (sd/'env.txt').open('a') as f:f.write('DIRT2_SWITCH_PARALLEL_JOBS=1\n')
  with (sd/'README.txt').open('a') as f:f.write('CPU comparison: private five-worker job map uses existing parallel engine tasks; solver and softbody workers remain disjoint.\n')
 if args.com_cache:
  with (sd/'env.txt').open('a') as f:f.write('DIRT2_COM_CACHE=1\n')

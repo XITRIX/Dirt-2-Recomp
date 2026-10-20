@@ -259,3 +259,22 @@ The combined package uses --parallel-jobs --com-cache and retains the lightweigh
 CPU/driver counters, fresh/async exposure and disk-cache disable. Its normal
 launch does not enable the unfinished automatic benchmark path. No FPS gain,
 physics improvement or30FPS result has been established for this build yet.
+
+## Combined build: race-loading stall
+
+User reached the menu with18a21d02 but race loading never completed. Evidence is
+build/performance/switch-loading-20261020-231304. The screen continues presenting
+about41FPS with320draws/frame; GPU/CS waits are zero and shader compilation is
+complete at1299/1299. This establishes a live loading-screen stall, not a frozen
+renderer or outstanding shader compilation. It does not identify the blocked job.
+
+The compact parallel map is the leading suspect. Preserving named groups and
+solver/softbody separation does not prove that collapsing all other workers
+preserves nested-job progress. Its previous structural test is insufficient as
+runtime validation. The next configuration restores the shipped worker map and
+keeps Clang and the COM cache enabled to isolate this variable. Packaging now
+writes DIRT2_SWITCH_PARALLEL_JOBS=0 explicitly when the option is omitted.
+
+Package: build/package/switch-cpu-clang-stock-jobs. Executable18a21d02 is unchanged;
+only env/README need replacement. Loading and race FPS require a console retest.
+Do not report the worker map as the confirmed cause until that comparison runs.

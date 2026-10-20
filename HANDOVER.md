@@ -1,3 +1,45 @@
+## CURRENT CONSOLE: STOCK JOB MAP RESTORED; RACE LOADING RETEST NEEDED
+
+User18a21d02 globaltestreachedmenu butraceloadedforever (statcards/spinneractive).
+Retrievedbuild/performance/switch-loading-20261020-231304. Last4min~41FPS320draws,
+GPU/CSwait0,compiler1299/1299complete; loadingUIalive, noGPUcompilerstall. Jobmap
+collapseleadingSUSPECT,notconfirmedcause. StructuralXMLtestdidNOTprovenestedjob
+progress. Do NOTre-enableexperimentalmapasdefaultorcallitvalidated.
+
+INSTALLED/VERIFIEDconfigonlypatch: DIRT2_SWITCH_PARALLEL_JOBS=0 explicitly.
+Originalshipped4Coremapusednextlaunch. Clangall540objects+COMcache1UNCHANGED.
+Manifest build/package/switch-cpu-clang-stock-jobs installedtrue,config_changeonly.
+NROstill18a21d0286a42d17b409b8dd9e4763ba04d0e270 SHA
+4bde22ecde1d9d339fb882827eae523c1f3be4b45a496c5ec5f69197cc24e509.
+NROmatchespriorverifiedglobalbuild; noNROupload. env/READMEfullRETR byteverified,
+remoteoldsettingsbackedup. Exactold/newenvdiffONLYparallelflag1->0. PrivateXMLonSD
+canremain; startupdoesnotregisteroverridewhenflag0. Sourcepackager nowwrites0
+when--parallel-jobsomitted. Correctedzipisstock-jobspackage; oldglobalzipretains
+historicalfailedparallelconfig,avoidinstallingthatoneagain.
+
+Nextusertestraceloading. Ifloads,play2minsamecourse/settingsforClang-onlyCPUdata,
+thenQuit/openFTP. Ifstillstalls,nextisolateCOMcacheandcompilerseparately;current
+tracehasnoPCsamplingsoactualblockedjobunknown. FullSwitchELF/nmstillglobal/symbols.
+No30FPS/improvementclaim. Quitpreviouslyconfirmedfixed. Credentialtempsremoved.
+
+## CURRENT CONSOLE: GLOBAL CPU BUILD INSTALLED AND VERIFIED
+
+Build18a21d0286a42d17b409b8dd9e4763ba04d0e270 isNOWACTIVE at
+sdmc:/switch/dirt2-dx11/dirt2-dx11.nro. FullFTPupload/RETR SHA256verified all3files
+thenactivatedenv/README/NROlast. Installer35725COMPLETE. Manifestinstalledtrue in
+build/package/switch-cpu-global/manifest.json. Timestampedbackupsofprevious6fbbuild
+retained. MatchingELF/nmunder symbols. No userassets/saves/settingschanged.
+
+IncludesfullClang540objectCPUarchive + experimental5workerparallelmap +COMlookupcache.
+TSOandstrictmathpreserved,D3D11/DXVK/NVK unchanged, fresh+async retained,
+diskcachesOFF, lowfrequencyCPU/drivertraceON, indirectsamplerOFF. Quitalreadyuser
+confirmedfixedinpriorbuild. GlobalFPS/physics/visualresultPENDING. User to test
+30smenu and2minsameCroatiaracewithunchangedsettingsthenQuit/openFTP; reportFPS,
+wheelmotion/physicsandanyvisualchange. DoNOTclaim30FPS/improvementyet.
+
+Sourcecheckpointbfbd27b. Credentialinstallerremovedaftercompletion. Oldpartial
+*.upload-* fromearlierfailedattemptsmayremain,butnoneisactive. Preservebackups.
+
 ## CURRENT: GLOBAL CPU PATCH BUILT; FTP INTERRUPTED BEFORE ACTIVATION
 
 UserCONFIRMSQuitworks. Newlogsdownloadedbuild/performance/switch-20261020-223332:
