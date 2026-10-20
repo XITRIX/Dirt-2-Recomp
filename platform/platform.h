@@ -9,6 +9,11 @@
 namespace platform {
 
 using Window = void*;  // SDL_Window*
+#if defined(__SWITCH__)
+// Notify Horizon before terminating, on the SDL thread; never chainload over
+// active Vulkan/guest threads or tear down HID while SDL is polling it.
+[[noreturn]] void exit_process(uint32_t code);
+#endif
 
 Window create_window(int width, int height, const char* title);
 void destroy_window(Window w);

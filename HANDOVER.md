@@ -1,3 +1,38 @@
+## LATEST: CLEAN AM EXIT BUILD INSTALLED/VERIFIED
+
+User tested438df7fa: Quit still displayed system error. New evidence in
+build/performance/switch-20261020-214628; log ends ExitProcess(0), no NEW
+Atmosphere crash (inventory latest01792521523 stillold8d28build). DirectSVC
+exit omitted AM notification. Replaced normal Switch ExitProcess/TerminateProcess
+with platform::exit_process: execute on SDL main thread, force libnx applet exit
+mode1, appletExit installs application-exit callback, invoke it. SendsSelfExit,
+waits for OS termination; closes title toHOME instead of hbmenu. No HID teardown
+or hbloader chainload over live GPU threads. Guest-return also useshelper and
+keeps eventpump running until callback. SDK disassembly matches upstreammode1.
+Hardware result PENDING; do not claim quitfixed until tested.
+
+Build1ace0cdc8f1b675f4e563645caee1096088dd529, NRO SHA256
+dbe58f67f350702c0733bed064684210afa20b58003716c57f34250174f95255.
+Packagebuild/package/switch-clean-exit; matchingELF/nmunder symbols.
+Installer71223 COMPLETE; env/README/NRO fullRETR/SHA256verified. Manifest
+installedtrue. User to launchthenuseQuit(shorttest sufficient), reopenFTP. DetailedindirectsamplerOFF nowtracecaptured;
+lowfrequencyCPU/drivercountersON. Fresh+async/cacheoffretained. OriginalDX9untouched.
+
+Worker264 racecontexts aggregatedworker-contexts.json; genericqueuewait00BF1750
+plus009EB920,010D3A20,010716F0,01091060,0107B2E0 substantialinclusivecontexts.
+Not selfCPU/PCsampling; no FPS/physics fixproven. Need identifyfunctions/tasks
+fromgeneratedcode/referenceanalysis beforeperformancechanges.
+
+## CURRENT CONSOLE: QUIT REPAIR / INDIRECT PROFILER INSTALLED
+
+Build438df7fa8aaeae87cf14884513834ecd33475718 fully uploaded and RETR/SHA256
+verified at192.168.1.148:5000; env/README/NRO replaced with timestamped backups.
+Manifest build/package/switch-quit-profile/manifest.json installed=true.
+User to run DiRT2 (dirt2-dx11), menu30s/race2min then use in-game Quit and
+reopen FTP. Quit hardware result and hot worker context remain pending.
+Physics/wheel cause remains unresolved. Original D3D9 untouched.
+Temporary credential installer removed after completion.
+
 ## CURRENT: QUIT REPAIR BUILT; FTP INSTALL BLOCKED
 
 Latest user reported Quit crash + wobbling wheels in recorded grid introduction;
@@ -13,7 +48,7 @@ fff4be07c09d868a8c1716021df478c0e65fb38e3c49ced3b09ffbd318db0dc3
 in build/package/switch-quit-profile/; matching ELF/nm archived under symbols/.
 NOT INSTALLED: installer timed out connecting before any remote write. Console
 still has 8d28b243. Asked user to reopen FTP at192.168.1.148:5000. No credential
-should be committed. Temporary installer /tmp/dirt2-install-quit.py pending cleanup.
+should be committed. Temporary FTP scripts containing credentials were removed.
 
 Race profile185–306s: median11.6FPS,86.185ms/frame. Guest tid264 entry01161370
 uses93.3% of one core; main26039.45%,worker34018.5%. GPU/CS waits0,

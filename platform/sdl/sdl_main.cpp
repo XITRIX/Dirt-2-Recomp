@@ -4,7 +4,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL_metal.h>
-#if defined(DIRT2_SWITCH_DXVK)
+#if defined(__SWITCH__)
 #include <switch.h>
 #endif
 #include <pthread.h>
@@ -48,6 +48,10 @@ std::string game_dir() { return g_game_dir; }
 void set_game_dir(const std::string& d) { g_game_dir = d; }
 }  // namespace rt
 
+#if defined(__SWITCH__)
+extern "C" u32 __nx_applet_exit_mode;
+#endif
+
 namespace platform {
 
 namespace {
@@ -63,6 +67,28 @@ void on_main(F&& f) {
 }
 
 }  // namespace
+
+#if defined(__SWITCH__)
+[[noreturn]] void exit_process(uint32_t code) {
+    on_main([code] {
+        // NROs normally return to hbloader. Live native GPU/guest threads make
+        // unloading our address space unsafe. libnx mode1 instead asks AM to
+        // close the application and waits for Horizon to terminate the process.
+        // Do not call _Exit/__appExit: that closes HID beneath the SDL pump.
+        __nx_applet_exit_mode = 1;
+        const auto loader_return = envGetExitFuncPtr();
+        appletExit();
+        const auto application_exit = envGetExitFuncPtr();
+        const bool notified = application_exit && application_exit != loader_return;
+        rt::log("platform: clean application exit, notification handler %s", notified ? "ready" : "unavailable");
+        std::fflush(nullptr);
+        if (notified) application_exit(int(code));
+        // Missing AM support must not jump into hbloader over live GPU memory.
+        svcExitProcess();
+    });
+    svcExitProcess();
+}
+#endif
 
 #if defined(SDL_PLATFORM_IOS) || defined(SDL_PLATFORM_TVOS) || defined(SDL_PLATFORM_VISIONOS) || \
     defined(SDL_PLATFORM_SWITCH)
@@ -348,12 +374,12 @@ void* game_main(void*) {
     rt::log("entering guest at 0x%08X", recomp_image_info.entry);
     const uint32_t r = rt::invoke(c, recomp_image_info.entry, {}, true);
     rt::log("guest entry returned %u", r);
-    g_guest_done = true;
 #if defined(DIRT2_SWITCH_DXVK)
     // Other guest threads can still own graphics objects. End the process so
     // Horizon releases GPU pages, rather than chainloading over live GPU memory.
-    svcExitProcess();
+    platform::exit_process(r);
 #else
+    g_guest_done = true;
     std::exit(int(r));
 #endif
 }

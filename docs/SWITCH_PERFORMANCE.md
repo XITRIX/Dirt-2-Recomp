@@ -122,3 +122,31 @@ The uploaded start-grid recording shows wheel motion at14–15FPS. Low frame rat
 is a candidate explanation, not an established physics diagnosis. An isolated
 Mac12FPS intro ran, but the attempted app-controlled race comparison produced a
 black screen; no matching race reference or physics fix has been validated.
+
+## Quit follow-up
+
+The438df7fa console test still showed a system error after Quit. Its log reaches
+ExitProcess(0); FTP lists no newer Atmosphere report than the preceding build's
+HID teardown report. Direct svcExitProcess avoided SDK teardown but omitted AM's
+normal application-exit notification. A raw process exit is therefore unsuitable
+for the normal Quit path.
+
+Switch shutdown now dispatches to SDL's main thread and uses libnx applet exit
+mode1 and its installed application-exit handler. This sends AM's SelfExit and
+waits for Horizon to terminate the title, preserving GPU memory until process
+termination. It neither closes HID beneath SDL nor returns to hbloader over live
+native threads. Guest-entry return uses the same path and keeps the main event
+pump running until the exit callback executes. Normal termination closes the
+title to HOME; it does not chainload hbmenu. Hardware validation is pending.
+
+SDK disassembly confirms the bundled _appletCleanup supports mode1 and installs
+the application-exit callback, matching the upstream implementation:
+https://github.com/switchbrew/libnx/blob/master/nx/source/services/applet.c
+
+The new330-second run and worker context ranking are preserved under
+build/performance/switch-20261020-214628. Worker264 has multiple substantial
+active contexts in the race, including009EB920,010D3A20 and010716F0; generic
+job queue00BF1750 also includes waiting. Inclusive wall contexts do not assign
+self CPU cost to these functions. No physics or FPS fix has been validated from
+this trace yet. The next packaged build turns off the indirect sampler now that
+the trace is collected, retaining low-frequency CPU/driver counters.
