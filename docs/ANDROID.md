@@ -32,7 +32,8 @@ shared library segments and the APK are aligned for16KB pages.
 Packaging uses installed SDK tools directly, without downloading Gradle plugins.
 The result is `build/package/android/DiRT2-android-arm64-debug.apk`, signed with a
 local development key in `build/android-apk/debug.keystore`. Keep that key for
-future in-place updates; it is not committed. No game data goes into the APK.
+future in-place updates; it is not committed. The launcher uses your game's `dirt2.ico`, fitted inside Android's adaptive icon
+mask. The game executable and playable data are not included in the APK.
 
 ## Install and supply game data
 
@@ -45,7 +46,11 @@ bash tools/scripts/install_android.sh "/absolute/path/to/Dirt 2"
 
 The folder must contain your PCv1.1 `dirt2_game.exe` and its game data. The helper
 installs the APK, copies the folder with ADB and launches the app. Omit the folder
-argument for subsequent APK updates. A first launch without assets displays the
+argument for subsequent APK updates. Game-data copies resume by skipping completed
+files. For Wi-Fi, pair and connect through Wireless debugging first, then set
+`ANDROID_SERIAL` to the tablet's debugging IP:port; the pairing port is separate.
+Use the SDK's current ADB via `ADB="$ANDROID_HOME/platform-tools/adb"` if another
+ADB version is earlier in your search path. A first launch without assets displays the
 required path instead of starting the guest.
 
 Assets:

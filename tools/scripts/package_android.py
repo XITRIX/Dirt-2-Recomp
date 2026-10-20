@@ -29,7 +29,19 @@ sources += list((root/'platform/android/java').rglob('*.java'))
 run(java/'bin/javac', '-encoding', 'UTF-8', '-source', '8', '-target', '8', '-classpath', android, '-d', classes, *sources)
 run(java/'bin/jar', 'cf', work/'classes.jar', '-C', classes, '.')
 run(bt/'d8', '--min-api', '28', '--lib', android, '--output', work, work/'classes.jar')
-run(bt/'aapt2', 'link', '-o', work/'base.apk', '--manifest', root/'platform/android/AndroidManifest.xml', '-I', android)
+# Use the original game artwork, as on Apple; generated PNG stays in build/.
+cache = (root/'build/android-arm64/CMakeCache.txt').read_text()
+game_line = next(line for line in cache.splitlines() if line.startswith('DIRT2_GAME_DIR:PATH='))
+icon = Path(game_line.split('=', 1)[1])/'dirt2.ico'
+if not icon.is_file():
+    raise SystemExit('Missing original launcher artwork: '+str(icon))
+res = work/'res'
+if res.exists(): shutil.rmtree(res)
+shutil.copytree(root/'platform/android/res', res)
+(res/'drawable-nodpi').mkdir()
+run('sips', '-s', 'format', 'png', icon, '--out', res/'drawable-nodpi/game_logo.png')
+run(bt/'aapt2', 'compile', '--dir', res, '-o', work/'resources.zip')
+run(bt/'aapt2', 'link', '-o', work/'base.apk', '--manifest', root/'platform/android/AndroidManifest.xml', '-I', android, '-R', work/'resources.zip')
 native = work/'lib/arm64-v8a'
 native.mkdir(parents=True, exist_ok=True)
 libs = {

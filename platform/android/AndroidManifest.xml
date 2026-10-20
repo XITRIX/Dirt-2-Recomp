@@ -6,7 +6,7 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    <application android:appCategory="game" android:label="DiRT 2" android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen" android:hasCode="true" android:debuggable="true" android:allowBackup="false" android:extractNativeLibs="true" android:enableOnBackInvokedCallback="false">
+    <application android:appCategory="game" android:label="DiRT 2" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen" android:hasCode="true" android:debuggable="true" android:allowBackup="false" android:extractNativeLibs="true" android:enableOnBackInvokedCallback="false">
         <activity android:name=".Dirt2Activity" android:exported="true" android:screenOrientation="sensorLandscape" android:launchMode="singleTask" android:configChanges="layoutDirection|locale|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation|density">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

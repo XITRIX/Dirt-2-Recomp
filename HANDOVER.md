@@ -15,8 +15,8 @@ Private directories Android only; Apple/Switch binary libraries untouched.
 Android SDLActivity loads c++_shared, SDL3, dirt2; exported SDL_main verified.
 APK minAPI28, target35, Vulkan1.3 feature requirement, landscape, gamepad input,
 native Android keyboard via JNI/EditText dialog. App-scoped external assets and
-separate Dirt2Data saves/settings/logs. No game assets in APK; no broad storage
-permission. Fresh+async exposure fix reused; no Switch worker remapping or sampler.
+separate Dirt2Data saves/settings/logs. The original dirt2.ico supplies adaptive launcher artwork; no executable or
+playable game data is included in APK. No broad storage permission. Fresh+async exposure fix reused; no Switch worker remapping or sampler.
 Android retains OS crash handling/tombstones instead of unavailable execinfo.
 Shared image hides private static archive symbols (--exclude-libs=ALL), required
 for FFmpeg NEON direct PIC references to internal FFT tables. Driver is device's
