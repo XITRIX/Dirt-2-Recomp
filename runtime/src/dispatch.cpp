@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstdio>
 #include <mutex>
+#include <memory>
 #include <string>
 #include <unordered_map>
 
@@ -31,7 +32,7 @@ void record_unknown(uint32_t addr) {
 }  // namespace
 
 namespace {
-void invalidate_cached(uint32_t addr);
+void invalidate_cached();
 }  // namespace
 
 void set_discovery_log(const std::string& path) { g_discovery_log = path; }
@@ -46,30 +47,31 @@ uint32_t alloc_thunk(recomp_fn fn) {
 void register_thunk(uint32_t addr, recomp_fn fn) {
     std::lock_guard lk(g_mu);
     g_thunks[addr] = fn;
-    invalidate_cached(addr);  // a re-registered address
+    invalidate_cached();  // retire cached mappings on every guest thread
 }
 
 namespace {
 
-// Lock-free direct-mapped cache in front of the lookup. Every indirect call
-// (virtual calls, function pointers, and every D3D/COM method, which lands on
-// a thunk) went through a binary search of the 160k-entry table and, for
-// thunks, a global mutex: the top self-time entry in profiles, and a point of
-// contention between the game's threads. A slot holds (address, function); a
-// writer stores the function first and publishes the address last, a reader
-// re-checks the address after reading the function.
-constexpr uint32_t kCacheBits = 16;
-struct CacheSlot {
-    std::atomic<uint32_t> addr{0};
-    std::atomic<recomp_fn> fn{nullptr};
+// A lookup cache must have one writer. Publishing address/function separately
+// in shared slots allows colliding writers to publish A's address with B's
+// function, even when readers recheck the address. Per-thread slots also avoid
+// cache-line contention between the engine's workers.
+constexpr uint32_t kCacheBits = 12;
+struct CacheSlot { uint32_t addr = 0; recomp_fn fn = nullptr; };
+struct LookupCache {
+    uint64_t generation = 0;
+    CacheSlot slots[1u << kCacheBits]{};
 };
-CacheSlot g_cache[1u << kCacheBits];
+std::atomic<uint64_t> g_cache_generation{1};
+// Keep only the owner pointer in static TLS. libnx reserves TLS inside supplied
+// thread stacks, including the64KiB native watchdog/profiler stacks.
+thread_local std::unique_ptr<LookupCache> g_cache;
 
-CacheSlot& slot_for(uint32_t addr) {
-    return g_cache[(addr * 0x9E3779B1u) >> (32 - kCacheBits)];
+CacheSlot& slot_for(LookupCache& cache, uint32_t addr) {
+    return cache.slots[(addr * 0x9E3779B1u) >> (32 - kCacheBits)];
 }
 
-void invalidate_cached(uint32_t addr) { slot_for(addr).addr.store(0, std::memory_order_release); }
+void invalidate_cached() { g_cache_generation.fetch_add(1, std::memory_order_release); }
 
 recomp_fn lookup_slow(uint32_t addr) {
     const RecompFnEntry* b = recomp_fn_table;
@@ -85,17 +87,20 @@ recomp_fn lookup_slow(uint32_t addr) {
 }  // namespace
 
 recomp_fn lookup(uint32_t addr) {
-    CacheSlot& c = slot_for(addr);
-    if (c.addr.load(std::memory_order_acquire) == addr) {
-        recomp_fn fn = c.fn.load(std::memory_order_relaxed);
-        if (fn && c.addr.load(std::memory_order_acquire) == addr) return fn;
+    const uint64_t generation = g_cache_generation.load(std::memory_order_acquire);
+    if (!g_cache) {
+        g_cache = std::make_unique<LookupCache>();
+        g_cache->generation = generation;
     }
+    LookupCache& cache = *g_cache;
+    if (cache.generation != generation) {
+        for (auto& slot : cache.slots) slot = {};
+        cache.generation = generation;
+    }
+    CacheSlot& c = slot_for(cache, addr);
+    if (c.addr == addr && c.fn) return c.fn;
     recomp_fn fn = lookup_slow(addr);
-    if (fn && addr) {
-        c.addr.store(0, std::memory_order_relaxed);  // invalidate while the function changes
-        c.fn.store(fn, std::memory_order_release);
-        c.addr.store(addr, std::memory_order_release);
-    }
+    if (fn && addr) c = {addr, fn};
     return fn;
 }
 

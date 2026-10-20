@@ -15,7 +15,10 @@ mkdir -p "$WORK" "$ROOT/build/dxvk"
 # Reuse a TSO-enabled Switch archive when present, otherwise build lifted code
 # with the primary SDK. A D3D9 fallback build is not a prerequisite.
 GENERATED_ARGS=()
-if [ -f build/switch/libdirt2_gen.a ]; then
+if [ -n "${DIRT2_SWITCH_CPU_ARCHIVE:-}" ]; then
+    [ -f "$DIRT2_SWITCH_CPU_ARCHIVE" ] || { echo "Missing CPU experiment archive" >&2; exit 1; }
+    GENERATED_ARGS=(-DDIRT2_SWITCH_GENERATED_ARCHIVE="$DIRT2_SWITCH_CPU_ARCHIVE")
+elif [ -f build/switch/libdirt2_gen.a ]; then
     GENERATED_ARGS=(-DDIRT2_SWITCH_GENERATED_ARCHIVE="$ROOT/build/switch/libdirt2_gen.a")
 fi
 # All unchanged audio/video dependencies stay the same as the normal build.

@@ -33,6 +33,7 @@ option(DIRT2_BUILD_TESTS "Build the lifter differential tests" OFF)
 if(DIRT2_BUILD_TESTS AND DIRT2_BUILD_TOOLS)
   enable_testing()
   add_subdirectory(tests/lifter)
+  add_subdirectory(tests/runtime)
 endif()
 
 # Third-party libraries: built from pinned sources as static libraries, the
@@ -235,6 +236,10 @@ if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
   endif()
   if(DIRT2_TSO)
     target_compile_definitions(dirt2_gen PRIVATE RECOMP_TSO=1)
+  endif()
+  option(DIRT2_INLINE_GUEST_MEMORY "Inline guest memory operations (CPU experiment)" OFF)
+  if(DIRT2_INLINE_GUEST_MEMORY)
+    target_compile_definitions(dirt2_gen PRIVATE RECOMP_INLINE_GUEST_MEMORY=1)
   endif()
   endif()
 

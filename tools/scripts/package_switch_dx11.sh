@@ -66,6 +66,19 @@ metadata=json.loads((root/'build/nvk-sdk/root/opt/devkitpro/portlibs/switch/shar
 manifest={'build_id':build_id,'nro_sha256':hashlib.sha256(nro.read_bytes()).hexdigest(),'nro_size':nro.stat().st_size,'renderer':'D3D11 -> DXVK native -> NVK','sdk':metadata,'installed':False,'hardware_result':'not tested','game_assets':'sdmc:/switch/dirt2/Dirt 2','data_directory':'sdmc:/switch/dirt2-dx11','normal_deko_build_changed':False}
 manifest['mode'] = 'standalone graphics preflight' if standalone else ('isolated graphics preflight' if preflight else ('game startup watchdog' if watchdog else 'game'))
 manifest['binary'] = binary
+# Record the limited CPU archive experiment so console comparisons are traceable.
+cache=(build/'CMakeCache.txt').read_text()
+archive_line=next((line for line in cache.splitlines() if line.startswith('DIRT2_SWITCH_GENERATED_ARCHIVE:FILEPATH=')), '')
+if archive_line:
+ archive=Path(archive_line.split('=',1)[1])
+ variant=archive.parent/'manifest.json'
+ if archive.is_file() and variant.is_file():
+  cpu=json.loads(variant.read_text())
+  if cpu.get('inline_guest_memory'):
+   with archive.open('rb') as f: digest=hashlib.file_digest(f,'sha256').hexdigest()
+   if digest != cpu['archive_sha256']: raise SystemExit('CPU variant archive digest mismatch')
+   manifest['cpu_variant']={'inline_memory_chunks':[Path(item['source']).stem for item in cpu['sources']], 'tso':cpu['tso'], 'baseline_sha256':cpu['baseline_sha256'], 'archive_sha256':digest}
+   shutil.copyfile(variant,out/'cpu-variant.json')
 manifest['exposure_trace'] = exposure_trace
 manifest['performance_trace'] = args.performance_trace
 manifest['indirect_profile'] = args.indirect_profile

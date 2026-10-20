@@ -1,3 +1,37 @@
+## CURRENT: CPU COMPARISON BUILD READY, FTP TIMED OUT
+
+User asked continue performance. Implemented/tested two changes:
+1) Real dispatcher sharedcache had multiwriterpublicationrace (can publish A's
+addresswithBfunction). OldactualdispatcherFAILSnew4millioncollidinglookupregression;
+newperthread4096slotcachePASS inclcross-threadreregistration andASAN/UBSAN.
+Lazyheapallocation64KB/thread; onlyownerpointerTLS toavoidoverflow64KBnative
+watchdog/profiler suppliedstacks. No proofthiscausedwheelissue.
+2) Opt-in RECOMP_INLINE_GUEST_MEMORY always_inline annotation, preservingTSO /
+unalignedfences/math. Limitedvariant recompilesgen0237/0450/0453/0456 usingbaseline
+compileDBflags; baselinearchiveUNTOUCHED. f010716F0staticcalls476->63,code4607->8055
+instructions(excludesoldhelperbodycost). Not dynamiccounts orFPSgain. Fullsource
+CMakeDIRT2_INLINE_GUEST_MEMORY defaultOFF. Varianttools/scripts/build_switch_cpu_variant.py;
+CMakebuild/switch-dxvk nowimportsbuild/switch-cpu-inline/libdirt2_gen.a. Buildscript
+supportsDIRT2_SWITCH_CPU_ARCHIVE override; withoutit choosesoriginalarchive.
+
+AlltargetedtestsPASS: runtime2CTesttests, dispatcherASAN/UBSAN, memory1million
+aligned/unalignedoperationsASAN/UBSAN. Existing8UnicornshardsPASSoutside sandbox
+(SIGILLsandboxJIT). Newtests/runtime linkedrealdispatch.cpp,releaseassertsON.
+SwitchcrossbuildPASS. SDKstaticTLSsize~4312bytes,below64KBnativebuffers.
+
+Preparedbuild6fb2342237bd3d894df016a92a53b9626fd71b16,
+SHAfb4f67f36936a4f609626f82f8532f4f201dad2e482463540f30087808ef1e1d,
+167946025B. Packagebuild/package/switch-cpu-inline, matchingELF/nmunder symbols.
+Manifestrecordsvariantarchivehash/chunks, installedFALSE. FTP timedoutbefore
+anyremotechange. Askeduserreopen192.168.1.148:5000. ConsoleSTILL1ace0cdc(cleanAMexit),
+Quitresultpending (useraskedcontinueperfwithoutreportingit). DoNOTclaimnewbuild
+installed,FPSgain,30FPS,physicsfixed. Installer/tmp/dirt2-perf-install.py contains
+credentials: removebeforeturnend/recreateifneeded. Newbuildretainsfresh+async /
+diskcacheOFF, CPU/DXVKlowfrequencytraceON, detailedindirectsamplerOFF. Needtest
+same30smenu/2minsameCroatiaracewithunchangedsettings thenFTP comparelogs. Previous
+330secondtraceincludes100Hzsampler; previous1acebuildwithoutithasnofreshreportyet,
+soABneedsaccountfordiagnosticoverhead. Allworkdocumenteddocs/SWITCH_PERFORMANCE.md.
+
 ## LATEST: CLEAN AM EXIT BUILD INSTALLED/VERIFIED
 
 User tested438df7fa: Quit still displayed system error. New evidence in

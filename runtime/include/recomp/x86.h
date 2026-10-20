@@ -66,6 +66,14 @@ void recomp_watch_hit(uint32_t a, uint64_t v, uint32_t size);
 #define RECOMP_WATCH_STORE(a, v, n) ((void)0)
 #endif
 
+/* Optional CPU experiment: preserve acquire/release and unaligned fallbacks,
+ * but prevent GCC from outlining each tiny guest read/write in hot code. */
+#if defined(RECOMP_INLINE_GUEST_MEMORY) && (defined(__GNUC__) || defined(__clang__))
+#define RECOMP_MEM_INLINE static inline __attribute__((always_inline))
+#else
+#define RECOMP_MEM_INLINE static inline
+#endif
+
 #if defined(RECOMP_TSO)
 /* x86 TSO on a weakly ordered host: every guest load is an acquire and every
  * store a release (ldar/stlr on ARM64), so cross-thread publication patterns
@@ -92,41 +100,43 @@ void recomp_watch_hit(uint32_t a, uint64_t v, uint32_t size);
         const T v_ = (v);                                                            \
         memcpy(p_, &v_, sizeof(T));                                                  \
     } while (0)
-static inline uint8_t rd8(uint32_t a) { return __atomic_load_n(RECOMP_MEM(a), __ATOMIC_ACQUIRE); }
-static inline uint16_t rd16(uint32_t a) { RECOMP_LD(uint16_t, a); }
-static inline uint32_t rd32(uint32_t a) { RECOMP_LD(uint32_t, a); }
-static inline uint64_t rd64(uint32_t a) { RECOMP_LD(uint64_t, a); }
-static inline void wr8(uint32_t a, uint8_t v) { RECOMP_WATCH_STORE(a, v, 1); __atomic_store_n(RECOMP_MEM(a), v, __ATOMIC_RELEASE); }
-static inline void wr16(uint32_t a, uint16_t v) { RECOMP_WATCH_STORE(a, v, 2); RECOMP_ST(uint16_t, a, v); }
-static inline void wr32(uint32_t a, uint32_t v) { RECOMP_WATCH_STORE(a, v, 4); RECOMP_ST(uint32_t, a, v); }
-static inline void wr64(uint32_t a, uint64_t v) { RECOMP_WATCH_STORE(a, v, 8); RECOMP_ST(uint64_t, a, v); }
-static inline XMM rd128(uint32_t a) {
+RECOMP_MEM_INLINE uint8_t rd8(uint32_t a) { return __atomic_load_n(RECOMP_MEM(a), __ATOMIC_ACQUIRE); }
+RECOMP_MEM_INLINE uint16_t rd16(uint32_t a) { RECOMP_LD(uint16_t, a); }
+RECOMP_MEM_INLINE uint32_t rd32(uint32_t a) { RECOMP_LD(uint32_t, a); }
+RECOMP_MEM_INLINE uint64_t rd64(uint32_t a) { RECOMP_LD(uint64_t, a); }
+RECOMP_MEM_INLINE void wr8(uint32_t a, uint8_t v) { RECOMP_WATCH_STORE(a, v, 1); __atomic_store_n(RECOMP_MEM(a), v, __ATOMIC_RELEASE); }
+RECOMP_MEM_INLINE void wr16(uint32_t a, uint16_t v) { RECOMP_WATCH_STORE(a, v, 2); RECOMP_ST(uint16_t, a, v); }
+RECOMP_MEM_INLINE void wr32(uint32_t a, uint32_t v) { RECOMP_WATCH_STORE(a, v, 4); RECOMP_ST(uint32_t, a, v); }
+RECOMP_MEM_INLINE void wr64(uint32_t a, uint64_t v) { RECOMP_WATCH_STORE(a, v, 8); RECOMP_ST(uint64_t, a, v); }
+RECOMP_MEM_INLINE XMM rd128(uint32_t a) {
     XMM v;
     memcpy(&v, RECOMP_MEM(a), 16);
     __atomic_thread_fence(__ATOMIC_ACQUIRE);
     return v;
 }
-static inline void wr128(uint32_t a, XMM v) {
+RECOMP_MEM_INLINE void wr128(uint32_t a, XMM v) {
     RECOMP_WATCH_STORE(a, v.q[0], 16);
     __atomic_thread_fence(__ATOMIC_RELEASE);
     memcpy(RECOMP_MEM(a), &v, 16);
 }
 #else
-static inline uint8_t rd8(uint32_t a) { return *RECOMP_MEM(a); }
-static inline uint16_t rd16(uint32_t a) { uint16_t v; memcpy(&v, RECOMP_MEM(a), 2); return v; }
-static inline uint32_t rd32(uint32_t a) { uint32_t v; memcpy(&v, RECOMP_MEM(a), 4); return v; }
-static inline uint64_t rd64(uint32_t a) { uint64_t v; memcpy(&v, RECOMP_MEM(a), 8); return v; }
-static inline XMM rd128(uint32_t a) { XMM v; memcpy(&v, RECOMP_MEM(a), 16); return v; }
-static inline void wr8(uint32_t a, uint8_t v) { RECOMP_WATCH_STORE(a, v, 1); *RECOMP_MEM(a) = v; }
-static inline void wr16(uint32_t a, uint16_t v) { RECOMP_WATCH_STORE(a, v, 2); memcpy(RECOMP_MEM(a), &v, 2); }
-static inline void wr32(uint32_t a, uint32_t v) { RECOMP_WATCH_STORE(a, v, 4); memcpy(RECOMP_MEM(a), &v, 4); }
-static inline void wr64(uint32_t a, uint64_t v) { RECOMP_WATCH_STORE(a, v, 8); memcpy(RECOMP_MEM(a), &v, 8); }
-static inline void wr128(uint32_t a, XMM v) { RECOMP_WATCH_STORE(a, v.q[0], 16); memcpy(RECOMP_MEM(a), &v, 16); }
+RECOMP_MEM_INLINE uint8_t rd8(uint32_t a) { return *RECOMP_MEM(a); }
+RECOMP_MEM_INLINE uint16_t rd16(uint32_t a) { uint16_t v; memcpy(&v, RECOMP_MEM(a), 2); return v; }
+RECOMP_MEM_INLINE uint32_t rd32(uint32_t a) { uint32_t v; memcpy(&v, RECOMP_MEM(a), 4); return v; }
+RECOMP_MEM_INLINE uint64_t rd64(uint32_t a) { uint64_t v; memcpy(&v, RECOMP_MEM(a), 8); return v; }
+RECOMP_MEM_INLINE XMM rd128(uint32_t a) { XMM v; memcpy(&v, RECOMP_MEM(a), 16); return v; }
+RECOMP_MEM_INLINE void wr8(uint32_t a, uint8_t v) { RECOMP_WATCH_STORE(a, v, 1); *RECOMP_MEM(a) = v; }
+RECOMP_MEM_INLINE void wr16(uint32_t a, uint16_t v) { RECOMP_WATCH_STORE(a, v, 2); memcpy(RECOMP_MEM(a), &v, 2); }
+RECOMP_MEM_INLINE void wr32(uint32_t a, uint32_t v) { RECOMP_WATCH_STORE(a, v, 4); memcpy(RECOMP_MEM(a), &v, 4); }
+RECOMP_MEM_INLINE void wr64(uint32_t a, uint64_t v) { RECOMP_WATCH_STORE(a, v, 8); memcpy(RECOMP_MEM(a), &v, 8); }
+RECOMP_MEM_INLINE void wr128(uint32_t a, XMM v) { RECOMP_WATCH_STORE(a, v.q[0], 16); memcpy(RECOMP_MEM(a), &v, 16); }
 #endif
-static inline float rdf32(uint32_t a) { const uint32_t u = rd32(a); float v; memcpy(&v, &u, 4); return v; }
-static inline double rdf64(uint32_t a) { const uint64_t u = rd64(a); double v; memcpy(&v, &u, 8); return v; }
-static inline void wrf32(uint32_t a, float v) { uint32_t u; memcpy(&u, &v, 4); wr32(a, u); }
-static inline void wrf64(uint32_t a, double v) { uint64_t u; memcpy(&u, &v, 8); wr64(a, u); }
+RECOMP_MEM_INLINE float rdf32(uint32_t a) { const uint32_t u = rd32(a); float v; memcpy(&v, &u, 4); return v; }
+RECOMP_MEM_INLINE double rdf64(uint32_t a) { const uint64_t u = rd64(a); double v; memcpy(&v, &u, 8); return v; }
+RECOMP_MEM_INLINE void wrf32(uint32_t a, float v) { uint32_t u; memcpy(&u, &v, 4); wr32(a, u); }
+RECOMP_MEM_INLINE void wrf64(uint32_t a, double v) { uint64_t u; memcpy(&u, &v, 8); wr64(a, u); }
+
+#undef RECOMP_MEM_INLINE
 
 /* xchg with a memory operand is implicitly locked on x86. */
 #define RECOMP_XCHG(T, name)                                                          \

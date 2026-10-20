@@ -150,3 +150,53 @@ job queue00BF1750 also includes waiting. Inclusive wall contexts do not assign
 self CPU cost to these functions. No physics or FPS fix has been validated from
 this trace yet. The next packaged build turns off the indirect sampler now that
 the trace is collected, retaining low-frequency CPU/driver counters.
+
+## CPU comparison: dispatch cache and hot memory helpers
+
+The shared dispatcher cache had a publication race. Two writers colliding on a
+slot can interleave `fn` and `addr` stores so a reader sees A's address with B's
+function even after checking the address twice. The real former dispatcher
+fails the new eight-thread collision regression. The replacement uses4096 slots
+per thread and an acquire/release generation for thunk re-registration. The
+slots allocate lazily on the host heap; static TLS holds only their owner so
+libnx's small supplied watchdog/profiler stacks remain usable. This is a proven
+cache correctness repair, not a demonstrated explanation for wheel motion.
+
+Switch GCC also outlines small guest-memory helpers in profiled engine/math
+code. An opt-in `RECOMP_INLINE_GUEST_MEMORY` attribute prevents that outlining
+without changing loads, stores, unaligned fallback fences, x87 or SSE formulas.
+A limited experiment recompiles gen_0237,gen_0450,gen_0453 andgen_0456 from the
+existing TSO-enabled compile commands. Other generated objects and the original
+archive are retained. The source build equivalent is
+`-DDIRT2_INLINE_GUEST_MEMORY=ON`, off by default pending hardware evidence.
+
+In the static body of f_010716F0, calls drop476→63; f_01079D00 drops88→9.
+Instructions grow4607→8055 and867→1512 respectively, excluding the separately
+called helper bodies in the baseline. Those figures are compiler evidence,
+not executed-call counts or an FPS prediction. More code can hurt instruction
+cache behavior, which is why this starts with four translation units.
+
+Reproduce the isolated archive:
+
+```sh
+python3 tools/scripts/build_switch_cpu_variant.py
+DIRT2_SWITCH_CPU_ARCHIVE="$PWD/build/switch-cpu-inline/libdirt2_gen.a" \
+  bash tools/scripts/build_switch_dx11.sh
+```
+
+The builder validates TSO and one matching archive member per chunk, leaves the
+baseline archive untouched, and records its hash, source/header hashes and exact
+compile commands in build/switch-cpu-inline/manifest.json. Packaging verifies the
+archive hash and records the variant in the game manifest. Baseline NRO/ELF and
+new NRO/ELF remain archived separately. No new GPU waits, affinity changes,
+resolution reductions or relaxed memory ordering are part of this comparison.
+
+Validation: real dispatcher passes4million colliding lookups plus cross-thread
+re-registration/unknown-target checks, including ASAN/UBSAN. One million memory
+operations compare baseline and inline variants across aligned/unaligned1/2/4/
+8/16-byte accesses, checking outputs and surrounding memory under ASAN/UBSAN.
+Both runtime tests are wired into CTest with assertions enabled in release.
+Existing eight Unicorn differential shards pass when run outside the sandbox
+(JIT execution fails with SIGILL inside it). The complete Switch build passes.
+Hardware FPS and image/physics results remain pending. Detailed100Hz indirect
+sampling is off; the same low-frequency CPU/driver counters are retained.
