@@ -1,0 +1,25 @@
+diff --git a/src/dxvk/dxvk_presenter.cpp b/src/dxvk/dxvk_presenter.cpp
+--- a/src/dxvk/dxvk_presenter.cpp
++++ b/src/dxvk/dxvk_presenter.cpp
+@@ -1,3 +1,4 @@
++#include <cstdio>
+ #include <algorithm>
+ 
+ #include "dxvk_device.h"
+@@ -818,7 +819,15 @@
+       "\n  Buffer size:  ", swapInfo.imageExtent.width, "x", swapInfo.imageExtent.height,
+       "\n  Image count:  ", swapInfo.minImageCount));
+     
+-    if ((status = m_vkd->vkCreateSwapchainKHR(m_vkd->device(), &swapInfo, nullptr, &m_swapchain))) {
++#ifdef __SWITCH__
++    std::fprintf(stderr, "NVK: vkCreateSwapchainKHR entering (%ux%u, %u images)\n",
++      swapInfo.imageExtent.width, swapInfo.imageExtent.height, swapInfo.minImageCount);
++#endif
++    status = m_vkd->vkCreateSwapchainKHR(m_vkd->device(), &swapInfo, nullptr, &m_swapchain);
++#ifdef __SWITCH__
++    std::fprintf(stderr, "NVK: vkCreateSwapchainKHR returned %d\n", int(status));
++#endif
++    if (status) {
+       Logger::err(str::format("Presenter: Failed to create Vulkan swapchain: ", status));
+       return status;
+     }

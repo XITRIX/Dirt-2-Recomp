@@ -1,0 +1,128 @@
+--- a/mojoshader.c
++++ b/mojoshader.c
+@@ -1974,7 +1974,7 @@
+ 
+     else if (shader_version_atleast(ctx, 1, 4))
+     {
+-        // !!! FIXME: checks for ps_1_4 version here...
++        add_sampler(ctx, ctx->dest_arg.regnum, TEXTURE_TYPE_2D, 0);
+     } // else if
+ 
+     else
+--- a/profiles/mojoshader_profile_spirv.c
++++ b/profiles/mojoshader_profile_spirv.c
+@@ -676,8 +676,8 @@
+ {
+     if (r->spirv.iddecl == 0)
+     {
+-        assert(r->regtype != REG_TYPE_SAMPLER || (shader_is_pixel(ctx) && !shader_version_atleast(ctx, 1, 4)));
+-        assert(r->regtype != REG_TYPE_TEXTURE || (shader_is_pixel(ctx) && !shader_version_atleast(ctx, 1, 4)));
++        assert(r->regtype != REG_TYPE_SAMPLER || (shader_is_pixel(ctx) && !shader_version_atleast(ctx, 2, 0)));
++        assert(r->regtype != REG_TYPE_TEXTURE || shader_is_pixel(ctx));
+         switch (r->regtype)
+         {
+             case REG_TYPE_SAMPLER: // s# (only ps_1_1)
+@@ -1191,15 +1191,17 @@
+             break;
+         } // case
+ 
+-        // case SRCMOD_DZ:
+-        //     fail(ctx, "SRCMOD_DZ unsupported"); return buf; // !!! FIXME
+-        //     postmod_str = "_dz";
+-        //     break;
+-
+-        // case SRCMOD_DW:
+-        //     fail(ctx, "SRCMOD_DW unsupported"); return buf; // !!! FIXME
+-        //     postmod_str = "_dw";
+-        //     break;
++        case SRCMOD_DZ:
++        case SRCMOD_DW:
++        {
++            const uint32 component = arg->src_mod == SRCMOD_DZ ? 2 : 3;
++            uint32 divisor = spv_bumpid(ctx), quotient = spv_bumpid(ctx);
++            spv_emit(ctx, 9, SpvOpVectorShuffle, result.tid, divisor, result.id, result.id,
++                     component, component, component, component);
++            spv_emit(ctx, 5, SpvOpFDiv, result.tid, quotient, result.id, divisor);
++            result.id = quotient;
++            break;
++        }
+ 
+         case SRCMOD_ABSNEGATE:
+         {
+@@ -1705,7 +1707,7 @@
+ {
+     if (usage == MOJOSHADER_USAGE_POSITION && index == 0)
+         spv_output_builtin(ctx, id, SpvBuiltInPosition);
+-    else if (usage == MOJOSHADER_USAGE_POINTSIZE && index == 0)
++    else if (usage == MOJOSHADER_USAGE_POINTSIZE)
+     {
+         spv_output_builtin(ctx, id, SpvBuiltInPointSize);
+         ctx->spirv.patch_table.attrib_offsets[usage][index] = 1;
+@@ -3639,9 +3641,16 @@
+ 
+     else if (!shader_version_atleast(ctx, 2, 0))
+     {
+-        // ps_1_4 is different, too!
+-        fail(ctx, "TEXLD == Shader Model 1.4 unimplemented.");  // !!! FIXME
+-        return;
++        // ps_1_4 selects the sampler with the destination register number,
++        // while its source supplies coordinates (including _dz/_dw).
++        RegisterList *sreg = reglist_find(&ctx->samplers, REG_TYPE_SAMPLER, ctx->dest_arg.regnum);
++        SpirvResult sampler = spv_loadreg(ctx, sreg);
++        SpirvResult coord = spv_load_srcarg_full(ctx, 0);
++        SpirvResult result = { spv_get_type(ctx, STI_VEC4), spv_bumpid(ctx) };
++        push_output(ctx, &ctx->mainline);
++        spv_emit(ctx, 5, SpvOpImageSampleImplicitLod, result.tid, result.id, sampler.id, coord.id);
++        pop_output(ctx);
++        spv_assign_destarg(ctx, result);
+     } // else if
+ 
+     else
+@@ -4408,14 +4417,45 @@
+ } // emit_SPIRV_RESERVED
+ 
+ // !!! FIXME: The following are unimplemented even in the GLSL emitter.
+-EMIT_SPIRV_OPCODE_UNIMPLEMENTED_FUNC(TEXCRD)
++void emit_SPIRV_TEXCRD(Context *ctx)
++{
++    SpirvResult value;
++    if (shader_version_atleast(ctx, 1, 4))
++        value = spv_load_srcarg_full(ctx, 0);
++    else
++    {
++        value = spv_loadreg(ctx, spv_getreg(ctx, REG_TYPE_TEXTURE, ctx->dest_arg.regnum));
++        uint32 zero = spv_get_constant_composite(ctx, value.tid, ctx->spirv.id_0_0, 0.0f);
++        uint32 one = spv_get_constant_composite(ctx, value.tid, ctx->spirv.id_1_0, 1.0f);
++        uint32 clamped = spv_bumpid(ctx), result = spv_bumpid(ctx);
++        push_output(ctx, &ctx->mainline);
++        spv_emit(ctx, 8, SpvOpExtInst, value.tid, clamped, spv_getext(ctx), GLSLstd450FClamp, value.id, zero, one);
++        spv_emit(ctx, 9, SpvOpVectorShuffle, value.tid, result, clamped, one, 0, 1, 2, 7);
++        pop_output(ctx);
++        value.id = result;
++    }
++    spv_assign_destarg(ctx, value);
++}
+ EMIT_SPIRV_OPCODE_UNIMPLEMENTED_FUNC(TEXREG2AR)
+ EMIT_SPIRV_OPCODE_UNIMPLEMENTED_FUNC(TEXREG2GB)
+ EMIT_SPIRV_OPCODE_UNIMPLEMENTED_FUNC(TEXREG2RGB)
+ EMIT_SPIRV_OPCODE_UNIMPLEMENTED_FUNC(TEXDP3TEX)
+ EMIT_SPIRV_OPCODE_UNIMPLEMENTED_FUNC(TEXM3X2DEPTH)
+ EMIT_SPIRV_OPCODE_UNIMPLEMENTED_FUNC(TEXDP3)
+-EMIT_SPIRV_OPCODE_UNIMPLEMENTED_FUNC(TEXDEPTH)
++void emit_SPIRV_TEXDEPTH(Context *ctx)
++{
++    SpirvResult source = spv_loadreg(ctx, spv_getreg(ctx, REG_TYPE_TEMP, 5));
++    RegisterList *depth = set_used_register(ctx, REG_TYPE_DEPTHOUT, 0, 1);
++    spv_check_write_reg_id(ctx, depth);
++    uint32 tid = spv_get_type(ctx, STI_FLOAT);
++    uint32 x = spv_bumpid(ctx), y = spv_bumpid(ctx), quotient = spv_bumpid(ctx);
++    push_output(ctx, &ctx->mainline);
++    spv_emit(ctx, 5, SpvOpCompositeExtract, tid, x, source.id, 0);
++    spv_emit(ctx, 5, SpvOpCompositeExtract, tid, y, source.id, 1);
++    spv_emit(ctx, 5, SpvOpFDiv, tid, quotient, x, y);
++    spv_emit(ctx, 3, SpvOpStore, depth->spirv.iddecl, quotient);
++    pop_output(ctx);
++}
+ EMIT_SPIRV_OPCODE_UNIMPLEMENTED_FUNC(BEM)
+ 
+ #endif  // SUPPORT_PROFILE_SPIRV

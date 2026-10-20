@@ -21,6 +21,8 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <ctime>
 #include <functional>
 #include <map>
 #include <mutex>
@@ -35,6 +37,8 @@
 #include "../../platform/platform.h"
 #include "../shim.h"
 #include "recomp/sha256.h"
+#include "capture.h"
+#include "conformance.h"
 
 namespace shim {
 void* host_window(uint32_t hwnd);
@@ -310,6 +314,7 @@ void d3d_create_device(X86* c) {
     // D3DCREATE_MULTITHREADED. Without it, concurrent calls corrupt DXVK state
     // (device lost on Metal, flicker).
     const DWORD flags = a[4] | D3DCREATE_MULTITHREADED;
+    d3d9_tests::run_if_requested(self, a[1], D3DDEVTYPE(a[2]), focus, flags);
     const HRESULT hr = self ? self->CreateDevice(a[1], D3DDEVTYPE(a[2]), focus, flags, p, &dev) : D3DERR_INVALIDCALL;
     pp.done();
     if (a[6]) wr32(a[6], SUCCEEDED(hr) ? wrap(dev) : 0);
@@ -445,10 +450,45 @@ std::atomic<uint32_t> g_cur_ps{0};
 // target. On deko3d an A2R10G10B10 target reads back red/blue swapped (it is
 // stored as RGB10A2); the statistics name the channels as stored.
 std::atomic<uint32_t> g_present_count{0};
+std::atomic<bool> g_manual_pending{false}, g_manual_busy{false};
+uint32_t g_manual_frame = 0;
+std::string g_manual_dir;
+bool g_manual_errors = false;
 
 uint32_t dump_frame() {
     static const uint32_t f = std::getenv("DIRT2_FRAME_DUMP") ? uint32_t(std::atoi(std::getenv("DIRT2_FRAME_DUMP"))) : 0;
     return f;
+}
+
+bool dumping_frame() {
+    return shim::gpu_dump_active() || (dump_frame() && g_present_count + 1 == dump_frame());
+}
+
+void arm_manual_dump(uint32_t presented) {
+    if (!g_manual_pending.exchange(false)) return;
+    const char* data = std::getenv("DIRT2_DATA_DIR");
+    const auto root = std::filesystem::path(data ? data : ".") / "gpu-dumps";
+    std::error_code ec;
+    std::filesystem::create_directories(root, ec);
+    const std::time_t now = std::time(nullptr);
+    std::tm utc{};
+    gmtime_r(&now, &utc);
+    char stamp[40];
+    std::strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &utc);
+    // Exclusive directory creation prevents overwriting captures after a restart.
+    for (unsigned suffix = 0; !ec && suffix < 10000; ++suffix) {
+        const auto dir = root / (std::string(stamp) + "-f" + std::to_string(presented + 1) + "-" + std::to_string(suffix));
+        if (std::filesystem::create_directory(dir, ec)) {
+            g_manual_dir = dir.string();
+            g_manual_errors = false;
+            g_manual_frame = presented + 1;
+            rt::log("d3d9: manual GPU capture armed for frame %u: %s", g_manual_frame, g_manual_dir.c_str());
+            return;
+        }
+    }
+    rt::log("d3d9: cannot create manual capture folder: %s", ec.message().c_str());
+    g_manual_busy = false;
+    shim::gpu_dump_finished(false);
 }
 
 struct DumpEntry {
@@ -475,7 +515,7 @@ std::string shader_key(IUnknown* sh, bool pixel) {
 void dump_note_target(IDirect3DDevice9* dev, DWORD index);
 
 void dump_note_draw(IDirect3DDevice9* dev) {
-    if (!dump_frame() || g_present_count + 1 != dump_frame()) return;
+    if (!dumping_frame()) return;
     for (DWORD i = 0; i < 4; ++i) dump_note_target(dev, i);
 }
 
@@ -515,7 +555,7 @@ void dump_note_target(IDirect3DDevice9* dev, DWORD index) {
     const std::string name = shader_key(vs, false) + "/" + shader_key(ps, true);
     if (vs) vs->Release();
     if (ps) ps->Release();
-    if (it->shaders.size() < 6 && std::find(it->shaders.begin(), it->shaders.end(), name) == it->shaders.end())
+    if (std::find(it->shaders.begin(), it->shaders.end(), name) == it->shaders.end())
         it->shaders.push_back(name);
 }
 
@@ -525,12 +565,73 @@ float dump_half(uint16_t v) {
     return sgn ? -r : r;
 }
 
-void dump_write(IDirect3DDevice9* dev) {
+// copy_file returns EIO and leaves empty files on the Switch SD filesystem.
+// Use the same buffered I/O as the successfully written target dumps.
+bool copy_capture_file(const std::string& source, const std::string& destination) {
+    std::FILE* in = std::fopen(source.c_str(), "rb");
+    if (!in) return false;
+    std::FILE* out = std::fopen(destination.c_str(), "wb");
+    if (!out) { std::fclose(in); return false; }
+    char buffer[16384];
+    size_t count;
+    bool ok = true;
+    while ((count = std::fread(buffer, 1, sizeof buffer, in)) != 0) {
+        if (std::fwrite(buffer, 1, count, out) != count) { ok = false; break; }
+    }
+    ok = !std::ferror(in) && ok;
+    if (std::fclose(out) != 0) ok = false;
+    std::fclose(in);
+    return ok;
+}
+
+bool copy_capture_log(const std::string& source, const std::string& destination) {
+#ifdef __SWITCH__
+    // HOS locks out a second open while stderr owns the writable log. It was
+    // opened w+; snapshot its current contents while holding the stdio lock.
+    flockfile(stderr);
+    bool ok = std::fflush(stderr) == 0;
+    const long end = std::ftell(stderr);
+    std::FILE* out = std::fopen(destination.c_str(), "wb");
+    ok = ok && end >= 0 && out;
+    if (ok) ok = std::fseek(stderr, 0, SEEK_SET) == 0;
+    char buffer[16384];
+    long remaining = end;
+    while (ok && remaining > 0) {
+        const size_t n = size_t(std::min<long>(remaining, sizeof buffer));
+        ok = std::fread(buffer, 1, n, stderr) == n && std::fwrite(buffer, 1, n, out) == n;
+        remaining -= long(n);
+    }
+    std::clearerr(stderr);
+    if (end >= 0 && std::fseek(stderr, end, SEEK_SET) != 0) ok = false;
+    if (out && std::fclose(out) != 0) ok = false;
+    funlockfile(stderr);
+    return ok;
+#else
+    return copy_capture_file(source, destination);
+#endif
+}
+
+bool dump_write(IDirect3DDevice9* dev, uint32_t frame, bool manual) {
     const char* data = std::getenv("DIRT2_DATA_DIR");
-    const std::string dir = std::string(data ? data : ".") + "/framedump";
+    const std::string dir = manual ? g_manual_dir : std::string(data ? data : ".") + "/framedump";
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
-    rt::log("d3d9: frame dump: %zu render targets of frame %u to %s", g_dump.size(), dump_frame(), dir.c_str());
+    IDirect3DSurface9* back = nullptr;
+    dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &back);
+    if (back && std::none_of(g_dump.begin(), g_dump.end(), [&](const DumpEntry& e) { return e.surface == back; })) {
+        back->AddRef();
+        g_dump.push_back({back, 0, {}, " (back buffer)"});
+    }
+    std::ofstream report(dir + "/capture.txt");
+    report << "Frame " << frame << "\nTrigger: " << (manual ? "minus+plus" : "environment")
+           << "\nRaw files: tightly packed rows, little-endian D3D format; BMPs are clamped previews.\n"
+           << "deko3d: A2R10G10B10 readback uses native RGB10A2 channel order.\n"
+           << "Textures: first sampled contents, all mips/layers within16MiB per texture; volume slice0 only; depth-format inputs omitted.\n"
+           << "drawNNNN.constants.raw: 256 vertex float4 constants, then224 pixel float4 constants, little-endian.\n";
+    if (manual) report << "live.bmp: ordinary frame " << frame - 1
+                       << " before the detailed capture's intermediate readbacks; screen.bmp: detailed frame " << frame << ".\n";
+    unsigned failures = (ec || !back || g_dump.empty() || (manual && g_manual_errors)) ? 1 : 0;
+    rt::log("d3d9: frame dump: %zu render targets of frame %u to %s", g_dump.size(), frame, dir.c_str());
     for (size_t k = 0; k < g_dump.size(); ++k) {
         DumpEntry& e = g_dump[k];
         D3DSURFACE_DESC d{};
@@ -556,7 +657,12 @@ void dump_write(IDirect3DDevice9* dev) {
                             p += x * 4; c[0] = p[0] / 255.f; c[1] = p[1] / 255.f; c[2] = p[2] / 255.f; break;
                         case D3DFMT_A2R10G10B10:
                             std::memcpy(&v32, p + x * 4, 4);
+#if defined(__SWITCH__) && !defined(DIRT2_SWITCH_DXVK)
+                            // deko render targets retain native RGB10A2 order.
+                            c[0] = (v32 & 1023) / 1023.f; c[1] = ((v32 >> 10) & 1023) / 1023.f; c[2] = ((v32 >> 20) & 1023) / 1023.f;
+#else
                             c[0] = ((v32 >> 20) & 1023) / 1023.f; c[1] = ((v32 >> 10) & 1023) / 1023.f; c[2] = (v32 & 1023) / 1023.f;
+#endif
                             break;
                         case D3DFMT_A16B16G16R16:
                             for (int i = 0; i < 3; ++i) { uint16_t h; std::memcpy(&h, p + x * 8 + 2 * i, 2); c[i] = h / 65535.f; }
@@ -582,16 +688,27 @@ void dump_write(IDirect3DDevice9* dev) {
                     o[3] = 255;
                 }
             char path[512];
-            // The raw texels of the full-size 4-byte targets too (rows packed): the
-            // bits of float targets, and the alpha the bitmap leaves out.
-            if (d.Width >= 1280 && (d.Format == D3DFMT_R32F || d.Format == D3DFMT_A8R8G8B8 || d.Format == D3DFMT_X8R8G8B8)) {
+            // Preserve HDR values and alpha at every resolution, not only previews.
+            unsigned pixel_bytes = 0;
+            switch (d.Format) {
+                case D3DFMT_A8: case D3DFMT_L8: pixel_bytes = 1; break;
+                case D3DFMT_R5G6B5: case D3DFMT_A8L8: case D3DFMT_L16: case D3DFMT_R16F: pixel_bytes = 2; break;
+                case D3DFMT_A8R8G8B8: case D3DFMT_X8R8G8B8: case D3DFMT_A8B8G8R8:
+                case D3DFMT_X8B8G8R8: case D3DFMT_A2R10G10B10: case D3DFMT_A2B10G10R10:
+                case D3DFMT_G16R16: case D3DFMT_G16R16F: case D3DFMT_R32F: pixel_bytes = 4; break;
+                case D3DFMT_A16B16G16R16: case D3DFMT_A16B16G16R16F: case D3DFMT_G32R32F: pixel_bytes = 8; break;
+                case D3DFMT_A32B32G32R32F: pixel_bytes = 16; break;
+                default: break;
+            }
+            if (pixel_bytes) {
                 std::snprintf(path, sizeof path, "%s/%02zu_%ux%u_fmt%u.raw", dir.c_str(), k + 1, d.Width, d.Height,
                               uint32_t(d.Format));
                 if (std::FILE* f = std::fopen(path, "wb")) {
                     for (uint32_t y = 0; y < d.Height; ++y)
-                        std::fwrite(static_cast<const uint8_t*>(lr.pBits) + size_t(y) * lr.Pitch, 1, size_t(d.Width) * 4, f);
+                        std::fwrite(static_cast<const uint8_t*>(lr.pBits) + size_t(y) * lr.Pitch, 1, size_t(d.Width) * pixel_bytes, f);
+                    if (std::ferror(f)) ++failures;
                     std::fclose(f);
-                }
+                } else ++failures;
             }
             sys->UnlockRect();
             std::snprintf(path, sizeof path, "%s/%02zu_%ux%u_fmt%u.bmp", dir.c_str(), k + 1, d.Width, d.Height, uint32_t(d.Format));
@@ -604,13 +721,23 @@ void dump_write(IDirect3DDevice9* dev) {
                 hdr[26] = 1; hdr[28] = 32; put32(34, size);
                 std::fwrite(hdr, 1, 54, f);
                 std::fwrite(out.data(), 1, out.size(), f);
+                if (std::ferror(f)) ++failures;
                 std::fclose(f);
-            }
+                if (e.surface == back) {
+                    if (!copy_capture_file(path, dir + "/screen.bmp")) ++failures;
+                }
+            } else ++failures;
         }
+        if (!ok) ++failures;
         if (sys) sys->Release();
         const double n = double(d.Width) * d.Height;
         std::string shaders;
         for (auto& x : e.shaders) shaders += " " + x;
+        report << k + 1 << ": " << d.Width << 'x' << d.Height << " fmt " << uint32_t(d.Format)
+               << " draws " << e.draws << " readback " << (ok ? "ok" : "FAILED")
+               << " mean " << sum[0] / n << ' ' << sum[1] / n << ' ' << sum[2] / n
+               << " min " << mn << " max " << mx << " NaN " << nans << " Inf " << infs
+               << e.inputs << " shaders" << shaders << '\n';
         rt::log("d3d9: frame dump %02zu %ux%u fmt %u: %u draws, mean %.3f %.3f %.3f, min %.3f max %.3f, NaN %llu Inf %llu;%s%s; shaders%s",
                 k + 1, d.Width, d.Height, uint32_t(d.Format), e.draws, sum[0] / n, sum[1] / n, sum[2] / n, mn, mx,
                 (unsigned long long)nans, (unsigned long long)infs, ok ? "" : " (read-back failed)", e.inputs.c_str(),
@@ -618,6 +745,10 @@ void dump_write(IDirect3DDevice9* dev) {
         e.surface->Release();
     }
     g_dump.clear();
+    if (back) back->Release();
+    report << "Status: " << (failures ? "PARTIAL" : "complete") << " failures " << failures << '\n';
+    report.close();
+    return failures == 0 && bool(report);
 }
 
 void dev_set_pixel_shader(X86* c) {
@@ -996,16 +1127,16 @@ void d3d_get_adapter_monitor(X86* c) {
 
 // Debug: DIRT2_SCREENSHOT_DIR=<dir> [DIRT2_SCREENSHOT_EVERY=<n>] saves the back
 // buffer as BMP every n presents; frame rate is logged every 300 presents.
-void capture_back_buffer(IDirect3DDevice9* dev, uint32_t frame) {
+void capture_back_buffer(IDirect3DDevice9* dev, uint32_t frame, const char* manual_path = nullptr) {
     static const char* dir = std::getenv("DIRT2_SCREENSHOT_DIR");
     static const uint32_t every = std::getenv("DIRT2_SCREENSHOT_EVERY") ? std::atoi(std::getenv("DIRT2_SCREENSHOT_EVERY")) : 120;
     static const uint32_t from = std::getenv("DIRT2_SCREENSHOT_FROM") ? std::atoi(std::getenv("DIRT2_SCREENSHOT_FROM")) : 0;
     static const uint32_t count = std::getenv("DIRT2_SCREENSHOT_COUNT") ? std::atoi(std::getenv("DIRT2_SCREENSHOT_COUNT")) : 0;
-    if (!dir || !every || frame < from || frame % every) return;
-    if (count && frame >= from + count * every) return;
+    if (!manual_path && (!dir || !every || frame < from || frame % every)) return;
+    if (!manual_path && count && frame >= from + count * every) return;
     static const bool made = [] {
         std::error_code ec;
-        std::filesystem::create_directories(dir, ec);
+        if (dir) std::filesystem::create_directories(dir, ec);
         return true;
     }();
     (void)made;
@@ -1019,7 +1150,8 @@ void capture_back_buffer(IDirect3DDevice9* dev, uint32_t frame) {
         D3DLOCKED_RECT lr{};
         if (SUCCEEDED(sys->LockRect(&lr, nullptr, D3DLOCK_READONLY))) {
             char path[512];
-            std::snprintf(path, sizeof path, "%s/frame_%06u.bmp", dir, frame);
+            if (manual_path) std::snprintf(path, sizeof path, "%s", manual_path);
+            else std::snprintf(path, sizeof path, "%s/frame_%06u.bmp", dir, frame);
             if (FILE* f = std::fopen(path, "wb")) {
                 const uint32_t row = d.Width * 4, size = row * d.Height;
                 uint8_t hdr[54] = {'B', 'M'};
@@ -1059,8 +1191,31 @@ void dev_present(X86* c) {
     static std::atomic<uint32_t> frames{0};
     static auto t0 = std::chrono::steady_clock::now();
     const uint32_t frame = ++frames;
-    if (self && dump_frame() && frame == dump_frame()) dump_write(self);
+    const bool manual = g_manual_frame && frame == g_manual_frame;
+    if (self && (manual || (dump_frame() && frame == dump_frame()))) {
+        bool success = dump_write(self, frame, manual);
+        if (manual) {
+            rt::log("d3d9: manual GPU capture %s: %s", success ? "complete" : "PARTIAL/failed", g_manual_dir.c_str());
+            const char* data = std::getenv("DIRT2_DATA_DIR");
+            if (!copy_capture_log(std::string(data ? data : ".") + "/dirt2.log", g_manual_dir + "/dirt2.log")) {
+                success = false;
+                std::ofstream report(g_manual_dir + "/capture.txt", std::ios::app);
+                report << "Status: PARTIAL (log snapshot copy failed)\n";
+                rt::log("d3d9: capture log snapshot copy failed");
+            }
+            g_manual_frame = 0;
+            g_manual_busy = false;
+            shim::gpu_dump_finished(success);
+        }
+    }
     g_present_count = frame;
+    if (self) arm_manual_dump(frame);
+    // Snapshot the already-rendered ordinary frame BEFORE the next frame's
+    // per-draw texture readbacks and complete state restoration can hide a
+    // timing/state bug. One final readback waits for this frame's work only;
+    // no intermediate draws in this frame were serialized for the capture.
+    if (self && g_manual_frame == frame + 1)
+        capture_back_buffer(self, frame, (g_manual_dir + "/live.bmp").c_str());
     if (self) capture_back_buffer(self, frame);
     if (frame == 1) rt::log("d3d9: first Present");
     static const bool log_present = std::getenv("DIRT2_LOG_PRESENT") != nullptr;
@@ -1083,7 +1238,12 @@ void dev_present(X86* c) {
             per_thread.clear();
         }
     }
-    if (frame % 300 == 0) {
+#ifdef __SWITCH__
+    static const bool log_perf = std::getenv("DIRT2_DEKO_LOG_PERF") != nullptr;
+#else
+    constexpr bool log_perf = true;
+#endif
+    if (log_perf && frame % 300 == 0) {
         const auto now = std::chrono::steady_clock::now();
         rt::log("d3d9: %u presents, %.1f fps", frame, 300.0 / std::chrono::duration<double>(now - t0).count());
         t0 = now;
@@ -1638,4 +1798,16 @@ void* d3d9_host(uint32_t proxy) { return to_host(proxy); }
 
 namespace shim {
 void install_resolution_labels() { install_resolution_labels_impl(); }
+bool request_gpu_dump() {
+    if (g_manual_busy.exchange(true)) return false;
+    g_manual_pending = true;
+    return true;
+}
+bool gpu_dump_active() { return g_manual_frame && g_present_count + 1 == g_manual_frame; }
+const std::string& gpu_dump_directory() { return g_manual_dir; }
+void gpu_dump_error(const char* what) {
+    if (!gpu_dump_active()) return;
+    g_manual_errors = true;
+    rt::log("d3d9: manual GPU capture error: %s", what);
+}
 }  // namespace shim

@@ -1,0 +1,16 @@
+--- a/profiles/mojoshader_profile_spirv.c
++++ b/profiles/mojoshader_profile_spirv.c
+@@ -3534,6 +3534,13 @@
+ {
+     SpirvResult dst, src0, src1, src2;
+     spv_emit_begin_dsss(ctx, &dst, &src0, &src1, &src2);
++    // Pre-1.4 paired RGB CND treats the comparison as true. Alpha-paired
++    // instructions and PS1.4 retain their ordinary component comparisons.
++    if (ctx->coissue && !shader_version_atleast(ctx, 1, 4) && (ctx->dest_arg.writemask & 0x7)) {
++        dst.id = src1.id;
++        spv_emit_end(ctx, dst);
++        return;
++    }
+     uint32 id_0_5 = spv_get_constant_composite(ctx, src0.tid, ctx->spirv.id_0_5, 0.5f);
+ 
+     uint32 id_cmp = spv_bumpid(ctx);

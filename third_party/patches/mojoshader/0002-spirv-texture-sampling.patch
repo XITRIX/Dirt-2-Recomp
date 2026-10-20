@@ -1,0 +1,77 @@
+--- a/profiles/mojoshader_profile_spirv.c
++++ b/profiles/mojoshader_profile_spirv.c
+@@ -3660,7 +3660,7 @@
+         // OpImageSampleImplicitLod should ignore the components of this argument that
+         // it doesn't need, so we don't need to mask it
+         uint32 texcoord = spv_load_srcarg_full(ctx, 0).id;
+-        uint32 sampler = spv_load_srcarg_full(ctx, 1).id;
++        uint32 sampler = spv_loadreg(ctx, spv_getreg(ctx, REG_TYPE_SAMPLER, samp_arg->regnum)).id;
+ 
+         // Special case for TEXLDB
+         // !!! FIXME: does the d3d bias value map directly to GLSL?
+@@ -3721,7 +3721,8 @@
+         // Emit the result, finally.
+         assert(!isscalar(ctx, ctx->shader_type, samp_arg->regtype, samp_arg->regnum));
+         SpirvResult r;
+-        r.id = result;
++        r.id = samp_arg->swizzle == 0xe4 ? result
++            : spv_emit_swizzle(ctx, result, vec4_tid, samp_arg->swizzle, 0xf);
+         r.tid = vec4_tid;
+         spv_assign_destarg(ctx, r);
+     } // else
+@@ -4059,7 +4060,8 @@
+ void emit_SPIRV_TEXLDD(Context *ctx)
+ {
+     const SourceArgInfo *samp_arg = &ctx->source_args[1];
+-    if (!reglist_find(&ctx->samplers, REG_TYPE_SAMPLER, samp_arg->regnum))
++    RegisterList *sampler_reg = reglist_find(&ctx->samplers, REG_TYPE_SAMPLER, samp_arg->regnum);
++    if (!sampler_reg)
+     {
+         fail(ctx, "TEXLDD using undeclared sampler");
+         return;
+@@ -4071,9 +4073,17 @@
+     result.id = spv_bumpid(ctx);
+ 
+     SpirvResult texcoord = spv_load_srcarg_full(ctx, 0);
+-    SpirvResult sampler = spv_load_srcarg_full(ctx, 1);
++    SpirvResult sampler = spv_loadreg(ctx, spv_getreg(ctx, REG_TYPE_SAMPLER, samp_arg->regnum));
+     SpirvResult grad_x = spv_load_srcarg_full(ctx, 2);
+     SpirvResult grad_y = spv_load_srcarg_full(ctx, 3);
++
++    // SPIR-V gradients have exactly the texture coordinate dimension, unlike
++    // the four-component D3D source registers. Cube gradients use xyz.
++    const int is2d = (TextureType) sampler_reg->index == TEXTURE_TYPE_2D;
++    const uint32 grad_tid = spv_get_type(ctx, is2d ? STI_VEC2 : STI_VEC3);
++    const int grad_mask = is2d ? 0x3 : 0x7;
++    grad_x.id = spv_emit_swizzle(ctx, grad_x.id, grad_tid, 0xe4, grad_mask);
++    grad_y.id = spv_emit_swizzle(ctx, grad_y.id, grad_tid, 0xe4, grad_mask);
+ 
+     // Generate the instruction.
+     // SpvOpImageSampleExplicitLod should ignore the components of the
+@@ -4085,6 +4095,8 @@
+ 
+     // Emit the result, finally.
+     assert(!isscalar(ctx, ctx->shader_type, samp_arg->regtype, samp_arg->regnum));
++    if (samp_arg->swizzle != 0xe4)
++        result.id = spv_emit_swizzle(ctx, result.id, result.tid, samp_arg->swizzle, 0xf);
+     spv_assign_destarg(ctx, result);
+ } // emit_SPIRV_TEXLDD
+ 
+@@ -4122,7 +4134,7 @@
+     result.tid = spv_get_type(ctx, STI_VEC4);
+     result.id = spv_bumpid(ctx);
+ 
+-    SpirvResult sampler = spv_load_srcarg_full(ctx, 1);
++    SpirvResult sampler = spv_loadreg(ctx, spv_getreg(ctx, REG_TYPE_SAMPLER, samp_arg->regnum));
+     SpirvResult texcoord = spv_load_srcarg_full(ctx, 0);
+ 
+     // The w component of texcoord_reg specifies the LOD. Extract it from texcoord_reg
+@@ -4139,6 +4151,8 @@
+     pop_output(ctx);
+ 
+     // Emit the result, finally.
++    if (samp_arg->swizzle != 0xe4)
++        result.id = spv_emit_swizzle(ctx, result.id, result.tid, samp_arg->swizzle, 0xf);
+     spv_assign_destarg(ctx, result);
+ } // emit_SPIRV_TEXLDL
+ 

@@ -1,0 +1,13 @@
+--- a/profiles/mojoshader_profile_spirv.c
++++ b/profiles/mojoshader_profile_spirv.c
+@@ -2103,6 +2103,10 @@
+     }
+     pop_output(ctx);
+ 
++    // SM1 r0 is the implicit color target, just like SM2+ oC0. Without
++    // Location the output is unlinked and downstream reflection loses it.
++    if (regtype == REG_TYPE_TEMP && sc == SpvStorageClassOutput)
++        spv_output_location(ctx, r->spirv.iddecl, 0);
+     spv_output_regname(ctx, r->spirv.iddecl, regtype, regnum);
+ } // emit_SPIRV_global
+ 

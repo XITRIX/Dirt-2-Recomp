@@ -1,0 +1,19 @@
+--- a/src/d3d11/d3d11_main.cpp
++++ b/src/d3d11/d3d11_main.cpp
+@@ -14,6 +14,16 @@
+   
+ extern "C" {
+   using namespace dxvk;
++#ifdef __SWITCH__
++  // Native startup warm-up progress; no disk cache or GPU synchronization.
++  DLLEXPORT void dirt2D3D11GetCompilerStats(ID3D11Device* device,
++      uint64_t* completed, uint64_t* total) {
++    auto stats = static_cast<D3D11Device*>(device)->GetDXVKDevice()->getStatCounters();
++    *completed = stats.getCtr(DxvkStatCounter::PipeTasksDone);
++    *total = stats.getCtr(DxvkStatCounter::PipeTasksTotal);
++  }
++#endif
++
+   
+   HRESULT D3D11InternalCreateDevice(
+           IDXGIFactory*       pFactory,

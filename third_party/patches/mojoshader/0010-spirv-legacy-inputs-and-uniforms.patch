@@ -1,0 +1,65 @@
+--- a/profiles/mojoshader_profile_spirv.c
++++ b/profiles/mojoshader_profile_spirv.c
+@@ -1076,7 +1076,7 @@
+                 spv_emit(ctx, 5, SpvOpIAdd, id_int, id_offset, id_a, id_b);
+             } // if
+ 
+-            if (offset)
++            if (offset && (is_constant || !ctx->ctab.have_ctab))
+             {
+                 uint32 id_a = id_offset;
+                 uint32 id_b = spv_getscalari(ctx, offset);
+@@ -1147,6 +1147,14 @@
+         uint32 maxval = spv_get_constant_composite(ctx, result.tid, ctx->spirv.id_1_0, 1.0f);
+         uint32 clamped = spv_bumpid(ctx);
+         spv_emit(ctx, 8, SpvOpExtInst, result.tid, clamped, spv_getext(ctx), GLSLstd450FClamp, result.id, minval, maxval);
++        result.id = clamped;
++    }
++    if (arg->regtype == REG_TYPE_INPUT && shader_is_pixel(ctx) && !shader_version_atleast(ctx, 3, 0))
++    {
++        uint32 zero = spv_get_constant_composite(ctx, result.tid, ctx->spirv.id_0_0, 0.0f);
++        uint32 one = spv_get_constant_composite(ctx, result.tid, ctx->spirv.id_1_0, 1.0f);
++        uint32 clamped = spv_bumpid(ctx);
++        spv_emit(ctx, 8, SpvOpExtInst, result.tid, clamped, spv_getext(ctx), GLSLstd450FClamp, result.id, zero, one);
+         result.id = clamped;
+     }
+     result = spv_swizzle(ctx, result, arg->swizzle, writemask);
+@@ -2032,9 +2040,9 @@
+                 tid = spv_get_type(ctx, STI_PTR_IVEC4_P);
+             else if (shader_is_pixel(ctx)) // actually REG_TYPE_TEXTURE
+             {
+-                if (!shader_version_atleast(ctx, 1, 4))
++                if (!shader_version_atleast(ctx, 2, 0))
+                 {
+-                    // ps_1_1 texture/address registers work like temporaries. They are initialized
++                    // ps_1_1 through ps_1_4 texture/address registers work like temporaries. They are initialized
+                     // with tex coords and TEX instruction then reads tex coords from it and writes
+                     // sampling result back into it. Because Input storage class is read-only, we
+                     // create private variable that is initialized to value of input.
+@@ -2221,7 +2229,7 @@
+             // constants.
+             assert(var->emit_position != -1);
+             push_output(ctx, &ctx->mainline_intro);
+-            spv_emit(ctx, 4, SpvOpConstant, spv_get_type(ctx, STI_INT), r->spirv.iddecl, var->emit_position);
++            spv_emit(ctx, 4, SpvOpConstant, spv_get_type(ctx, STI_INT), r->spirv.iddecl, var->emit_position + regnum - var->index);
+             pop_output(ctx);
+ 
+             char varname[64];
+@@ -3224,13 +3232,14 @@
+     RegisterList *pDst  = spv_getreg(ctx, pDstInfo->regtype, pDstInfo->regnum);
+     SpirvResult dst = spv_loadreg(ctx, pDst);
+ 
+-    uint32 vec3 = spv_get_type(ctx, STI_VEC3);
+-    uint32 bvec3 = spv_get_type(ctx, STI_BVEC3);
++    const int four = shader_version_atleast(ctx, 2, 0);
++    uint32 vec3 = spv_get_type(ctx, four ? STI_VEC4 : STI_VEC3);
++    uint32 bvec3 = spv_get_type(ctx, four ? STI_BVEC4 : STI_BVEC3);
+ 
+     uint32 zeros = spv_get_zero(ctx, vec3);
+ 
+     push_output(ctx, &ctx->mainline);
+-    uint32 res_swiz = spv_emit_swizzle(ctx, dst.id, vec3, (0 << 0) | (1 << 2) | (2 << 4), 0x7);
++    uint32 res_swiz = four ? dst.id : spv_emit_swizzle(ctx, dst.id, vec3, (0 << 0) | (1 << 2) | (2 << 4), 0x7);
+     uint32 res_lt = spv_bumpid(ctx);
+     uint32 res_any = spv_bumpid(ctx);
+     uint32 label_true = spv_bumpid(ctx);

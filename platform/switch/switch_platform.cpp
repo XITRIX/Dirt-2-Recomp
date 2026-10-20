@@ -3,9 +3,15 @@
 // own start-up checks. Windows, events and input are SDL3 (platform/sdl), the
 // devkitPro SDL3 port (third_party/patches/sdl3).
 #include <switch.h>
+#include <SDL3/SDL.h>
 
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <filesystem>
+#include <iterator>
+#include "resolution_restrictions.h"
+#include "../../shims/vfs.h"
 #include <string>
 
 #include "../platform.h"
@@ -24,21 +30,44 @@ void show_error(const std::string& message, const std::string& details) {
 
 namespace platform {
 
-// Software keyboard; the caller is the game thread (never SDL's main thread).
+// Serialize the modal HOS applet with SDL event polling. XShowKeyboardUI queues
+// its asynchronous request on this thread; other callers may use a worker.
 bool prompt_text(const std::string& title, const std::string& message, const std::string& initial,
                  std::string& result) {
-    SwkbdConfig kbd;
-    if (R_FAILED(swkbdCreate(&kbd, 0))) return false;
-    swkbdConfigMakePresetDefault(&kbd);
-    swkbdConfigSetHeaderText(&kbd, title.c_str());
-    swkbdConfigSetSubText(&kbd, message.c_str());
-    swkbdConfigSetInitialText(&kbd, initial.c_str());
-    swkbdConfigSetStringLenMax(&kbd, 64);
-    char out[256] = {};
-    const bool ok = R_SUCCEEDED(swkbdShow(&kbd, out, sizeof out));
-    swkbdClose(&kbd);
-    if (ok) result = out;
-    return ok;
+    struct Prompt {
+        const std::string& title;
+        const std::string& message;
+        const std::string& initial;
+        std::string& result;
+        bool ok = false;
+    } prompt{title, message, initial, result};
+    auto show = [](void* data) {
+        auto& p = *static_cast<Prompt*>(data);
+        SwkbdConfig kbd;
+        Result rc = swkbdCreate(&kbd, 0);
+        if (R_FAILED(rc)) {
+            rt::log("platform: HOS keyboard creation failed: %08X", unsigned(rc));
+            return;
+        }
+        swkbdConfigMakePresetDefault(&kbd);
+        swkbdConfigSetHeaderText(&kbd, p.title.c_str());
+        swkbdConfigSetSubText(&kbd, p.message.c_str());
+        swkbdConfigSetInitialText(&kbd, p.initial.c_str());
+        swkbdConfigSetStringLenMax(&kbd, 64);
+        char out[256] = {};
+        rc = swkbdShow(&kbd, out, sizeof out);
+        swkbdClose(&kbd);
+        p.ok = R_SUCCEEDED(rc);
+        if (p.ok) p.result = out;
+        else rt::log("platform: HOS keyboard closed without input: %08X", unsigned(rc));
+    };
+    // The pending XLive request lets the game keep presenting. Park it while
+    // the system owns the screen, and resume on success, cancellation or error.
+    set_game_paused(true);
+    const bool dispatched = SDL_RunOnMainThread(show, &prompt, true);
+    set_game_paused(false);
+    if (!dispatched) rt::log("platform: HOS keyboard dispatch failed: %s", SDL_GetError());
+    return dispatched && prompt.ok;
 }
 
 // No two-button dialog on Horizon outside a graphics stack: the first option.
@@ -61,6 +90,25 @@ void set_metalfx_enabled(bool) {}
 }  // namespace platform
 
 namespace switch_platform {
+
+void install_resolution_restrictions() {
+    constexpr const char* relative = "system/hardware_settings_restrictions.xml";
+    std::ifstream input(vfs::host_path(std::string(vfs::kInstallDir) + "/" + relative), std::ios::binary);
+    if (!input) { rt::log("Switch: minimum-resolution rules unavailable"); return; }
+    std::string xml((std::istreambuf_iterator<char>(input)), {});
+    if (!allow_half_resolution(xml)) { rt::log("Switch: unknown minimum-resolution rules; leaving unchanged"); return; }
+    const std::string directory = vfs::data_dir() + "/switch-overrides";
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    const std::string path = directory + "/hardware_settings_restrictions.xml";
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.write(xml.data(), std::streamsize(xml.size()));
+    output.close();
+    if (!output) { rt::log("Switch: cannot write minimum-resolution override"); return; }
+    vfs::set_override(relative, path);
+    rt::log("Switch: minimum resolution 640x360; private settings override installed");
+}
+
 
 // The game needs title-takeover mode (an application's ~3.2 GB); the album
 // applet gives homebrew about 400 MB. Returns false after telling the user.

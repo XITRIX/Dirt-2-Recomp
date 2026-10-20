@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 
 #include "../../../platform/platform.h"
 #include "device.h"
@@ -12,14 +13,17 @@
 namespace deko {
 
 namespace {
-// Bring-up: the first few calls of each IDirect3D9 method.
+// Opt-in adapter-query trace for diagnostics.
 void trace(const char* what) {
+    static const bool enabled = std::getenv("DIRT2_DEKO_LOG_RESOURCES") != nullptr;
+    if (!enabled) return;
     static std::atomic<int> n{0};
     if (n++ < 64) rt::log("deko3d: IDirect3D9::%s", what);
 }
 }  // namespace
 
 HRESULT D3D9::GetAdapterIdentifier(UINT adapter, DWORD, D3DADAPTER_IDENTIFIER9* id) {
+    ApiLock api_lock(__func__);
     trace("GetAdapterIdentifier");
     if (adapter || !id) return D3DERR_INVALIDCALL;
     // Up to WHQLLevel only: the host struct is 4 bytes longer than the game's
@@ -35,20 +39,23 @@ HRESULT D3D9::GetAdapterIdentifier(UINT adapter, DWORD, D3DADAPTER_IDENTIFIER9* 
     return D3D_OK;
 }
 
-UINT D3D9::GetAdapterModeCount(UINT adapter, D3DFORMAT) {
+UINT D3D9::GetAdapterModeCount(UINT adapter, D3DFORMAT format) {
+    ApiLock api_lock(__func__);
     trace("GetAdapterModeCount");
-    return adapter ? 0 : UINT(platform::display_modes().size());
+    return adapter || (format!=D3DFMT_X8R8G8B8 && format!=D3DFMT_R5G6B5) ? 0 : UINT(platform::display_modes().size());
 }
 
 HRESULT D3D9::EnumAdapterModes(UINT adapter, D3DFORMAT format, UINT mode, D3DDISPLAYMODE* out) {
+    ApiLock api_lock(__func__);
     trace("EnumAdapterModes");
     const auto& modes = platform::display_modes();
-    if (adapter || !out || mode >= modes.size()) return D3DERR_INVALIDCALL;
+    if (adapter || !out || (format!=D3DFMT_X8R8G8B8 && format!=D3DFMT_R5G6B5) || mode >= modes.size()) return D3DERR_INVALIDCALL;
     *out = D3DDISPLAYMODE{modes[mode].width, modes[mode].height, modes[mode].refresh, format};
     return D3D_OK;
 }
 
 HRESULT D3D9::GetAdapterDisplayMode(UINT adapter, D3DDISPLAYMODE* mode) {
+    ApiLock api_lock(__func__);
     trace("GetAdapterDisplayMode");
     if (adapter || !mode) return D3DERR_INVALIDCALL;
     int w = 1280, h = 720;
@@ -58,8 +65,10 @@ HRESULT D3D9::GetAdapterDisplayMode(UINT adapter, D3DDISPLAYMODE* mode) {
 }
 
 HRESULT D3D9::CheckDeviceFormat(UINT adapter, D3DDEVTYPE, D3DFORMAT, DWORD usage, D3DRESOURCETYPE, D3DFORMAT format) {
+    ApiLock api_lock(__func__);
     trace("CheckDeviceFormat");
     if (adapter) return D3DERR_INVALIDCALL;
+    if(format==D3DFORMAT(0x434f5441u) || format==D3DFORMAT(0x5a534552u))return D3D_OK; // ATOC / RESZ
     const FormatInfo* f = format_info(format);
     if (!f) return D3DERR_NOTAVAILABLE;
     if ((usage & D3DUSAGE_DEPTHSTENCIL) && !f->depth) return D3DERR_NOTAVAILABLE;
@@ -68,13 +77,18 @@ HRESULT D3D9::CheckDeviceFormat(UINT adapter, D3DDEVTYPE, D3DFORMAT, DWORD usage
     return D3D_OK;
 }
 
-HRESULT D3D9::CheckDeviceMultiSampleType(UINT adapter, D3DDEVTYPE, D3DFORMAT, BOOL, D3DMULTISAMPLE_TYPE ms, DWORD* quality) {
-    if (quality) *quality = 1;
-    // Multisampling comes later (resolves on Present/StretchRect).
-    return adapter == 0 && ms == D3DMULTISAMPLE_NONE ? D3D_OK : D3DERR_NOTAVAILABLE;
+HRESULT D3D9::CheckDeviceMultiSampleType(UINT adapter, D3DDEVTYPE, D3DFORMAT format, BOOL, D3DMULTISAMPLE_TYPE ms, DWORD* quality) {
+    ApiLock api_lock(__func__);
+    const auto* info=format_info(format);
+    if(adapter || !info || info->block>1 || info->dk==DkImageFormat_None || !multisample_valid(ms,0)) {
+        if(quality)*quality=0;return D3DERR_NOTAVAILABLE;
+    }
+    if(quality)*quality=ms==D3DMULTISAMPLE_NONMASKABLE?3:1;
+    return D3D_OK;
 }
 
 HRESULT D3D9::GetDeviceCaps(UINT adapter, D3DDEVTYPE, D3DCAPS9* caps) {
+    ApiLock api_lock(__func__);
     trace("GetDeviceCaps");
     if (adapter || !caps) return D3DERR_INVALIDCALL;
     fill_caps(caps);
@@ -83,6 +97,7 @@ HRESULT D3D9::GetDeviceCaps(UINT adapter, D3DDEVTYPE, D3DCAPS9* caps) {
 
 HRESULT D3D9::CreateDevice(UINT adapter, D3DDEVTYPE, HWND window, DWORD flags, D3DPRESENT_PARAMETERS* params,
                            IDirect3DDevice9** out) {
+    ApiLock api_lock(__func__);
     trace("CreateDevice");
     if (adapter || !params || !out) return D3DERR_INVALIDCALL;
     auto* d = new Device(this, window, flags, *params);
@@ -151,6 +166,7 @@ void fill_caps(D3DCAPS9* c) {
                      D3DSTENCILCAPS_DECRSAT | D3DSTENCILCAPS_INVERT | D3DSTENCILCAPS_INCR | D3DSTENCILCAPS_DECR |
                      D3DSTENCILCAPS_TWOSIDED;
     c->FVFCaps = 8;
+    c->TextureOpCaps = 0x03ffffff; // all D3DTOP operations, implemented by the generic FFP shader
     c->MaxTextureBlendStages = 8;
     c->MaxSimultaneousTextures = 8;
     c->VertexProcessingCaps = D3DVTXPCAPS_TEXGEN | D3DVTXPCAPS_MATERIALSOURCE7 | D3DVTXPCAPS_DIRECTIONALLIGHTS |

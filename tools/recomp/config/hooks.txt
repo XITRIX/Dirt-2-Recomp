@@ -2,3 +2,5 @@
 # line; the lifted body becomes f_<addr>_orig and the host defines f_<addr>.
 # 01161960  localisation lookup (table, id) -> text, or 0: shims/frontend/menu_patch.cpp
 01161960
+# 00CD70D0  envmap list walk, run over a copy of the list: shims/misc/envmap_list.cpp
+00CD70D0

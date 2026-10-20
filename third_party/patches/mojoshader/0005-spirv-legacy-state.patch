@@ -1,0 +1,27 @@
+--- a/profiles/mojoshader_profile_spirv.c
++++ b/profiles/mojoshader_profile_spirv.c
+@@ -1121,6 +1121,15 @@
+     else
+         result = spv_loadreg(ctx, reg);
+ 
++    if (arg->regtype == REG_TYPE_CONST && shader_is_pixel(ctx) && !shader_version_atleast(ctx, 2, 0))
++    {
++        uint32 negative[5] = {0};
++        uint32 minval = spv_get_constant_composite(ctx, result.tid, negative, -1.0f);
++        uint32 maxval = spv_get_constant_composite(ctx, result.tid, ctx->spirv.id_1_0, 1.0f);
++        uint32 clamped = spv_bumpid(ctx);
++        spv_emit(ctx, 8, SpvOpExtInst, result.tid, clamped, spv_getext(ctx), GLSLstd450FClamp, result.id, minval, maxval);
++        result.id = clamped;
++    }
+     result = spv_swizzle(ctx, result, arg->swizzle, writemask);
+ 
+     switch (arg->src_mod)
+@@ -2770,7 +2779,7 @@
+ 
+     for (i = 0; i < MOJOSHADER_USAGE_TOTAL; i++)
+         for (j = 0; j < 16; j++)
+-            if (table->attrib_offsets[i][j])
++            if (table->attrib_offsets[i][j] > 1)
+                 table->attrib_offsets[i][j] += base_offset;
+     for (i = 0; i < 16; i++)
+         if (table->output_offsets[i])

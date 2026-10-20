@@ -4,6 +4,9 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL_metal.h>
+#if defined(DIRT2_SWITCH_DXVK)
+#include <switch.h>
+#endif
 #include <pthread.h>
 #include <unistd.h>
 
@@ -20,6 +23,7 @@
 
 #include "../platform.h"
 #include "recomp/host.h"
+#include "../../shims/vfs.h"
 
 namespace shim {
 void post_message(uint32_t hwnd, uint32_t msg, uint32_t wp, uint32_t lp);
@@ -31,6 +35,7 @@ int read_metalfx_setting(const std::string& path);
 #if defined(SDL_PLATFORM_SWITCH)
 namespace switch_platform {
 bool check_launch_mode();
+void install_resolution_restrictions();
 void report_missing_game(const std::string& dir);
 }  // namespace switch_platform
 #endif
@@ -86,12 +91,25 @@ Window create_window(int width, int height, const char* title) {
         }
         const float d = display_density();
 #if defined(SDL_PLATFORM_SWITCH)
+#if defined(DIRT2_SWITCH_DXVK)
+        const SDL_WindowFlags api = SDL_WINDOW_VULKAN;
+#else
         // deko3d presents to the native window itself (SDL_SWITCH_NATIVE_WINDOW, set in main).
         const SDL_WindowFlags api = 0;
+#endif
 #else
         const SDL_WindowFlags api = renderer() == Renderer::DX11 ? SDL_WINDOW_METAL : SDL_WINDOW_VULKAN;
 #endif
+#if defined(DIRT2_SWITCH_DXVK)
+        // The loading splash is only 256x256. Every guest HWND shares this
+        // window, and Vulkan's surface extent follows its initial NWindow size.
+        // Keep physical output at 720p; guest render scales use swapchain buffers.
+        constexpr int output_width = 1280, output_height = 720;
+        rt::log("Switch Vulkan output: %dx%d (guest window request %dx%d)", output_width, output_height, width, height);
+        w = SDL_CreateWindow(title, int(output_width / d), int(output_height / d),
+#else
         w = SDL_CreateWindow(title, int(width / d), int(height / d),
+#endif
                              api | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
         if (!w) rt::log("SDL_CreateWindow failed: %s", SDL_GetError());
         if (kSingleWindow && w) {
@@ -141,7 +159,12 @@ void destroy_window(Window w) {
 void set_window_size(Window w, int width, int height) {
     on_main([&] {
         const float d = display_density();
+#if defined(DIRT2_SWITCH_DXVK)
+        // Helper/splash HWND sizes must not resize the shared physical output.
+        SDL_SetWindowSize(static_cast<SDL_Window*>(w), int(1280 / d), int(720 / d));
+#else
         SDL_SetWindowSize(static_cast<SDL_Window*>(w), int(width / d), int(height / d));
+#endif
     });
 }
 
@@ -192,6 +215,13 @@ void set_game_paused(bool paused) {
 const std::vector<DisplayMode>& display_modes() {
     static const std::vector<DisplayMode> modes = [] {
         uint32_t w = 1920, h = 1080, hz = 60;
+#if defined(SDL_PLATFORM_SWITCH)
+        // Switch render scales use the handheld framebuffer as a stable base.
+        // SDL's desktop mode can retain 1080p after docking; it must not turn
+        // the same 720p render size into a different scale after undocking.
+        w = 1280;
+        h = 720;
+#else
         on_main([&] {
             if (const SDL_DisplayMode* m = SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay())) {
                 // SDL reports points; the GPU renders pixels.
@@ -201,6 +231,7 @@ const std::vector<DisplayMode>& display_modes() {
                 if (m->refresh_rate > 0) hz = uint32_t(m->refresh_rate + 0.5f);
             }
         });
+#endif
         if (h > w) std::swap(w, h);  // the game runs landscape
         std::vector<DisplayMode> out;
         for (const float s : {0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f})
@@ -213,11 +244,16 @@ const std::vector<DisplayMode>& display_modes() {
 }
 
 void display_size(int* width, int* height) {
+#if defined(SDL_PLATFORM_SWITCH)
+    *width = 1280;
+    *height = 720;
+#else
     on_main([&] {
         const SDL_DisplayMode* m = SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay());
         *width = m ? m->w : 1920;
         *height = m ? m->h : 1080;
     });
+#endif
 }
 
 }  // namespace platform
@@ -313,7 +349,13 @@ void* game_main(void*) {
     const uint32_t r = rt::invoke(c, recomp_image_info.entry, {}, true);
     rt::log("guest entry returned %u", r);
     g_guest_done = true;
+#if defined(DIRT2_SWITCH_DXVK)
+    // Other guest threads can still own graphics objects. End the process so
+    // Horizon releases GPU pages, rather than chainloading over live GPU memory.
+    svcExitProcess();
+#else
     std::exit(int(r));
+#endif
 }
 
 // Copies everything written to stderr (our log, fatal errors with guest
@@ -324,7 +366,9 @@ void tee_stderr(const std::string& path) {
     // No console and no pipes on Horizon: stderr goes straight to the file
     // (line buffered, so a crash keeps everything before it).
     std::rename(path.c_str(), (path.substr(0, path.size() - 4) + ".prev.log").c_str());
-    if (std::freopen(path.c_str(), "w", stderr)) std::setvbuf(stderr, nullptr, _IOLBF, 0);
+    // Allow capture snapshots through this same handle: HOS refuses a second
+    // read handle while the log is open for writing.
+    if (std::freopen(path.c_str(), "w+", stderr)) std::setvbuf(stderr, nullptr, _IOLBF, 0);
     return;
 #endif
     int fds[2];
@@ -495,7 +539,15 @@ void setup_pipeline_warmup(const std::string& data) {
 #if defined(SDL_PLATFORM_SWITCH)
 // Everything lives on the SD card: the game in sdmc:/switch/dirt2/Dirt 2, our
 // data (log, saves, settings) in sdmc:/switch/dirt2.
+#if defined(DIRT2_SWITCH_DXVK)
+constexpr const char* kSwitchDataDir = "sdmc:/switch/dirt2-dx11";
+#else
 constexpr const char* kSwitchDataDir = "sdmc:/switch/dirt2";
+#endif
+#endif
+
+#if defined(DIRT2_SWITCH_DXVK)
+namespace switch_platform { bool check_c11_abis(); int run_dx11_preflight(); void start_dx11_startup_watchdog(); }
 #endif
 
 int main(int argc, char** argv) {
@@ -520,7 +572,11 @@ int main(int argc, char** argv) {
         std::fclose(f);
     }
     if (dir.empty()) {
+#if defined(DIRT2_SWITCH_DXVK)
+        dir = "sdmc:/switch/dirt2/Dirt 2";
+#else
         dir = std::string(kSwitchDataDir) + "/Dirt 2";
+#endif
         if (!std::filesystem::exists(dir + "/dirt2_game.exe")) {
             switch_platform::report_missing_game(dir);
             return 2;
@@ -618,8 +674,20 @@ int main(int argc, char** argv) {
         setenv("DXVK_LOG_PATH", data.c_str(), 0);
         // Defaults to $HOME/.cache, which is not writable on iOS (HOME is the container root).
         setenv("DXVK_SHADER_CACHE_PATH", data.c_str(), 0);
+#if defined(DIRT2_SWITCH_DXVK)
+        const std::string mesa_cache = data + "/mesa-cache";
+        std::filesystem::create_directories(mesa_cache, ec);
+        setenv("MESA_SHADER_CACHE_DIR", mesa_cache.c_str(), 0);
+        rt::log("Switch prototype: Direct3D 11 -> DXVK -> NVK (separate data directory)");
+#endif
         rt::set_discovery_log(data + "/recomp_discovered.txt");
         tee_stderr(data + "/dirt2.log");
+#if defined(DIRT2_SWITCH_DXVK)
+        if (!switch_platform::check_c11_abis()) {
+            rt::log("Stopping before GPU initialization: C11 ABI self-check failed");
+            return 1;
+        }
+#endif
         platform::metalfx_init();
         // DIRT2_PROFILE=1, or a file named "profile" in the data folder (iOS has no environment).
         if (std::getenv("DIRT2_PROFILE") || std::filesystem::exists(data + "/profile")) rt::start_profiler();
@@ -643,6 +711,16 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
+#if defined(DIRT2_SWITCH_DXVK)
+    if (const char* test = std::getenv("DIRT2_DX11_PREFLIGHT_ONLY"); test && std::strcmp(test, "0")) {
+        // Keep game pipeline replay and HUD draws out of the isolated GPU test.
+        setenv("DXVK_PIPELINE_WARMUP", "", 1);
+        setenv("DXVK_PIPELINE_RECORD", "", 1);
+        setenv("DXVK_SHADER_CACHE_NAME", "preflight", 1);
+        setenv("DXVK_HUD", "", 1);
+        return switch_platform::run_dx11_preflight();
+    }
+#endif
     SDL_AddEventWatch(lifecycle_watch, nullptr);
     platform::set_app_icon(dir + "/dirt2.ico");
     // Community mappings shipped next to the executable, then optional user
@@ -660,6 +738,11 @@ int main(int argc, char** argv) {
         SDL_AddGamepadMappingsFromFile((data + "/gamecontrollerdb.txt").c_str());
 
     g_saves_dir = data + "/C/Users/Player/Documents/My Games/DiRT2/savegame";
+#if defined(DIRT2_SWITCH_DXVK)
+    vfs::set_save_dir("sdmc:/switch/dirt2/C/Users/Player/Documents/My Games/DiRT2/savegame");
+    g_saves_dir = vfs::save_dir();
+    rt::log("Switch DX11: shared saves at %s", vfs::save_dir().c_str());
+#endif
     g_hw_config = data + "/C/Users/Player/Documents/My Games/DiRT2/hardwaresettings/hardware_settings_config.xml";
 
     if (!rt::mem_init()) return 1;
@@ -669,9 +752,15 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (chdir(dir.c_str()) != 0) rt::log("warning: cannot chdir to %s", dir.c_str());
+#if defined(SDL_PLATFORM_SWITCH)
+    switch_platform::install_resolution_restrictions();
+#endif
     shim::install_resolution_labels();
     shim::install_menu_patches(platform::metalfx_supported());
 
+#if defined(DIRT2_SWITCH_DXVK)
+    switch_platform::start_dx11_startup_watchdog();
+#endif
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     // Guest call depth nests host frames. Horizon commits the whole stack up front.

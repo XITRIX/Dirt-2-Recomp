@@ -10,11 +10,18 @@
 #include <dxgi.h>
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <cstdlib>
 #include <map>
+#include <mutex>
+#include <functional>
+#include <type_traits>
+#include <unordered_map>
+#include <utility>
 #include <set>
 #include <string>
 #include <thread>
@@ -23,14 +30,22 @@
 
 #include "../../platform/platform.h"
 #include "../shim.h"
+#include "guest_string.h"
+#include "render_size.h"
 
 namespace shim {
 void* host_window(uint32_t hwnd);
 }
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+extern "C" void dirt2_dx11_present_succeeded();
+namespace shim::d3d11 { void preload_switch_shaders(ID3D11Device*, IDXGISwapChain*); }
+#endif
 
 // dxmt/0005-metalfx-native-target.patch: MetalFX upscales the back buffer to
 // this size (the window's drawable) while enabled and larger.
+#ifndef DIRT2_D3D11_DXVK
 extern "C" void dxmt_set_spatial_upscale(int enabled, uint32_t width, uint32_t height);
+#endif
 
 using namespace shim;
 
@@ -100,6 +115,7 @@ struct SwapInfo {
     uint32_t guest_hwnd = 0;
     platform::Window window = nullptr;
     bool fullscreen = false;
+    uint32_t target_width = 0, target_height = 0;
 };
 std::map<uint32_t, SwapInfo> g_swaps;  // swap chain proxy -> info
 
@@ -126,7 +142,11 @@ bool prepare_swap_chain(uint32_t gdesc, DXGI_SWAP_CHAIN_DESC& d, SwapInfo& info)
             platform::set_window_size(info.window, int(d.BufferDesc.Width), int(d.BufferDesc.Height));
     }
     platform::show_window(info.window, true);
+#ifdef DIRT2_D3D11_DXVK
+    d.OutputWindow = reinterpret_cast<HWND>(info.window);
+#else
     d.OutputWindow = HWND(platform::metal_layer(info.window));
+#endif
     if (!d.OutputWindow) return false;
     // 0 means the window's size; DXMT's native (headless) build would use 1024x1024.
     if (!d.BufferDesc.Width || !d.BufferDesc.Height) {
@@ -175,12 +195,17 @@ void dev_create_texture3d(X86* c);
 void dev_create_input_layout(X86* c);
 void ctx_map(X86* c);
 void ctx_unmap(X86* c);
+void ctx_copy_resource(X86* c);
+void ctx_copy_region(X86* c);
 void factory_create_swap_chain(X86* c);
 void swap_get_desc(X86* c);
 void swap_present(X86* c);
 void swap_set_fullscreen_state(X86* c);
 void swap_get_fullscreen_state(X86* c);
 void swap_resize_buffers(X86* c);
+void swap_resize_target(X86* c);
+void output_get_modes(X86* c);
+void output_find_mode(X86* c);
 void adapter_get_desc(X86* c);
 void adapter1_get_desc1(X86* c);
 void output_get_desc(X86* c);
@@ -192,6 +217,10 @@ OVERRIDE(ID3D11Device, CreateTexture3D, dev_create_texture3d)
 OVERRIDE(ID3D11Device, CreateInputLayout, dev_create_input_layout)
 OVERRIDE(ID3D11DeviceContext, Map, ctx_map)
 OVERRIDE(ID3D11DeviceContext, Unmap, ctx_unmap)
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+OVERRIDE(ID3D11DeviceContext, CopyResource, ctx_copy_resource)
+OVERRIDE(ID3D11DeviceContext, CopySubresourceRegion, ctx_copy_region)
+#endif
 OVERRIDE(IDXGIFactory, CreateSwapChain, factory_create_swap_chain)
 OVERRIDE(IDXGISwapChain, GetDesc, swap_get_desc)
 OVERRIDE(IDXGISwapChain, Present, swap_present)
@@ -201,6 +230,11 @@ OVERRIDE(IDXGISwapChain, ResizeBuffers, swap_resize_buffers)
 OVERRIDE(IDXGIAdapter, GetDesc, adapter_get_desc)
 OVERRIDE(IDXGIAdapter1, GetDesc1, adapter1_get_desc1)
 OVERRIDE(IDXGIOutput, GetDesc, output_get_desc)
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+OVERRIDE(IDXGISwapChain, ResizeTarget, swap_resize_target)
+OVERRIDE(IDXGIOutput, GetDisplayModeList, output_get_modes)
+OVERRIDE(IDXGIOutput, FindClosestMatchingMode, output_find_mode)
+#endif
 
 // IUnknown itself (QueryInterface for IID_IUnknown).
 const recomp_fn vt_IUnknown[] = {&QI<IUnknown>, &AddRefB<IUnknown>, &ReleaseB<IUnknown>};
@@ -251,8 +285,91 @@ struct MapShadow {
     uint32_t guest = 0, size = 0;
     void* host = nullptr;  // host mapping while mapped
     bool write = false;
+    ID3D11Resource* mapped_resource = nullptr;
 };
 std::map<std::pair<uint32_t, uint32_t>, MapShadow> g_maps;
+std::atomic<uint32_t> g_present_frames{0};
+struct ExposureCopy { uint32_t proxy = 0, frame = 0; uint64_t ns = 0; uint32_t context = 0; };
+std::map<uint32_t, ExposureCopy> g_exposure_copies;
+std::map<uint32_t, ExposureCopy> g_exposure_latest; // context proxy -> most recently queued readback
+
+// Diagnose the exposure ring by texture metadata, not driver-specific row padding.
+bool small_float_readback(ID3D11Resource* resource, UINT sub, D3D11_TEXTURE2D_DESC& desc) {
+    D3D11_RESOURCE_DIMENSION dim{};
+    resource->GetType(&dim);
+    if (dim != D3D11_RESOURCE_DIMENSION_TEXTURE2D) return false;
+    static_cast<ID3D11Texture2D*>(resource)->GetDesc(&desc);
+    if (sub || desc.Width != 1 || desc.Height != 1 || desc.Usage != D3D11_USAGE_STAGING ||
+        !(desc.CPUAccessFlags & D3D11_CPU_ACCESS_READ)) return false;
+    return desc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT || desc.Format == DXGI_FORMAT_R32G32_FLOAT ||
+           desc.Format == DXGI_FORMAT_R32_FLOAT || desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+           desc.Format == DXGI_FORMAT_R16G16_FLOAT || desc.Format == DXGI_FORMAT_R16_FLOAT;
+}
+
+void trace_exposure(uint32_t resource, uint32_t flags, HRESULT hr, const D3D11_TEXTURE2D_DESC& desc,
+                    const D3D11_MAPPED_SUBRESOURCE& map, uint32_t size, uint32_t actual_resource = 0, double map_ms = 0) {
+    static const bool enabled = std::getenv("DIRT2_LOG_EXPOSURE") != nullptr;
+    if (!enabled) return;
+    struct Sample { double ms; uint32_t frame, resource, flags, hr, format, pitch, bits[4];
+                    uint32_t actual_resource, copy_frame, actual_copy_frame; double age_ms, actual_age_ms, map_ms; };
+    static std::array<Sample, 128> samples{};
+    static size_t count = 0;
+    static const auto start = std::chrono::steady_clock::now();
+    static auto last_flush = start;
+    const auto now = std::chrono::steady_clock::now();
+    static const unsigned trace_seconds = [] {
+        const char* value = std::getenv("DIRT2_EXPOSURE_TRACE_SECONDS");
+        return value ? unsigned(std::min(3600ul, std::strtoul(value, nullptr, 10))) : 120u;
+    }();
+    if (now - start > std::chrono::seconds(trace_seconds)) return;
+    const uint32_t frame = g_present_frames.load();
+    static std::map<uint32_t, uint32_t> last_failed_frame;
+    if (FAILED(hr)) {
+        auto it = last_failed_frame.find(resource);
+        if (it != last_failed_frame.end() && it->second == frame) return;
+        last_failed_frame[resource] = frame;
+    }
+    auto& sample = samples[count++];
+    sample = {std::chrono::duration<double, std::milli>(now - start).count(), frame,
+              resource, flags, uint32_t(hr), uint32_t(desc.Format), map.RowPitch, {0,0,0,0}};
+    sample.map_ms = map_ms;
+    sample.actual_resource = actual_resource ? actual_resource : resource;
+    sample.copy_frame = sample.actual_copy_frame = UINT32_MAX;
+    sample.age_ms = sample.actual_age_ms = -1;
+    const uint64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+    auto stamp = [&](uint32_t proxy, uint32_t& copied_frame, double& age) {
+        if (auto it = g_exposure_copies.find(proxy); it != g_exposure_copies.end()) {
+            copied_frame = it->second.frame;
+            if (now_ns >= it->second.ns) age = double(now_ns - it->second.ns) / 1e6;
+        }
+    };
+    stamp(resource, sample.copy_frame, sample.age_ms);
+    stamp(sample.actual_resource, sample.actual_copy_frame, sample.actual_age_ms);
+    // Raw bits also preserve half floats and NaN payloads, without misdecoding them.
+    const uint32_t pixel_size = desc.Format == DXGI_FORMAT_R16_FLOAT ? 2 :
+        desc.Format == DXGI_FORMAT_R16G16_FLOAT || desc.Format == DXGI_FORMAT_R32_FLOAT ? 4 :
+        desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT || desc.Format == DXGI_FORMAT_R32G32_FLOAT ? 8 : 16;
+    if (SUCCEEDED(hr) && map.pData) std::memcpy(sample.bits, map.pData, std::min(size, pixel_size));
+    if (count < samples.size() && now - last_flush < std::chrono::seconds(5)) return;
+    static std::FILE* file = [] {
+        const char* data = std::getenv("DIRT2_DATA_DIR");
+        const std::string path = std::string(data ? data : ".") + "/exposure.csv";
+        std::rename(path.c_str(), (path + ".prev").c_str());
+        auto* f = std::fopen(path.c_str(), "w");
+        if (f) { std::setvbuf(f, nullptr, _IOFBF, 16384); std::fputs("ms,frame,resource,flags,hr,format,row_pitch,bits0,bits1,bits2,bits3,actual_resource,copy_frame,actual_copy_frame,age_ms,actual_age_ms,map_ms\n", f); }
+        return f;
+    }();
+    if (file) {
+        for (size_t i = 0; i < count; ++i) {
+            const auto& s = samples[i];
+            std::fprintf(file, "%.3f,%u,%08X,%X,%08X,%u,%u,%08X,%08X,%08X,%08X,%08X,%u,%u,%.3f,%.3f,%.3f\n", s.ms, s.frame,
+                         s.resource, s.flags, s.hr, s.format, s.pitch, s.bits[0], s.bits[1], s.bits[2], s.bits[3],
+                         s.actual_resource, s.copy_frame, s.actual_copy_frame, s.age_ms, s.actual_age_ms, s.map_ms);
+        }
+        std::fflush(file);
+    }
+    count = 0; last_flush = now;
+}
 
 void on_release(uint32_t proxy) {
     std::lock_guard lk(g_mu);
@@ -261,7 +378,52 @@ void on_release(uint32_t proxy) {
         it = g_maps.erase(it);
     }
     g_swaps.erase(proxy);
+    g_exposure_copies.erase(proxy);
+    g_exposure_latest.erase(proxy);
+    for (auto it = g_exposure_latest.begin(); it != g_exposure_latest.end();) {
+        if (it->second.proxy == proxy) it = g_exposure_latest.erase(it);
+        else ++it;
+    }
 }
+
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+void record_exposure_copy(uint32_t context, uint32_t proxy, ID3D11Resource* dst, ID3D11Resource* src) {
+    D3D11_TEXTURE2D_DESC desc{};
+    if (!dst || !small_float_readback(dst, 0, desc) || desc.Format != DXGI_FORMAT_R16G16B16A16_FLOAT) return;
+    D3D11_RESOURCE_DIMENSION dim{}; src->GetType(&dim);
+    if (dim != D3D11_RESOURCE_DIMENSION_TEXTURE2D) return;
+    D3D11_TEXTURE2D_DESC source{}; static_cast<ID3D11Texture2D*>(src)->GetDesc(&source);
+    if (source.Width != 1 || source.Height != 1 || source.Format != desc.Format ||
+        !(source.BindFlags & D3D11_BIND_RENDER_TARGET)) return;
+    const uint64_t ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    std::lock_guard lk(g_mu);
+    const ExposureCopy stamp{proxy, g_present_frames.load(), ns, context};
+    g_exposure_copies[proxy] = stamp;
+    g_exposure_latest[context] = stamp;
+}
+void ctx_copy_resource(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<ID3D11DeviceContext*>(to_host(a[0]));
+    auto* dst = static_cast<ID3D11Resource*>(to_host(a[1]));
+    auto* src = static_cast<ID3D11Resource*>(to_host(a[2]));
+    if (self && dst && src) { self->CopyResource(dst, src); record_exposure_copy(a[0], a[1], dst, src); }
+    c->esp += 4 * 4;
+}
+void ctx_copy_region(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<ID3D11DeviceContext*>(to_host(a[0]));
+    auto* dst = static_cast<ID3D11Resource*>(to_host(a[1]));
+    auto* src = static_cast<ID3D11Resource*>(to_host(a[6]));
+    const auto* box = a.ptr<D3D11_BOX>(8);
+    if (self && dst && src) {
+        self->CopySubresourceRegion(dst, a[2], a[3], a[4], a[5], src, a[7], box);
+        if (!a[2] && !a[3] && !a[4] && !a[5] && !a[7] &&
+            (!box || (!box->left && !box->top && !box->front && box->right == 1 && box->bottom == 1 && box->back == 1)))
+            record_exposure_copy(a[0], a[1], dst, src);
+    }
+    c->esp += 4 * 10;
+}
+#endif
 
 // Bytes the game may touch in a mapped subresource.
 uint32_t mapped_size(ID3D11Resource* r, UINT sub, const D3D11_MAPPED_SUBRESOURCE& m) {
@@ -302,8 +464,64 @@ void ctx_map(X86* c) {
     const uint32_t sub = a[2], type = a[3], out = a[5];
     HRESULT hr = E_INVALIDARG;
     if (self && res) {
+        uint32_t actual_proxy = a[1];
+        auto* actual = res;
         D3D11_MAPPED_SUBRESOURCE m{};
-        hr = self->Map(res, sub, D3D11_MAP(type), a[4], &m);
+        bool already_mapped = false;
+        D3D11_TEXTURE2D_DESC readback_desc{};
+        const bool exposure_read = type == D3D11_MAP_READ && small_float_readback(res, sub, readback_desc);
+        const auto map_start = exposure_read ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+        static const bool fresh_exposure = [] { const char* e = std::getenv("DIRT2_DX11_FRESH_EXPOSURE"); return e && e[0] == '1'; }();
+        // Opt-in DiRT2 compatibility experiment, not a change to general D3D11
+        // mapping semantics: consume the latest queued exposure pixel, not an
+        // older ring entry. Preserve normal behavior for all other resources.
+        if (fresh_exposure && exposure_read && readback_desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT &&
+            !a[4] && rd32(c->esp) == 0x00FAF55C && self->GetType() == D3D11_DEVICE_CONTEXT_IMMEDIATE) {
+            uint32_t candidate = 0;
+            { std::lock_guard lk(g_mu); if (auto it = g_exposure_latest.find(a[0]); it != g_exposure_latest.end()) candidate = it->second.proxy; }
+            if (auto* resource = static_cast<ID3D11Resource*>(to_host(candidate))) {
+                D3D11_TEXTURE2D_DESC desc{};
+                if (small_float_readback(resource, 0, desc) && desc.Format == readback_desc.Format) {
+                    actual = resource; actual_proxy = candidate;
+                    static const bool asynchronous = [] {
+                        const char* e = std::getenv("DIRT2_DX11_ASYNC_EXPOSURE"); return e && e[0] == '1';
+                    }();
+                    if (asynchronous) {
+                        // Poll newest first, but never consume a pixel more than
+                        // two presents old. If the GPU is further behind, retain
+                        // the fresh blocking path rather than restoring the long
+                        // exposure feedback delay that caused visible pumping.
+                        std::vector<ExposureCopy> candidates;
+                        const uint32_t frame = g_present_frames.load();
+                        {
+                            std::lock_guard lk(g_mu);
+                            for (const auto& [proxy, copy] : g_exposure_copies)
+                                if (copy.context == a[0] && uint32_t(frame - copy.frame) <= 2)
+                                    candidates.push_back(copy);
+                        }
+                        std::sort(candidates.begin(), candidates.end(), [](const auto& x, const auto& y) { return x.ns > y.ns; });
+                        for (const auto& copy : candidates) {
+                            auto* ready = static_cast<ID3D11Resource*>(to_host(copy.proxy));
+                            if (!ready) continue;
+                            m = {};
+                            hr = self->Map(ready, sub, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &m);
+                            if (SUCCEEDED(hr)) {
+                                actual = ready; actual_proxy = copy.proxy; already_mapped = true; break;
+                            }
+                            // Only "still drawing" permits trying another pixel.
+                            if (hr != DXGI_ERROR_WAS_STILL_DRAWING) { already_mapped = true; break; }
+                        }
+                    }
+                }
+            }
+        }
+#endif
+        if (!already_mapped) {
+            m = {};
+            hr = self->Map(actual, sub, D3D11_MAP(type), a[4], &m);
+        }
+        const double map_ms = exposure_read ? std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - map_start).count() : 0;
         if (SUCCEEDED(hr)) {
             std::lock_guard lk(g_mu);
             MapShadow& sh = g_maps[{a[1], sub}];
@@ -317,6 +535,7 @@ void ctx_map(X86* c) {
                 sh.size = size;
             }
             sh.host = m.pData;
+            sh.mapped_resource = actual;
             sh.write = type != D3D11_MAP_READ;
             if (type == D3D11_MAP_READ || type == D3D11_MAP_READ_WRITE)
                 std::memcpy(rt::host_ptr(sh.guest), m.pData, size);
@@ -325,7 +544,8 @@ void ctx_map(X86* c) {
             // value there (an HDR edge case on some track spots) sent the auto
             // exposure swinging for seconds: the game gets the last good value
             // instead, and anomalies are logged.
-            if (type == D3D11_MAP_READ && size == 16) {
+            if (exposure_read) trace_exposure(a[1], a[4], hr, readback_desc, m, size, actual_proxy, map_ms);
+            if (exposure_read && readback_desc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT && size >= 16) {
                 static float last[4] = {0, 0, 0, 0};
                 static bool have = false;
                 static std::atomic<int> logged{0};
@@ -346,7 +566,8 @@ void ctx_map(X86* c) {
             if (log_map && type != D3D11_MAP_WRITE_DISCARD && type != D3D11_MAP_WRITE_NO_OVERWRITE && size <= 4096) {
                 static std::atomic<uint32_t> n{0};
                 if (n++ % 30 == 0) {
-                    const float* f = static_cast<const float*>(m.pData);
+                    float f[4]{};
+                    std::memcpy(f, m.pData, std::min(size, uint32_t(sizeof(f))));
                     rt::log("d3d11: Map(%08X sub %u type %u flags %X) %u bytes from %08X: %g %g %g %g", a[1], sub, type,
                             a[4], size, rd32(c->esp), f[0], f[1], f[2], f[3]);
                 }
@@ -357,6 +578,10 @@ void ctx_map(X86* c) {
                 wr32(out + 8, m.DepthPitch);
             }
         } else {
+            if (exposure_read) {
+                std::lock_guard lk(g_mu);
+                trace_exposure(a[1], a[4], hr, readback_desc, m, 0, actual_proxy, map_ms);
+            }
             static std::atomic<uint32_t> still{0};
             static std::atomic<int> logged{0};
             if (hr == DXGI_ERROR_WAS_STILL_DRAWING) {
@@ -378,15 +603,18 @@ void ctx_unmap(X86* c) {
     auto* self = static_cast<ID3D11DeviceContext*>(to_host(a[0]));
     auto* res = static_cast<ID3D11Resource*>(to_host(a[1]));
     if (self && res) {
+        ID3D11Resource* actual = res;
         {
             std::lock_guard lk(g_mu);
             auto it = g_maps.find({a[1], a[2]});
             if (it != g_maps.end() && it->second.host) {
                 if (it->second.write) std::memcpy(it->second.host, rt::host_ptr(it->second.guest), it->second.size);
                 it->second.host = nullptr;
+                if (it->second.mapped_resource) actual = it->second.mapped_resource;
+                it->second.mapped_resource = nullptr;
             }
         }
-        self->Unmap(res, a[2]);
+        self->Unmap(actual, a[2]);
     }
     c->esp += 4 * 4;
 }
@@ -503,6 +731,15 @@ void factory_create_swap_chain(X86* c) {
         g_swaps[p] = info;
     }
     if (a[3]) wr32(a[3], p);
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+    if (SUCCEEDED(hr) && sc && dev) {
+        ID3D11Device* device = nullptr;
+        if (SUCCEEDED(dev->QueryInterface(__uuidof(ID3D11Device), reinterpret_cast<void**>(&device)))) {
+            shim::d3d11::preload_switch_shaders(device, sc);
+            device->Release();
+        }
+    }
+#endif
     c->eax = uint32_t(hr);
     c->esp += 4 * 5;
 }
@@ -587,6 +824,7 @@ void capture(IDXGISwapChain* sc, uint32_t frame) {
 // game's MetalFX setting. The size is queried every 60 frames (it runs on the
 // main thread); the setting is read every frame.
 void update_upscale_target(uint32_t proxy, bool force = false) {
+#ifndef DIRT2_D3D11_DXVK
     if (!platform::metalfx_supported()) return;
     static uint32_t frames = 0;
     static int w = 0, h = 0;
@@ -600,18 +838,29 @@ void update_upscale_target(uint32_t proxy, bool force = false) {
         if (win) platform::drawable_size(win, &w, &h);
     }
     dxmt_set_spatial_upscale(platform::metalfx_enabled(), uint32_t(std::max(w, 0)), uint32_t(std::max(h, 0)));
+#endif
 }
 
 // Present(sync interval, flags): the render thread parks here in the background.
 void swap_present(X86* c) {
     const Args a{c};
     auto* self = static_cast<IDXGISwapChain*>(to_host(a[0]));
+    ++g_present_frames;
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+    static bool first = true;
+    if (first) { first = false; rt::log("d3d11: entering first Present"); }
+#endif
     platform::gpu_checkpoint();
     update_upscale_target(a[0]);
     static uint32_t frames = 0;
     if (self) capture(self, ++frames);
     const HRESULT hr = self ? self->Present(a[1], a[2]) : E_INVALIDARG;
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+    if (SUCCEEDED(hr)) dirt2_dx11_present_succeeded();
+#endif
     static uint32_t n = 0;
+    if (n == 0 || (FAILED(hr) && n < 32))
+        rt::log("d3d11: Present(sync %u, flags %X) -> %08X", a[1], a[2], uint32_t(hr));
     static auto t0 = std::chrono::steady_clock::now();
     if (++n % 300 == 0) {
         const auto t = std::chrono::steady_clock::now();
@@ -647,14 +896,20 @@ void swap_resize_buffers(X86* c) {
     uint32_t w = a[2], h = a[3];
     if (self && (!w || !h)) {
         platform::Window win = nullptr;
+        shim::d3d11::RenderSize target{};
         {
             std::lock_guard lk(g_mu);
-            if (auto it = g_swaps.find(a[0]); it != g_swaps.end()) win = it->second.window;
+            if (auto it = g_swaps.find(a[0]); it != g_swaps.end()) {
+                win = it->second.window;
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+                target = {it->second.target_width, it->second.target_height};
+#endif
+            }
         }
         int dw = 0, dh = 0;
         if (win) platform::drawable_size(win, &dw, &dh);
-        if (!w) w = uint32_t(dw);
-        if (!h) h = uint32_t(dh);
+        const auto size = shim::d3d11::resize_size({w, h}, target, {uint32_t(dw), uint32_t(dh)});
+        w = size.width; h = size.height;
     }
     const HRESULT hr = self ? self->ResizeBuffers(a[1], w, h, DXGI_FORMAT(a[4]), a[5]) : E_INVALIDARG;
     rt::log("d3d11: ResizeBuffers(%u, %ux%u -> %ux%u, format %u) -> %08X", a[1], a[2], a[3], w, h, a[4], uint32_t(hr));
@@ -662,6 +917,74 @@ void swap_resize_buffers(X86* c) {
     c->eax = uint32_t(hr);
     c->esp += 4 * 7;
 }
+
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+void swap_resize_target(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<IDXGISwapChain*>(to_host(a[0]));
+    const auto* mode = a.ptr<DXGI_MODE_DESC>(1);
+    // Native DXVK resizes the SDL window here. Retain a fixed physical output;
+    // the original requested size is applied to the game's rendering buffers.
+    DXGI_MODE_DESC physical = mode ? *mode : DXGI_MODE_DESC{};
+    if (mode && mode->Width && mode->Height) { physical.Width = 1280; physical.Height = 720; }
+    const HRESULT hr = self ? self->ResizeTarget(mode ? &physical : nullptr) : E_INVALIDARG;
+    if (SUCCEEDED(hr) && mode && mode->Width && mode->Height) {
+        std::lock_guard lk(g_mu);
+        g_swaps[a[0]].target_width = mode->Width;
+        g_swaps[a[0]].target_height = mode->Height;
+    }
+    rt::log("d3d11: ResizeTarget(%ux%u) -> %08X", mode ? mode->Width : 0, mode ? mode->Height : 0, uint32_t(hr));
+    c->eax = uint32_t(hr); c->esp += 4 * 3;
+}
+
+void output_get_modes(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<IDXGIOutput*>(to_host(a[0]));
+    auto* count = a.ptr<UINT>(3);
+    auto* desc = a.ptr<DXGI_MODE_DESC>(4);
+    UINT physical = 0;
+    HRESULT hr = self && count ? self->GetDisplayModeList(DXGI_FORMAT(a[1]), a[2], &physical, nullptr) : DXGI_ERROR_INVALID_CALL;
+    if (SUCCEEDED(hr) && count) {
+        const auto& modes = platform::display_modes();
+        const UINT required = physical ? UINT(modes.size()) : 0;
+        const UINT capacity = *count;
+        if (desc) {
+            for (UINT i = 0; i < std::min(required, capacity); ++i)
+                desc[i] = {modes[i].width, modes[i].height, {modes[i].refresh, 1}, DXGI_FORMAT(a[1]),
+                           DXGI_MODE_SCANLINE_ORDER_PROGRESSIVE, DXGI_MODE_SCALING_UNSPECIFIED};
+        }
+        if (desc && capacity < required) hr = DXGI_ERROR_MORE_DATA;
+        else *count = required;
+    }
+    c->eax = uint32_t(hr); c->esp += 4 * 6;
+}
+
+void output_find_mode(X86* c) {
+    const Args a{c};
+    auto* self = static_cast<IDXGIOutput*>(to_host(a[0]));
+    const auto* requested = a.ptr<DXGI_MODE_DESC>(1);
+    auto* result = a.ptr<DXGI_MODE_DESC>(2);
+    const DXGI_MODE_DESC input = requested ? *requested : DXGI_MODE_DESC{};
+    const HRESULT hr = self ? self->FindClosestMatchingMode(requested, result, to_host(a[3])) : E_INVALIDARG;
+    if (SUCCEEDED(hr) && requested && result) {
+        const auto& modes = platform::display_modes();
+        const platform::DisplayMode* best = nullptr;
+        uint64_t score = UINT64_MAX;
+        for (const auto& mode : modes) {
+            const int64_t dx = int64_t(mode.width) - (input.Width ? input.Width : 1280);
+            const int64_t dy = int64_t(mode.height) - (input.Height ? input.Height : 720);
+            const uint64_t distance = uint64_t(dx * dx + dy * dy);
+            if (distance < score) { score = distance; best = &mode; }
+        }
+        if (best) {
+            result->Width = best->width; result->Height = best->height;
+            result->RefreshRate = {best->refresh, 1};
+        }
+        rt::log("d3d11: closest render mode %ux%u -> %ux%u", input.Width, input.Height, result->Width, result->Height);
+    }
+    c->eax = uint32_t(hr); c->esp += 4 * 5;
+}
+#endif
 
 void swap_get_fullscreen_state(X86* c) {
     const Args a{c};
@@ -678,7 +1001,8 @@ void swap_get_fullscreen_state(X86* c) {
 
 // DXGI_ADAPTER_DESC: Description[128] WCHAR, 4 ids, 3 SIZE_T (4 bytes in the guest), LUID.
 void adapter_desc_out(uint32_t g, const DXGI_ADAPTER_DESC& d) {
-    std::memcpy(rt::host_ptr(g), d.Description, 256);
+    const auto description = shim::d3d11::guest_string(d.Description);
+    std::memcpy(rt::host_ptr(g), description.data(), 256);
     wr32(g + 256, d.VendorId);
     wr32(g + 260, d.DeviceId);
     wr32(g + 264, d.SubSysId);
@@ -726,8 +1050,14 @@ void output_get_desc(X86* c) {
     DXGI_OUTPUT_DESC d{};
     const HRESULT hr = self && a[1] ? self->GetDesc(&d) : E_INVALIDARG;
     if (SUCCEEDED(hr)) {
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+        int w = 0, h = 0;
+        platform::display_size(&w, &h);
+        d.DesktopCoordinates = {0, 0, w, h};
+#endif
         const uint32_t g = a[1];
-        std::memcpy(rt::host_ptr(g), d.DeviceName, 64);
+        const auto name = shim::d3d11::guest_string(d.DeviceName);
+        std::memcpy(rt::host_ptr(g), name.data(), 64);
         wr32(g + 64, uint32_t(d.DesktopCoordinates.left));
         wr32(g + 68, uint32_t(d.DesktopCoordinates.top));
         wr32(g + 72, uint32_t(d.DesktopCoordinates.right));
@@ -775,6 +1105,9 @@ STDCALL(d3d11, D3D11CreateDeviceAndSwapChain, 12) {
     if (a[9]) wr32(a[9], wrap(dev));
     if (a[10]) wr32(a[10], uint32_t(level));
     if (a[11]) wr32(a[11], wrap(ctx));
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+    if (SUCCEEDED(hr) && sc && dev) shim::d3d11::preload_switch_shaders(dev, sc);
+#endif
     return uint32_t(hr);
 }
 

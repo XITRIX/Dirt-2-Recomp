@@ -5,8 +5,10 @@
 //   reservation and committed ranges get memory mapped in, in 64 KB chunks:
 //   heap memory aliased as code memory (svcMapProcessCodeMemory) and mapped
 //   into the window (svcMapProcessMemory), as the sh3-nx and nfsmw-nx ports do.
-//   Committed chunks stay mapped; release and decommit zero them. Touching a
-//   reserved but uncommitted page faults, as on Windows.
+//   Backing is grouped into 2 MB aligned runs in a reserved alias window to
+//   avoid exhausting Horizon's mapping resources during race loading. Backing
+//   stays mapped; release/decommit zero it. Windows commitment is bookkeeping
+//   at page granularity; physical backing is coarser on Horizon.
 // The low 64 KB stay inaccessible to catch null-pointer accesses.
 #if defined(__SWITCH__)
 #include <switch.h>
@@ -79,42 +81,62 @@ uint32_t find_free(uint32_t size) {
 
 constexpr uint32_t kChunk = 0x10000;               // commit granule (allocation granularity)
 constexpr uint32_t kBigChunk = 0x200000;           // large commits: 2 MB aligned host blocks
+constexpr uint32_t kMaxRun = 16 * 1024 * 1024;
 std::vector<bool> g_mapped(kSpace / kChunk);       // chunk is backed by memory
 uint64_t g_mapped_bytes = 0;
+uint32_t g_mapping_count = 0;
+uint8_t* g_code_alias = nullptr;
 
 // Backs [lo, hi) (chunk aligned, all unmapped) with one host block.
-void map_run(uint32_t lo, uint32_t hi) {
+void map_run(uint32_t lo, uint64_t hi) {
     const size_t n = hi - lo;
-    const size_t align = (n >= kBigChunk && !(lo & (kBigChunk - 1))) ? kBigChunk : 0x1000;
+    const size_t align = !(lo & (kBigChunk - 1)) ? kBigChunk : 0x1000;
     void* backing = memalign(align, n);
     if (!backing) fatal("out of memory committing %u KB of guest memory at 0x%08X (%llu MB committed)",
                         unsigned(n >> 10), lo, (unsigned long long)(g_mapped_bytes >> 20));
     std::memset(backing, 0, n);
     const Handle self = envGetOwnProcessHandle();
-    virtmemLock();
-    void* alias = virtmemFindCodeMemory(n, align);
-    Result rc = alias ? svcMapProcessCodeMemory(self, u64(alias), u64(backing), n) : MAKERESULT(Module_Libnx, LibnxError_OutOfMemory);
-    virtmemUnlock();
-    if (R_SUCCEEDED(rc)) rc = svcSetProcessMemoryPermission(self, u64(alias), n, Perm_Rw);
-    if (R_SUCCEEDED(rc)) rc = svcMapProcessMemory(recomp_mem + lo, self, u64(alias), n);
-    if (R_FAILED(rc)) fatal("mapping guest memory 0x%08X+0x%zX failed: 0x%X", lo, n, rc);
+    void* alias = g_code_alias + lo;
+    const char* stage = "MapProcessCodeMemory";
+    Result rc = svcMapProcessCodeMemory(self, u64(alias), u64(backing), n);
+    const bool code_mapped = R_SUCCEEDED(rc);
+    if (R_SUCCEEDED(rc)) {
+        stage = "SetProcessMemoryPermission";
+        rc = svcSetProcessMemoryPermission(self, u64(alias), n, Perm_Rw);
+    }
+    if (R_SUCCEEDED(rc)) {
+        stage = "MapProcessMemory";
+        rc = svcMapProcessMemory(recomp_mem + lo, self, u64(alias), n);
+    }
+    if (R_FAILED(rc)) {
+        // Only recycle backing once any kernel alias has been removed.
+        const Result undo = code_mapped ? svcUnmapProcessCodeMemory(self, u64(alias), u64(backing), n) : 0;
+        if (R_SUCCEEDED(undo)) std::free(backing);
+        fatal("guest %s 0x%08X+0x%zX failed: 0x%X (%llu MB backed, %u mappings, rollback 0x%X)",
+              stage, lo, n, rc, (unsigned long long)(g_mapped_bytes >> 20), g_mapping_count, undo);
+    }
     for (uint32_t c = lo / kChunk; c < hi / kChunk; ++c) g_mapped[c] = true;
     g_mapped_bytes += n;
+    ++g_mapping_count;
 }
 
 // Commit: maps every unmapped chunk of [addr, addr + size), coalescing runs.
 void os_commit(uint32_t addr, uint32_t size) {
     if (!size) return;
-    uint32_t c = std::max<uint32_t>(addr, kAllocFloor) / kChunk;
-    const uint32_t end = uint32_t((uint64_t(addr) + size + kChunk - 1) / kChunk);
+    // Reserving physical backing at 2 MB boundaries permits large page-table
+    // mappings and bounds the number of kernel memory-block descriptors. Keep
+    // the low64 KB guard even for commits in the first large block.
+    uint32_t c = std::max<uint32_t>(addr & ~(kBigChunk - 1), kAllocFloor) / kChunk;
+    const uint32_t end = uint32_t(std::min<uint64_t>(kSpace,
+        (uint64_t(addr) + size + kBigChunk - 1) & ~uint64_t(kBigChunk - 1)) / kChunk);
     while (c < end) {
         if (g_mapped[c]) {
             ++c;
             continue;
         }
         uint32_t e = c;
-        while (e < end && !g_mapped[e]) ++e;
-        map_run(c * kChunk, e * kChunk);
+        while (e < end && !g_mapped[e] && e - c < kMaxRun / kChunk) ++e;
+        map_run(c * kChunk, uint64_t(e) * kChunk);
         c = e;
     }
 }
@@ -153,12 +175,15 @@ bool mem_init() {
     virtmemLock();
     void* m = virtmemFindAslr(kSpace, kBigChunk);
     if (m) virtmemAddReservation(m, kSpace);
+    void* alias = m ? virtmemFindCodeMemory(kSpace, kBigChunk) : nullptr;
+    if (alias) virtmemAddReservation(alias, kSpace);
     virtmemUnlock();
-    if (!m) {
-        log("mem_init: cannot reserve 4 GB of address space");
+    if (!m || !alias) {
+        log("mem_init: cannot reserve guest and alias address windows");
         return false;
     }
     recomp_mem = static_cast<uint8_t*>(m);  // the low 64 KB are never committed
+    g_code_alias = static_cast<uint8_t*>(alias);
 #else
     void* m = mmap(nullptr, kSpace, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
     if (m == MAP_FAILED) {

@@ -67,7 +67,7 @@ void mkdirs(const std::string& dir) {
     ::mkdir(dir.c_str(), 0755);
 }
 
-bool is_data_path(const std::string& host) { return host.rfind(vfs::data_dir(), 0) == 0; }
+bool is_data_path(const std::string& host) { return vfs::is_data_path(host); }
 
 std::shared_ptr<File> std_handle(uint32_t which) {
     static std::shared_ptr<File> out[3];

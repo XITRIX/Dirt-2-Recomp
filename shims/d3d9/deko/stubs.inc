@@ -4,6 +4,7 @@ class StubIDirect3D9 : public IDirect3D9 {
 public:
     virtual ~StubIDirect3D9() = default;
     STDMETHOD(QueryInterface)(REFIID riid, void** out) override {
+        ApiLock api_lock(__func__);
         if (!out) return E_POINTER;
         if (riid == __uuidof(IDirect3D9) || riid == __uuidof(IUnknown)) {
             *out = this;
@@ -13,35 +14,38 @@ public:
         *out = nullptr;
         return E_NOINTERFACE;
     }
-    STDMETHOD_(ULONG, AddRef)() override { return ++refs_; }
+    STDMETHOD_(ULONG, AddRef)() override { ApiLock api_lock(__func__); return refs_.add_ref(); }
     STDMETHOD_(ULONG, Release)() override {
-        const ULONG r = --refs_;
-        if (r == 0) delete this;
-        return r;
+        ApiLock api_lock(__func__);
+        return refs_.release(this);
     }
-    STDMETHOD_(HRESULT, RegisterSoftwareDevice)(void* pInitializeFunction) override { return stub_result<HRESULT>("IDirect3D9::RegisterSoftwareDevice"); }
-    STDMETHOD_(UINT, GetAdapterCount)() override { return stub_result<UINT>("IDirect3D9::GetAdapterCount"); }
-    STDMETHOD_(HRESULT, GetAdapterIdentifier)(UINT Adapter, DWORD Flags, D3DADAPTER_IDENTIFIER9* pIdentifier) override { return stub_result<HRESULT>("IDirect3D9::GetAdapterIdentifier"); }
-    STDMETHOD_(UINT, GetAdapterModeCount)(UINT Adapter, D3DFORMAT Format) override { return stub_result<UINT>("IDirect3D9::GetAdapterModeCount"); }
-    STDMETHOD_(HRESULT, EnumAdapterModes)(UINT Adapter, D3DFORMAT Format, UINT Mode, D3DDISPLAYMODE* pMode) override { return stub_result<HRESULT>("IDirect3D9::EnumAdapterModes"); }
-    STDMETHOD_(HRESULT, GetAdapterDisplayMode)(UINT Adapter, D3DDISPLAYMODE* pMode) override { return stub_result<HRESULT>("IDirect3D9::GetAdapterDisplayMode"); }
-    STDMETHOD_(HRESULT, CheckDeviceType)(UINT iAdapter, D3DDEVTYPE DevType, D3DFORMAT DisplayFormat, D3DFORMAT BackBufferFormat, WINBOOL bWindowed) override { return stub_result<HRESULT>("IDirect3D9::CheckDeviceType"); }
-    STDMETHOD_(HRESULT, CheckDeviceFormat)(UINT Adapter, D3DDEVTYPE DeviceType, D3DFORMAT AdapterFormat, DWORD Usage, D3DRESOURCETYPE RType, D3DFORMAT CheckFormat) override { return stub_result<HRESULT>("IDirect3D9::CheckDeviceFormat"); }
-    STDMETHOD_(HRESULT, CheckDeviceMultiSampleType)(UINT Adapter, D3DDEVTYPE DeviceType, D3DFORMAT SurfaceFormat, WINBOOL Windowed, D3DMULTISAMPLE_TYPE MultiSampleType, DWORD* pQualityLevels) override { return stub_result<HRESULT>("IDirect3D9::CheckDeviceMultiSampleType"); }
-    STDMETHOD_(HRESULT, CheckDepthStencilMatch)(UINT Adapter, D3DDEVTYPE DeviceType, D3DFORMAT AdapterFormat, D3DFORMAT RenderTargetFormat, D3DFORMAT DepthStencilFormat) override { return stub_result<HRESULT>("IDirect3D9::CheckDepthStencilMatch"); }
-    STDMETHOD_(HRESULT, CheckDeviceFormatConversion)(UINT Adapter, D3DDEVTYPE DeviceType, D3DFORMAT SourceFormat, D3DFORMAT TargetFormat) override { return stub_result<HRESULT>("IDirect3D9::CheckDeviceFormatConversion"); }
-    STDMETHOD_(HRESULT, GetDeviceCaps)(UINT Adapter, D3DDEVTYPE DeviceType, D3DCAPS9* pCaps) override { return stub_result<HRESULT>("IDirect3D9::GetDeviceCaps"); }
-    STDMETHOD_(HMONITOR, GetAdapterMonitor)(UINT Adapter) override { return stub_result<HMONITOR>("IDirect3D9::GetAdapterMonitor"); }
-    STDMETHOD_(HRESULT, CreateDevice)(UINT Adapter, D3DDEVTYPE DeviceType, HWND hFocusWindow, DWORD BehaviorFlags, D3DPRESENT_PARAMETERS* pPresentationParameters, struct IDirect3DDevice9** ppReturnedDeviceInterface) override { return stub_result<HRESULT>("IDirect3D9::CreateDevice"); }
+    void AddRefPrivate() { ApiLock api_lock(__func__); refs_.add_private(); }
+    void ReleasePrivate() { ApiLock api_lock(__func__); refs_.release_private(this); }
+    void SetDeviceParent(IUnknown* parent) { refs_.set_parent(parent); }
+    STDMETHOD_(HRESULT, RegisterSoftwareDevice)(void* pInitializeFunction) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3D9::RegisterSoftwareDevice"); }
+    STDMETHOD_(UINT, GetAdapterCount)() override { ApiLock api_lock(__func__); return stub_result<UINT>("IDirect3D9::GetAdapterCount"); }
+    STDMETHOD_(HRESULT, GetAdapterIdentifier)(UINT Adapter, DWORD Flags, D3DADAPTER_IDENTIFIER9* pIdentifier) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3D9::GetAdapterIdentifier"); }
+    STDMETHOD_(UINT, GetAdapterModeCount)(UINT Adapter, D3DFORMAT Format) override { ApiLock api_lock(__func__); return stub_result<UINT>("IDirect3D9::GetAdapterModeCount"); }
+    STDMETHOD_(HRESULT, EnumAdapterModes)(UINT Adapter, D3DFORMAT Format, UINT Mode, D3DDISPLAYMODE* pMode) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3D9::EnumAdapterModes"); }
+    STDMETHOD_(HRESULT, GetAdapterDisplayMode)(UINT Adapter, D3DDISPLAYMODE* pMode) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3D9::GetAdapterDisplayMode"); }
+    STDMETHOD_(HRESULT, CheckDeviceType)(UINT iAdapter, D3DDEVTYPE DevType, D3DFORMAT DisplayFormat, D3DFORMAT BackBufferFormat, WINBOOL bWindowed) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3D9::CheckDeviceType"); }
+    STDMETHOD_(HRESULT, CheckDeviceFormat)(UINT Adapter, D3DDEVTYPE DeviceType, D3DFORMAT AdapterFormat, DWORD Usage, D3DRESOURCETYPE RType, D3DFORMAT CheckFormat) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3D9::CheckDeviceFormat"); }
+    STDMETHOD_(HRESULT, CheckDeviceMultiSampleType)(UINT Adapter, D3DDEVTYPE DeviceType, D3DFORMAT SurfaceFormat, WINBOOL Windowed, D3DMULTISAMPLE_TYPE MultiSampleType, DWORD* pQualityLevels) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3D9::CheckDeviceMultiSampleType"); }
+    STDMETHOD_(HRESULT, CheckDepthStencilMatch)(UINT Adapter, D3DDEVTYPE DeviceType, D3DFORMAT AdapterFormat, D3DFORMAT RenderTargetFormat, D3DFORMAT DepthStencilFormat) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3D9::CheckDepthStencilMatch"); }
+    STDMETHOD_(HRESULT, CheckDeviceFormatConversion)(UINT Adapter, D3DDEVTYPE DeviceType, D3DFORMAT SourceFormat, D3DFORMAT TargetFormat) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3D9::CheckDeviceFormatConversion"); }
+    STDMETHOD_(HRESULT, GetDeviceCaps)(UINT Adapter, D3DDEVTYPE DeviceType, D3DCAPS9* pCaps) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3D9::GetDeviceCaps"); }
+    STDMETHOD_(HMONITOR, GetAdapterMonitor)(UINT Adapter) override { ApiLock api_lock(__func__); return stub_result<HMONITOR>("IDirect3D9::GetAdapterMonitor"); }
+    STDMETHOD_(HRESULT, CreateDevice)(UINT Adapter, D3DDEVTYPE DeviceType, HWND hFocusWindow, DWORD BehaviorFlags, D3DPRESENT_PARAMETERS* pPresentationParameters, struct IDirect3DDevice9** ppReturnedDeviceInterface) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3D9::CreateDevice"); }
 
 protected:
-    std::atomic<ULONG> refs_{1};
+    ObjectRefs refs_;
 };
 
 class StubIDirect3DDevice9 : public IDirect3DDevice9 {
 public:
     virtual ~StubIDirect3DDevice9() = default;
     STDMETHOD(QueryInterface)(REFIID riid, void** out) override {
+        ApiLock api_lock(__func__);
         if (!out) return E_POINTER;
         if (riid == __uuidof(IDirect3DDevice9) || riid == __uuidof(IUnknown)) {
             *out = this;
@@ -51,137 +55,140 @@ public:
         *out = nullptr;
         return E_NOINTERFACE;
     }
-    STDMETHOD_(ULONG, AddRef)() override { return ++refs_; }
+    STDMETHOD_(ULONG, AddRef)() override { ApiLock api_lock(__func__); return refs_.add_ref(); }
     STDMETHOD_(ULONG, Release)() override {
-        const ULONG r = --refs_;
-        if (r == 0) delete this;
-        return r;
+        ApiLock api_lock(__func__);
+        return refs_.release(this);
     }
-    STDMETHOD_(HRESULT, TestCooperativeLevel)() override { return stub_result<HRESULT>("IDirect3DDevice9::TestCooperativeLevel"); }
-    STDMETHOD_(UINT, GetAvailableTextureMem)() override { return stub_result<UINT>("IDirect3DDevice9::GetAvailableTextureMem"); }
-    STDMETHOD_(HRESULT, EvictManagedResources)() override { return stub_result<HRESULT>("IDirect3DDevice9::EvictManagedResources"); }
-    STDMETHOD_(HRESULT, GetDirect3D)(IDirect3D9** ppD3D9) override { return stub_result<HRESULT>("IDirect3DDevice9::GetDirect3D"); }
-    STDMETHOD_(HRESULT, GetDeviceCaps)(D3DCAPS9* pCaps) override { return stub_result<HRESULT>("IDirect3DDevice9::GetDeviceCaps"); }
-    STDMETHOD_(HRESULT, GetDisplayMode)(UINT iSwapChain, D3DDISPLAYMODE* pMode) override { return stub_result<HRESULT>("IDirect3DDevice9::GetDisplayMode"); }
-    STDMETHOD_(HRESULT, GetCreationParameters)(D3DDEVICE_CREATION_PARAMETERS *pParameters) override { return stub_result<HRESULT>("IDirect3DDevice9::GetCreationParameters"); }
-    STDMETHOD_(HRESULT, SetCursorProperties)(UINT XHotSpot, UINT YHotSpot, IDirect3DSurface9* pCursorBitmap) override { return stub_result<HRESULT>("IDirect3DDevice9::SetCursorProperties"); }
-    STDMETHOD_(void, SetCursorPosition)(int X,int Y, DWORD Flags) override { stub_result<int>("IDirect3DDevice9::SetCursorPosition"); }
-    STDMETHOD_(WINBOOL, ShowCursor)(WINBOOL bShow) override { return stub_result<WINBOOL>("IDirect3DDevice9::ShowCursor"); }
-    STDMETHOD_(HRESULT, CreateAdditionalSwapChain)(D3DPRESENT_PARAMETERS* pPresentationParameters, IDirect3DSwapChain9** pSwapChain) override { return stub_result<HRESULT>("IDirect3DDevice9::CreateAdditionalSwapChain"); }
-    STDMETHOD_(HRESULT, GetSwapChain)(UINT iSwapChain, IDirect3DSwapChain9** pSwapChain) override { return stub_result<HRESULT>("IDirect3DDevice9::GetSwapChain"); }
-    STDMETHOD_(UINT, GetNumberOfSwapChains)() override { return stub_result<UINT>("IDirect3DDevice9::GetNumberOfSwapChains"); }
-    STDMETHOD_(HRESULT, Reset)(D3DPRESENT_PARAMETERS* pPresentationParameters) override { return stub_result<HRESULT>("IDirect3DDevice9::Reset"); }
-    STDMETHOD_(HRESULT, Present)(const RECT *src_rect, const RECT *dst_rect, HWND dst_window_override, const RGNDATA *dirty_region) override { return stub_result<HRESULT>("IDirect3DDevice9::Present"); }
-    STDMETHOD_(HRESULT, GetBackBuffer)(UINT iSwapChain, UINT iBackBuffer, D3DBACKBUFFER_TYPE Type, IDirect3DSurface9** ppBackBuffer) override { return stub_result<HRESULT>("IDirect3DDevice9::GetBackBuffer"); }
-    STDMETHOD_(HRESULT, GetRasterStatus)(UINT iSwapChain, D3DRASTER_STATUS* pRasterStatus) override { return stub_result<HRESULT>("IDirect3DDevice9::GetRasterStatus"); }
-    STDMETHOD_(HRESULT, SetDialogBoxMode)(WINBOOL bEnableDialogs) override { return stub_result<HRESULT>("IDirect3DDevice9::SetDialogBoxMode"); }
-    STDMETHOD_(void, SetGammaRamp)(UINT swapchain_idx, DWORD flags, const D3DGAMMARAMP *ramp) override { stub_result<int>("IDirect3DDevice9::SetGammaRamp"); }
-    STDMETHOD_(void, GetGammaRamp)(UINT iSwapChain, D3DGAMMARAMP* pRamp) override { stub_result<int>("IDirect3DDevice9::GetGammaRamp"); }
-    STDMETHOD_(HRESULT, CreateTexture)(UINT Width, UINT Height, UINT Levels, DWORD Usage, D3DFORMAT Format, D3DPOOL Pool, IDirect3DTexture9** ppTexture, HANDLE* pSharedHandle) override { return stub_result<HRESULT>("IDirect3DDevice9::CreateTexture"); }
-    STDMETHOD_(HRESULT, CreateVolumeTexture)(UINT Width, UINT Height, UINT Depth, UINT Levels, DWORD Usage, D3DFORMAT Format, D3DPOOL Pool, IDirect3DVolumeTexture9** ppVolumeTexture, HANDLE* pSharedHandle) override { return stub_result<HRESULT>("IDirect3DDevice9::CreateVolumeTexture"); }
-    STDMETHOD_(HRESULT, CreateCubeTexture)(UINT EdgeLength, UINT Levels, DWORD Usage, D3DFORMAT Format, D3DPOOL Pool, IDirect3DCubeTexture9** ppCubeTexture, HANDLE* pSharedHandle) override { return stub_result<HRESULT>("IDirect3DDevice9::CreateCubeTexture"); }
-    STDMETHOD_(HRESULT, CreateVertexBuffer)(UINT Length, DWORD Usage, DWORD FVF, D3DPOOL Pool, IDirect3DVertexBuffer9** ppVertexBuffer, HANDLE* pSharedHandle) override { return stub_result<HRESULT>("IDirect3DDevice9::CreateVertexBuffer"); }
-    STDMETHOD_(HRESULT, CreateIndexBuffer)(UINT Length, DWORD Usage, D3DFORMAT Format, D3DPOOL Pool, IDirect3DIndexBuffer9** ppIndexBuffer, HANDLE* pSharedHandle) override { return stub_result<HRESULT>("IDirect3DDevice9::CreateIndexBuffer"); }
-    STDMETHOD_(HRESULT, CreateRenderTarget)(UINT Width, UINT Height, D3DFORMAT Format, D3DMULTISAMPLE_TYPE MultiSample, DWORD MultisampleQuality, WINBOOL Lockable, IDirect3DSurface9** ppSurface, HANDLE* pSharedHandle) override { return stub_result<HRESULT>("IDirect3DDevice9::CreateRenderTarget"); }
-    STDMETHOD_(HRESULT, CreateDepthStencilSurface)(UINT Width, UINT Height, D3DFORMAT Format, D3DMULTISAMPLE_TYPE MultiSample, DWORD MultisampleQuality, WINBOOL Discard, IDirect3DSurface9** ppSurface, HANDLE* pSharedHandle) override { return stub_result<HRESULT>("IDirect3DDevice9::CreateDepthStencilSurface"); }
-    STDMETHOD_(HRESULT, UpdateSurface)(IDirect3DSurface9 *src_surface, const RECT *src_rect, IDirect3DSurface9 *dst_surface, const POINT *dst_point) override { return stub_result<HRESULT>("IDirect3DDevice9::UpdateSurface"); }
-    STDMETHOD_(HRESULT, UpdateTexture)(IDirect3DBaseTexture9* pSourceTexture, IDirect3DBaseTexture9* pDestinationTexture) override { return stub_result<HRESULT>("IDirect3DDevice9::UpdateTexture"); }
-    STDMETHOD_(HRESULT, GetRenderTargetData)(IDirect3DSurface9* pRenderTarget, IDirect3DSurface9* pDestSurface) override { return stub_result<HRESULT>("IDirect3DDevice9::GetRenderTargetData"); }
-    STDMETHOD_(HRESULT, GetFrontBufferData)(UINT iSwapChain, IDirect3DSurface9* pDestSurface) override { return stub_result<HRESULT>("IDirect3DDevice9::GetFrontBufferData"); }
-    STDMETHOD_(HRESULT, StretchRect)(IDirect3DSurface9 *src_surface, const RECT *src_rect, IDirect3DSurface9 *dst_surface, const RECT *dst_rect, D3DTEXTUREFILTERTYPE filter) override { return stub_result<HRESULT>("IDirect3DDevice9::StretchRect"); }
-    STDMETHOD_(HRESULT, ColorFill)(IDirect3DSurface9 *surface, const RECT *rect, D3DCOLOR color) override { return stub_result<HRESULT>("IDirect3DDevice9::ColorFill"); }
-    STDMETHOD_(HRESULT, CreateOffscreenPlainSurface)(UINT Width, UINT Height, D3DFORMAT Format, D3DPOOL Pool, IDirect3DSurface9** ppSurface, HANDLE* pSharedHandle) override { return stub_result<HRESULT>("IDirect3DDevice9::CreateOffscreenPlainSurface"); }
-    STDMETHOD_(HRESULT, SetRenderTarget)(DWORD RenderTargetIndex, IDirect3DSurface9* pRenderTarget) override { return stub_result<HRESULT>("IDirect3DDevice9::SetRenderTarget"); }
-    STDMETHOD_(HRESULT, GetRenderTarget)(DWORD RenderTargetIndex, IDirect3DSurface9** ppRenderTarget) override { return stub_result<HRESULT>("IDirect3DDevice9::GetRenderTarget"); }
-    STDMETHOD_(HRESULT, SetDepthStencilSurface)(IDirect3DSurface9* pNewZStencil) override { return stub_result<HRESULT>("IDirect3DDevice9::SetDepthStencilSurface"); }
-    STDMETHOD_(HRESULT, GetDepthStencilSurface)(IDirect3DSurface9** ppZStencilSurface) override { return stub_result<HRESULT>("IDirect3DDevice9::GetDepthStencilSurface"); }
-    STDMETHOD_(HRESULT, BeginScene)() override { return stub_result<HRESULT>("IDirect3DDevice9::BeginScene"); }
-    STDMETHOD_(HRESULT, EndScene)() override { return stub_result<HRESULT>("IDirect3DDevice9::EndScene"); }
-    STDMETHOD_(HRESULT, Clear)(DWORD rect_count, const D3DRECT *rects, DWORD flags, D3DCOLOR color, float z, DWORD stencil) override { return stub_result<HRESULT>("IDirect3DDevice9::Clear"); }
-    STDMETHOD_(HRESULT, SetTransform)(D3DTRANSFORMSTATETYPE state, const D3DMATRIX *matrix) override { return stub_result<HRESULT>("IDirect3DDevice9::SetTransform"); }
-    STDMETHOD_(HRESULT, GetTransform)(D3DTRANSFORMSTATETYPE State, D3DMATRIX* pMatrix) override { return stub_result<HRESULT>("IDirect3DDevice9::GetTransform"); }
-    STDMETHOD_(HRESULT, MultiplyTransform)(D3DTRANSFORMSTATETYPE state, const D3DMATRIX *matrix) override { return stub_result<HRESULT>("IDirect3DDevice9::MultiplyTransform"); }
-    STDMETHOD_(HRESULT, SetViewport)(const D3DVIEWPORT9 *viewport) override { return stub_result<HRESULT>("IDirect3DDevice9::SetViewport"); }
-    STDMETHOD_(HRESULT, GetViewport)(D3DVIEWPORT9* pViewport) override { return stub_result<HRESULT>("IDirect3DDevice9::GetViewport"); }
-    STDMETHOD_(HRESULT, SetMaterial)(const D3DMATERIAL9 *material) override { return stub_result<HRESULT>("IDirect3DDevice9::SetMaterial"); }
-    STDMETHOD_(HRESULT, GetMaterial)(D3DMATERIAL9* pMaterial) override { return stub_result<HRESULT>("IDirect3DDevice9::GetMaterial"); }
-    STDMETHOD_(HRESULT, SetLight)(DWORD index, const D3DLIGHT9 *light) override { return stub_result<HRESULT>("IDirect3DDevice9::SetLight"); }
-    STDMETHOD_(HRESULT, GetLight)(DWORD Index, D3DLIGHT9*) override { return stub_result<HRESULT>("IDirect3DDevice9::GetLight"); }
-    STDMETHOD_(HRESULT, LightEnable)(DWORD Index, WINBOOL Enable) override { return stub_result<HRESULT>("IDirect3DDevice9::LightEnable"); }
-    STDMETHOD_(HRESULT, GetLightEnable)(DWORD Index, WINBOOL* pEnable) override { return stub_result<HRESULT>("IDirect3DDevice9::GetLightEnable"); }
-    STDMETHOD_(HRESULT, SetClipPlane)(DWORD index, const float *plane) override { return stub_result<HRESULT>("IDirect3DDevice9::SetClipPlane"); }
-    STDMETHOD_(HRESULT, GetClipPlane)(DWORD Index, float* pPlane) override { return stub_result<HRESULT>("IDirect3DDevice9::GetClipPlane"); }
-    STDMETHOD_(HRESULT, SetRenderState)(D3DRENDERSTATETYPE State, DWORD Value) override { return stub_result<HRESULT>("IDirect3DDevice9::SetRenderState"); }
-    STDMETHOD_(HRESULT, GetRenderState)(D3DRENDERSTATETYPE State, DWORD* pValue) override { return stub_result<HRESULT>("IDirect3DDevice9::GetRenderState"); }
-    STDMETHOD_(HRESULT, CreateStateBlock)(D3DSTATEBLOCKTYPE Type, IDirect3DStateBlock9** ppSB) override { return stub_result<HRESULT>("IDirect3DDevice9::CreateStateBlock"); }
-    STDMETHOD_(HRESULT, BeginStateBlock)() override { return stub_result<HRESULT>("IDirect3DDevice9::BeginStateBlock"); }
-    STDMETHOD_(HRESULT, EndStateBlock)(IDirect3DStateBlock9** ppSB) override { return stub_result<HRESULT>("IDirect3DDevice9::EndStateBlock"); }
-    STDMETHOD_(HRESULT, SetClipStatus)(const D3DCLIPSTATUS9 *clip_status) override { return stub_result<HRESULT>("IDirect3DDevice9::SetClipStatus"); }
-    STDMETHOD_(HRESULT, GetClipStatus)(D3DCLIPSTATUS9* pClipStatus) override { return stub_result<HRESULT>("IDirect3DDevice9::GetClipStatus"); }
-    STDMETHOD_(HRESULT, GetTexture)(DWORD Stage, IDirect3DBaseTexture9** ppTexture) override { return stub_result<HRESULT>("IDirect3DDevice9::GetTexture"); }
-    STDMETHOD_(HRESULT, SetTexture)(DWORD Stage, IDirect3DBaseTexture9* pTexture) override { return stub_result<HRESULT>("IDirect3DDevice9::SetTexture"); }
-    STDMETHOD_(HRESULT, GetTextureStageState)(DWORD Stage, D3DTEXTURESTAGESTATETYPE Type, DWORD* pValue) override { return stub_result<HRESULT>("IDirect3DDevice9::GetTextureStageState"); }
-    STDMETHOD_(HRESULT, SetTextureStageState)(DWORD Stage, D3DTEXTURESTAGESTATETYPE Type, DWORD Value) override { return stub_result<HRESULT>("IDirect3DDevice9::SetTextureStageState"); }
-    STDMETHOD_(HRESULT, GetSamplerState)(DWORD Sampler, D3DSAMPLERSTATETYPE Type, DWORD* pValue) override { return stub_result<HRESULT>("IDirect3DDevice9::GetSamplerState"); }
-    STDMETHOD_(HRESULT, SetSamplerState)(DWORD Sampler, D3DSAMPLERSTATETYPE Type, DWORD Value) override { return stub_result<HRESULT>("IDirect3DDevice9::SetSamplerState"); }
-    STDMETHOD_(HRESULT, ValidateDevice)(DWORD* pNumPasses) override { return stub_result<HRESULT>("IDirect3DDevice9::ValidateDevice"); }
-    STDMETHOD_(HRESULT, SetPaletteEntries)(UINT palette_idx, const PALETTEENTRY *entries) override { return stub_result<HRESULT>("IDirect3DDevice9::SetPaletteEntries"); }
-    STDMETHOD_(HRESULT, GetPaletteEntries)(UINT PaletteNumber,PALETTEENTRY* pEntries) override { return stub_result<HRESULT>("IDirect3DDevice9::GetPaletteEntries"); }
-    STDMETHOD_(HRESULT, SetCurrentTexturePalette)(UINT PaletteNumber) override { return stub_result<HRESULT>("IDirect3DDevice9::SetCurrentTexturePalette"); }
-    STDMETHOD_(HRESULT, GetCurrentTexturePalette)(UINT *PaletteNumber) override { return stub_result<HRESULT>("IDirect3DDevice9::GetCurrentTexturePalette"); }
-    STDMETHOD_(HRESULT, SetScissorRect)(const RECT *rect) override { return stub_result<HRESULT>("IDirect3DDevice9::SetScissorRect"); }
-    STDMETHOD_(HRESULT, GetScissorRect)(RECT* pRect) override { return stub_result<HRESULT>("IDirect3DDevice9::GetScissorRect"); }
-    STDMETHOD_(HRESULT, SetSoftwareVertexProcessing)(WINBOOL bSoftware) override { return stub_result<HRESULT>("IDirect3DDevice9::SetSoftwareVertexProcessing"); }
-    STDMETHOD_(WINBOOL, GetSoftwareVertexProcessing)() override { return stub_result<WINBOOL>("IDirect3DDevice9::GetSoftwareVertexProcessing"); }
-    STDMETHOD_(HRESULT, SetNPatchMode)(float nSegments) override { return stub_result<HRESULT>("IDirect3DDevice9::SetNPatchMode"); }
-    STDMETHOD_(float, GetNPatchMode)() override { return stub_result<float>("IDirect3DDevice9::GetNPatchMode"); }
-    STDMETHOD_(HRESULT, DrawPrimitive)(D3DPRIMITIVETYPE PrimitiveType, UINT StartVertex, UINT PrimitiveCount) override { return stub_result<HRESULT>("IDirect3DDevice9::DrawPrimitive"); }
-    STDMETHOD_(HRESULT, DrawIndexedPrimitive)(D3DPRIMITIVETYPE, INT BaseVertexIndex, UINT MinVertexIndex, UINT NumVertices, UINT startIndex, UINT primCount) override { return stub_result<HRESULT>("IDirect3DDevice9::DrawIndexedPrimitive"); }
-    STDMETHOD_(HRESULT, DrawPrimitiveUP)(D3DPRIMITIVETYPE primitive_type, UINT primitive_count, const void *data, UINT stride) override { return stub_result<HRESULT>("IDirect3DDevice9::DrawPrimitiveUP"); }
-    STDMETHOD_(HRESULT, DrawIndexedPrimitiveUP)(D3DPRIMITIVETYPE primitive_type, UINT min_vertex_idx, UINT vertex_count, UINT primitive_count, const void *index_data, D3DFORMAT index_format, const void *data, UINT stride) override { return stub_result<HRESULT>("IDirect3DDevice9::DrawIndexedPrimitiveUP"); }
-    STDMETHOD_(HRESULT, ProcessVertices)(UINT SrcStartIndex, UINT DestIndex, UINT VertexCount, IDirect3DVertexBuffer9* pDestBuffer, IDirect3DVertexDeclaration9* pVertexDecl, DWORD Flags) override { return stub_result<HRESULT>("IDirect3DDevice9::ProcessVertices"); }
-    STDMETHOD_(HRESULT, CreateVertexDeclaration)(const D3DVERTEXELEMENT9 *elements, IDirect3DVertexDeclaration9 **declaration) override { return stub_result<HRESULT>("IDirect3DDevice9::CreateVertexDeclaration"); }
-    STDMETHOD_(HRESULT, SetVertexDeclaration)(IDirect3DVertexDeclaration9* pDecl) override { return stub_result<HRESULT>("IDirect3DDevice9::SetVertexDeclaration"); }
-    STDMETHOD_(HRESULT, GetVertexDeclaration)(IDirect3DVertexDeclaration9** ppDecl) override { return stub_result<HRESULT>("IDirect3DDevice9::GetVertexDeclaration"); }
-    STDMETHOD_(HRESULT, SetFVF)(DWORD FVF) override { return stub_result<HRESULT>("IDirect3DDevice9::SetFVF"); }
-    STDMETHOD_(HRESULT, GetFVF)(DWORD* pFVF) override { return stub_result<HRESULT>("IDirect3DDevice9::GetFVF"); }
-    STDMETHOD_(HRESULT, CreateVertexShader)(const DWORD *byte_code, IDirect3DVertexShader9 **shader) override { return stub_result<HRESULT>("IDirect3DDevice9::CreateVertexShader"); }
-    STDMETHOD_(HRESULT, SetVertexShader)(IDirect3DVertexShader9* pShader) override { return stub_result<HRESULT>("IDirect3DDevice9::SetVertexShader"); }
-    STDMETHOD_(HRESULT, GetVertexShader)(IDirect3DVertexShader9** ppShader) override { return stub_result<HRESULT>("IDirect3DDevice9::GetVertexShader"); }
-    STDMETHOD_(HRESULT, SetVertexShaderConstantF)(UINT reg_idx, const float *data, UINT count) override { return stub_result<HRESULT>("IDirect3DDevice9::SetVertexShaderConstantF"); }
-    STDMETHOD_(HRESULT, GetVertexShaderConstantF)(UINT StartRegister, float* pConstantData, UINT Vector4fCount) override { return stub_result<HRESULT>("IDirect3DDevice9::GetVertexShaderConstantF"); }
-    STDMETHOD_(HRESULT, SetVertexShaderConstantI)(UINT reg_idx, const int *data, UINT count) override { return stub_result<HRESULT>("IDirect3DDevice9::SetVertexShaderConstantI"); }
-    STDMETHOD_(HRESULT, GetVertexShaderConstantI)(UINT StartRegister, int* pConstantData, UINT Vector4iCount) override { return stub_result<HRESULT>("IDirect3DDevice9::GetVertexShaderConstantI"); }
-    STDMETHOD_(HRESULT, SetVertexShaderConstantB)(UINT reg_idx, const WINBOOL *data, UINT count) override { return stub_result<HRESULT>("IDirect3DDevice9::SetVertexShaderConstantB"); }
-    STDMETHOD_(HRESULT, GetVertexShaderConstantB)(UINT StartRegister, WINBOOL* pConstantData, UINT BoolCount) override { return stub_result<HRESULT>("IDirect3DDevice9::GetVertexShaderConstantB"); }
-    STDMETHOD_(HRESULT, SetStreamSource)(UINT StreamNumber, IDirect3DVertexBuffer9* pStreamData, UINT OffsetInBytes, UINT Stride) override { return stub_result<HRESULT>("IDirect3DDevice9::SetStreamSource"); }
-    STDMETHOD_(HRESULT, GetStreamSource)(UINT StreamNumber, IDirect3DVertexBuffer9** ppStreamData, UINT* OffsetInBytes, UINT* pStride) override { return stub_result<HRESULT>("IDirect3DDevice9::GetStreamSource"); }
-    STDMETHOD_(HRESULT, SetStreamSourceFreq)(UINT StreamNumber, UINT Divider) override { return stub_result<HRESULT>("IDirect3DDevice9::SetStreamSourceFreq"); }
-    STDMETHOD_(HRESULT, GetStreamSourceFreq)(UINT StreamNumber, UINT* Divider) override { return stub_result<HRESULT>("IDirect3DDevice9::GetStreamSourceFreq"); }
-    STDMETHOD_(HRESULT, SetIndices)(IDirect3DIndexBuffer9* pIndexData) override { return stub_result<HRESULT>("IDirect3DDevice9::SetIndices"); }
-    STDMETHOD_(HRESULT, GetIndices)(IDirect3DIndexBuffer9** ppIndexData) override { return stub_result<HRESULT>("IDirect3DDevice9::GetIndices"); }
-    STDMETHOD_(HRESULT, CreatePixelShader)(const DWORD *byte_code, IDirect3DPixelShader9 **shader) override { return stub_result<HRESULT>("IDirect3DDevice9::CreatePixelShader"); }
-    STDMETHOD_(HRESULT, SetPixelShader)(IDirect3DPixelShader9* pShader) override { return stub_result<HRESULT>("IDirect3DDevice9::SetPixelShader"); }
-    STDMETHOD_(HRESULT, GetPixelShader)(IDirect3DPixelShader9** ppShader) override { return stub_result<HRESULT>("IDirect3DDevice9::GetPixelShader"); }
-    STDMETHOD_(HRESULT, SetPixelShaderConstantF)(UINT reg_idx, const float *data, UINT count) override { return stub_result<HRESULT>("IDirect3DDevice9::SetPixelShaderConstantF"); }
-    STDMETHOD_(HRESULT, GetPixelShaderConstantF)(UINT StartRegister, float* pConstantData, UINT Vector4fCount) override { return stub_result<HRESULT>("IDirect3DDevice9::GetPixelShaderConstantF"); }
-    STDMETHOD_(HRESULT, SetPixelShaderConstantI)(UINT reg_idx, const int *data, UINT count) override { return stub_result<HRESULT>("IDirect3DDevice9::SetPixelShaderConstantI"); }
-    STDMETHOD_(HRESULT, GetPixelShaderConstantI)(UINT StartRegister, int* pConstantData, UINT Vector4iCount) override { return stub_result<HRESULT>("IDirect3DDevice9::GetPixelShaderConstantI"); }
-    STDMETHOD_(HRESULT, SetPixelShaderConstantB)(UINT reg_idx, const WINBOOL *data, UINT count) override { return stub_result<HRESULT>("IDirect3DDevice9::SetPixelShaderConstantB"); }
-    STDMETHOD_(HRESULT, GetPixelShaderConstantB)(UINT StartRegister, WINBOOL* pConstantData, UINT BoolCount) override { return stub_result<HRESULT>("IDirect3DDevice9::GetPixelShaderConstantB"); }
-    STDMETHOD_(HRESULT, DrawRectPatch)(UINT handle, const float *segment_count, const D3DRECTPATCH_INFO *patch_info) override { return stub_result<HRESULT>("IDirect3DDevice9::DrawRectPatch"); }
-    STDMETHOD_(HRESULT, DrawTriPatch)(UINT handle, const float *segment_count, const D3DTRIPATCH_INFO *patch_info) override { return stub_result<HRESULT>("IDirect3DDevice9::DrawTriPatch"); }
-    STDMETHOD_(HRESULT, DeletePatch)(UINT Handle) override { return stub_result<HRESULT>("IDirect3DDevice9::DeletePatch"); }
-    STDMETHOD_(HRESULT, CreateQuery)(D3DQUERYTYPE Type, IDirect3DQuery9** ppQuery) override { return stub_result<HRESULT>("IDirect3DDevice9::CreateQuery"); }
+    void AddRefPrivate() { ApiLock api_lock(__func__); refs_.add_private(); }
+    void ReleasePrivate() { ApiLock api_lock(__func__); refs_.release_private(this); }
+    void SetDeviceParent(IUnknown* parent) { refs_.set_parent(parent); }
+    STDMETHOD_(HRESULT, TestCooperativeLevel)() override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::TestCooperativeLevel"); }
+    STDMETHOD_(UINT, GetAvailableTextureMem)() override { ApiLock api_lock(__func__); return stub_result<UINT>("IDirect3DDevice9::GetAvailableTextureMem"); }
+    STDMETHOD_(HRESULT, EvictManagedResources)() override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::EvictManagedResources"); }
+    STDMETHOD_(HRESULT, GetDirect3D)(IDirect3D9** ppD3D9) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetDirect3D"); }
+    STDMETHOD_(HRESULT, GetDeviceCaps)(D3DCAPS9* pCaps) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetDeviceCaps"); }
+    STDMETHOD_(HRESULT, GetDisplayMode)(UINT iSwapChain, D3DDISPLAYMODE* pMode) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetDisplayMode"); }
+    STDMETHOD_(HRESULT, GetCreationParameters)(D3DDEVICE_CREATION_PARAMETERS *pParameters) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetCreationParameters"); }
+    STDMETHOD_(HRESULT, SetCursorProperties)(UINT XHotSpot, UINT YHotSpot, IDirect3DSurface9* pCursorBitmap) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetCursorProperties"); }
+    STDMETHOD_(void, SetCursorPosition)(int X,int Y, DWORD Flags) override { ApiLock api_lock(__func__); stub_result<int>("IDirect3DDevice9::SetCursorPosition"); }
+    STDMETHOD_(WINBOOL, ShowCursor)(WINBOOL bShow) override { ApiLock api_lock(__func__); return stub_result<WINBOOL>("IDirect3DDevice9::ShowCursor"); }
+    STDMETHOD_(HRESULT, CreateAdditionalSwapChain)(D3DPRESENT_PARAMETERS* pPresentationParameters, IDirect3DSwapChain9** pSwapChain) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::CreateAdditionalSwapChain"); }
+    STDMETHOD_(HRESULT, GetSwapChain)(UINT iSwapChain, IDirect3DSwapChain9** pSwapChain) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetSwapChain"); }
+    STDMETHOD_(UINT, GetNumberOfSwapChains)() override { ApiLock api_lock(__func__); return stub_result<UINT>("IDirect3DDevice9::GetNumberOfSwapChains"); }
+    STDMETHOD_(HRESULT, Reset)(D3DPRESENT_PARAMETERS* pPresentationParameters) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::Reset"); }
+    STDMETHOD_(HRESULT, Present)(const RECT *src_rect, const RECT *dst_rect, HWND dst_window_override, const RGNDATA *dirty_region) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::Present"); }
+    STDMETHOD_(HRESULT, GetBackBuffer)(UINT iSwapChain, UINT iBackBuffer, D3DBACKBUFFER_TYPE Type, IDirect3DSurface9** ppBackBuffer) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetBackBuffer"); }
+    STDMETHOD_(HRESULT, GetRasterStatus)(UINT iSwapChain, D3DRASTER_STATUS* pRasterStatus) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetRasterStatus"); }
+    STDMETHOD_(HRESULT, SetDialogBoxMode)(WINBOOL bEnableDialogs) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetDialogBoxMode"); }
+    STDMETHOD_(void, SetGammaRamp)(UINT swapchain_idx, DWORD flags, const D3DGAMMARAMP *ramp) override { ApiLock api_lock(__func__); stub_result<int>("IDirect3DDevice9::SetGammaRamp"); }
+    STDMETHOD_(void, GetGammaRamp)(UINT iSwapChain, D3DGAMMARAMP* pRamp) override { ApiLock api_lock(__func__); stub_result<int>("IDirect3DDevice9::GetGammaRamp"); }
+    STDMETHOD_(HRESULT, CreateTexture)(UINT Width, UINT Height, UINT Levels, DWORD Usage, D3DFORMAT Format, D3DPOOL Pool, IDirect3DTexture9** ppTexture, HANDLE* pSharedHandle) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::CreateTexture"); }
+    STDMETHOD_(HRESULT, CreateVolumeTexture)(UINT Width, UINT Height, UINT Depth, UINT Levels, DWORD Usage, D3DFORMAT Format, D3DPOOL Pool, IDirect3DVolumeTexture9** ppVolumeTexture, HANDLE* pSharedHandle) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::CreateVolumeTexture"); }
+    STDMETHOD_(HRESULT, CreateCubeTexture)(UINT EdgeLength, UINT Levels, DWORD Usage, D3DFORMAT Format, D3DPOOL Pool, IDirect3DCubeTexture9** ppCubeTexture, HANDLE* pSharedHandle) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::CreateCubeTexture"); }
+    STDMETHOD_(HRESULT, CreateVertexBuffer)(UINT Length, DWORD Usage, DWORD FVF, D3DPOOL Pool, IDirect3DVertexBuffer9** ppVertexBuffer, HANDLE* pSharedHandle) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::CreateVertexBuffer"); }
+    STDMETHOD_(HRESULT, CreateIndexBuffer)(UINT Length, DWORD Usage, D3DFORMAT Format, D3DPOOL Pool, IDirect3DIndexBuffer9** ppIndexBuffer, HANDLE* pSharedHandle) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::CreateIndexBuffer"); }
+    STDMETHOD_(HRESULT, CreateRenderTarget)(UINT Width, UINT Height, D3DFORMAT Format, D3DMULTISAMPLE_TYPE MultiSample, DWORD MultisampleQuality, WINBOOL Lockable, IDirect3DSurface9** ppSurface, HANDLE* pSharedHandle) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::CreateRenderTarget"); }
+    STDMETHOD_(HRESULT, CreateDepthStencilSurface)(UINT Width, UINT Height, D3DFORMAT Format, D3DMULTISAMPLE_TYPE MultiSample, DWORD MultisampleQuality, WINBOOL Discard, IDirect3DSurface9** ppSurface, HANDLE* pSharedHandle) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::CreateDepthStencilSurface"); }
+    STDMETHOD_(HRESULT, UpdateSurface)(IDirect3DSurface9 *src_surface, const RECT *src_rect, IDirect3DSurface9 *dst_surface, const POINT *dst_point) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::UpdateSurface"); }
+    STDMETHOD_(HRESULT, UpdateTexture)(IDirect3DBaseTexture9* pSourceTexture, IDirect3DBaseTexture9* pDestinationTexture) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::UpdateTexture"); }
+    STDMETHOD_(HRESULT, GetRenderTargetData)(IDirect3DSurface9* pRenderTarget, IDirect3DSurface9* pDestSurface) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetRenderTargetData"); }
+    STDMETHOD_(HRESULT, GetFrontBufferData)(UINT iSwapChain, IDirect3DSurface9* pDestSurface) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetFrontBufferData"); }
+    STDMETHOD_(HRESULT, StretchRect)(IDirect3DSurface9 *src_surface, const RECT *src_rect, IDirect3DSurface9 *dst_surface, const RECT *dst_rect, D3DTEXTUREFILTERTYPE filter) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::StretchRect"); }
+    STDMETHOD_(HRESULT, ColorFill)(IDirect3DSurface9 *surface, const RECT *rect, D3DCOLOR color) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::ColorFill"); }
+    STDMETHOD_(HRESULT, CreateOffscreenPlainSurface)(UINT Width, UINT Height, D3DFORMAT Format, D3DPOOL Pool, IDirect3DSurface9** ppSurface, HANDLE* pSharedHandle) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::CreateOffscreenPlainSurface"); }
+    STDMETHOD_(HRESULT, SetRenderTarget)(DWORD RenderTargetIndex, IDirect3DSurface9* pRenderTarget) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetRenderTarget"); }
+    STDMETHOD_(HRESULT, GetRenderTarget)(DWORD RenderTargetIndex, IDirect3DSurface9** ppRenderTarget) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetRenderTarget"); }
+    STDMETHOD_(HRESULT, SetDepthStencilSurface)(IDirect3DSurface9* pNewZStencil) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetDepthStencilSurface"); }
+    STDMETHOD_(HRESULT, GetDepthStencilSurface)(IDirect3DSurface9** ppZStencilSurface) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetDepthStencilSurface"); }
+    STDMETHOD_(HRESULT, BeginScene)() override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::BeginScene"); }
+    STDMETHOD_(HRESULT, EndScene)() override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::EndScene"); }
+    STDMETHOD_(HRESULT, Clear)(DWORD rect_count, const D3DRECT *rects, DWORD flags, D3DCOLOR color, float z, DWORD stencil) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::Clear"); }
+    STDMETHOD_(HRESULT, SetTransform)(D3DTRANSFORMSTATETYPE state, const D3DMATRIX *matrix) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetTransform"); }
+    STDMETHOD_(HRESULT, GetTransform)(D3DTRANSFORMSTATETYPE State, D3DMATRIX* pMatrix) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetTransform"); }
+    STDMETHOD_(HRESULT, MultiplyTransform)(D3DTRANSFORMSTATETYPE state, const D3DMATRIX *matrix) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::MultiplyTransform"); }
+    STDMETHOD_(HRESULT, SetViewport)(const D3DVIEWPORT9 *viewport) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetViewport"); }
+    STDMETHOD_(HRESULT, GetViewport)(D3DVIEWPORT9* pViewport) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetViewport"); }
+    STDMETHOD_(HRESULT, SetMaterial)(const D3DMATERIAL9 *material) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetMaterial"); }
+    STDMETHOD_(HRESULT, GetMaterial)(D3DMATERIAL9* pMaterial) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetMaterial"); }
+    STDMETHOD_(HRESULT, SetLight)(DWORD index, const D3DLIGHT9 *light) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetLight"); }
+    STDMETHOD_(HRESULT, GetLight)(DWORD Index, D3DLIGHT9*) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetLight"); }
+    STDMETHOD_(HRESULT, LightEnable)(DWORD Index, WINBOOL Enable) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::LightEnable"); }
+    STDMETHOD_(HRESULT, GetLightEnable)(DWORD Index, WINBOOL* pEnable) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetLightEnable"); }
+    STDMETHOD_(HRESULT, SetClipPlane)(DWORD index, const float *plane) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetClipPlane"); }
+    STDMETHOD_(HRESULT, GetClipPlane)(DWORD Index, float* pPlane) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetClipPlane"); }
+    STDMETHOD_(HRESULT, SetRenderState)(D3DRENDERSTATETYPE State, DWORD Value) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetRenderState"); }
+    STDMETHOD_(HRESULT, GetRenderState)(D3DRENDERSTATETYPE State, DWORD* pValue) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetRenderState"); }
+    STDMETHOD_(HRESULT, CreateStateBlock)(D3DSTATEBLOCKTYPE Type, IDirect3DStateBlock9** ppSB) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::CreateStateBlock"); }
+    STDMETHOD_(HRESULT, BeginStateBlock)() override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::BeginStateBlock"); }
+    STDMETHOD_(HRESULT, EndStateBlock)(IDirect3DStateBlock9** ppSB) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::EndStateBlock"); }
+    STDMETHOD_(HRESULT, SetClipStatus)(const D3DCLIPSTATUS9 *clip_status) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetClipStatus"); }
+    STDMETHOD_(HRESULT, GetClipStatus)(D3DCLIPSTATUS9* pClipStatus) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetClipStatus"); }
+    STDMETHOD_(HRESULT, GetTexture)(DWORD Stage, IDirect3DBaseTexture9** ppTexture) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetTexture"); }
+    STDMETHOD_(HRESULT, SetTexture)(DWORD Stage, IDirect3DBaseTexture9* pTexture) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetTexture"); }
+    STDMETHOD_(HRESULT, GetTextureStageState)(DWORD Stage, D3DTEXTURESTAGESTATETYPE Type, DWORD* pValue) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetTextureStageState"); }
+    STDMETHOD_(HRESULT, SetTextureStageState)(DWORD Stage, D3DTEXTURESTAGESTATETYPE Type, DWORD Value) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetTextureStageState"); }
+    STDMETHOD_(HRESULT, GetSamplerState)(DWORD Sampler, D3DSAMPLERSTATETYPE Type, DWORD* pValue) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetSamplerState"); }
+    STDMETHOD_(HRESULT, SetSamplerState)(DWORD Sampler, D3DSAMPLERSTATETYPE Type, DWORD Value) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetSamplerState"); }
+    STDMETHOD_(HRESULT, ValidateDevice)(DWORD* pNumPasses) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::ValidateDevice"); }
+    STDMETHOD_(HRESULT, SetPaletteEntries)(UINT palette_idx, const PALETTEENTRY *entries) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetPaletteEntries"); }
+    STDMETHOD_(HRESULT, GetPaletteEntries)(UINT PaletteNumber,PALETTEENTRY* pEntries) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetPaletteEntries"); }
+    STDMETHOD_(HRESULT, SetCurrentTexturePalette)(UINT PaletteNumber) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetCurrentTexturePalette"); }
+    STDMETHOD_(HRESULT, GetCurrentTexturePalette)(UINT *PaletteNumber) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetCurrentTexturePalette"); }
+    STDMETHOD_(HRESULT, SetScissorRect)(const RECT *rect) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetScissorRect"); }
+    STDMETHOD_(HRESULT, GetScissorRect)(RECT* pRect) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetScissorRect"); }
+    STDMETHOD_(HRESULT, SetSoftwareVertexProcessing)(WINBOOL bSoftware) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetSoftwareVertexProcessing"); }
+    STDMETHOD_(WINBOOL, GetSoftwareVertexProcessing)() override { ApiLock api_lock(__func__); return stub_result<WINBOOL>("IDirect3DDevice9::GetSoftwareVertexProcessing"); }
+    STDMETHOD_(HRESULT, SetNPatchMode)(float nSegments) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetNPatchMode"); }
+    STDMETHOD_(float, GetNPatchMode)() override { ApiLock api_lock(__func__); return stub_result<float>("IDirect3DDevice9::GetNPatchMode"); }
+    STDMETHOD_(HRESULT, DrawPrimitive)(D3DPRIMITIVETYPE PrimitiveType, UINT StartVertex, UINT PrimitiveCount) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::DrawPrimitive"); }
+    STDMETHOD_(HRESULT, DrawIndexedPrimitive)(D3DPRIMITIVETYPE, INT BaseVertexIndex, UINT MinVertexIndex, UINT NumVertices, UINT startIndex, UINT primCount) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::DrawIndexedPrimitive"); }
+    STDMETHOD_(HRESULT, DrawPrimitiveUP)(D3DPRIMITIVETYPE primitive_type, UINT primitive_count, const void *data, UINT stride) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::DrawPrimitiveUP"); }
+    STDMETHOD_(HRESULT, DrawIndexedPrimitiveUP)(D3DPRIMITIVETYPE primitive_type, UINT min_vertex_idx, UINT vertex_count, UINT primitive_count, const void *index_data, D3DFORMAT index_format, const void *data, UINT stride) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::DrawIndexedPrimitiveUP"); }
+    STDMETHOD_(HRESULT, ProcessVertices)(UINT SrcStartIndex, UINT DestIndex, UINT VertexCount, IDirect3DVertexBuffer9* pDestBuffer, IDirect3DVertexDeclaration9* pVertexDecl, DWORD Flags) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::ProcessVertices"); }
+    STDMETHOD_(HRESULT, CreateVertexDeclaration)(const D3DVERTEXELEMENT9 *elements, IDirect3DVertexDeclaration9 **declaration) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::CreateVertexDeclaration"); }
+    STDMETHOD_(HRESULT, SetVertexDeclaration)(IDirect3DVertexDeclaration9* pDecl) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetVertexDeclaration"); }
+    STDMETHOD_(HRESULT, GetVertexDeclaration)(IDirect3DVertexDeclaration9** ppDecl) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetVertexDeclaration"); }
+    STDMETHOD_(HRESULT, SetFVF)(DWORD FVF) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetFVF"); }
+    STDMETHOD_(HRESULT, GetFVF)(DWORD* pFVF) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetFVF"); }
+    STDMETHOD_(HRESULT, CreateVertexShader)(const DWORD *byte_code, IDirect3DVertexShader9 **shader) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::CreateVertexShader"); }
+    STDMETHOD_(HRESULT, SetVertexShader)(IDirect3DVertexShader9* pShader) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetVertexShader"); }
+    STDMETHOD_(HRESULT, GetVertexShader)(IDirect3DVertexShader9** ppShader) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetVertexShader"); }
+    STDMETHOD_(HRESULT, SetVertexShaderConstantF)(UINT reg_idx, const float *data, UINT count) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetVertexShaderConstantF"); }
+    STDMETHOD_(HRESULT, GetVertexShaderConstantF)(UINT StartRegister, float* pConstantData, UINT Vector4fCount) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetVertexShaderConstantF"); }
+    STDMETHOD_(HRESULT, SetVertexShaderConstantI)(UINT reg_idx, const int *data, UINT count) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetVertexShaderConstantI"); }
+    STDMETHOD_(HRESULT, GetVertexShaderConstantI)(UINT StartRegister, int* pConstantData, UINT Vector4iCount) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetVertexShaderConstantI"); }
+    STDMETHOD_(HRESULT, SetVertexShaderConstantB)(UINT reg_idx, const WINBOOL *data, UINT count) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetVertexShaderConstantB"); }
+    STDMETHOD_(HRESULT, GetVertexShaderConstantB)(UINT StartRegister, WINBOOL* pConstantData, UINT BoolCount) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetVertexShaderConstantB"); }
+    STDMETHOD_(HRESULT, SetStreamSource)(UINT StreamNumber, IDirect3DVertexBuffer9* pStreamData, UINT OffsetInBytes, UINT Stride) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetStreamSource"); }
+    STDMETHOD_(HRESULT, GetStreamSource)(UINT StreamNumber, IDirect3DVertexBuffer9** ppStreamData, UINT* OffsetInBytes, UINT* pStride) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetStreamSource"); }
+    STDMETHOD_(HRESULT, SetStreamSourceFreq)(UINT StreamNumber, UINT Divider) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetStreamSourceFreq"); }
+    STDMETHOD_(HRESULT, GetStreamSourceFreq)(UINT StreamNumber, UINT* Divider) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetStreamSourceFreq"); }
+    STDMETHOD_(HRESULT, SetIndices)(IDirect3DIndexBuffer9* pIndexData) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetIndices"); }
+    STDMETHOD_(HRESULT, GetIndices)(IDirect3DIndexBuffer9** ppIndexData) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetIndices"); }
+    STDMETHOD_(HRESULT, CreatePixelShader)(const DWORD *byte_code, IDirect3DPixelShader9 **shader) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::CreatePixelShader"); }
+    STDMETHOD_(HRESULT, SetPixelShader)(IDirect3DPixelShader9* pShader) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetPixelShader"); }
+    STDMETHOD_(HRESULT, GetPixelShader)(IDirect3DPixelShader9** ppShader) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetPixelShader"); }
+    STDMETHOD_(HRESULT, SetPixelShaderConstantF)(UINT reg_idx, const float *data, UINT count) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetPixelShaderConstantF"); }
+    STDMETHOD_(HRESULT, GetPixelShaderConstantF)(UINT StartRegister, float* pConstantData, UINT Vector4fCount) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetPixelShaderConstantF"); }
+    STDMETHOD_(HRESULT, SetPixelShaderConstantI)(UINT reg_idx, const int *data, UINT count) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetPixelShaderConstantI"); }
+    STDMETHOD_(HRESULT, GetPixelShaderConstantI)(UINT StartRegister, int* pConstantData, UINT Vector4iCount) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetPixelShaderConstantI"); }
+    STDMETHOD_(HRESULT, SetPixelShaderConstantB)(UINT reg_idx, const WINBOOL *data, UINT count) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::SetPixelShaderConstantB"); }
+    STDMETHOD_(HRESULT, GetPixelShaderConstantB)(UINT StartRegister, WINBOOL* pConstantData, UINT BoolCount) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::GetPixelShaderConstantB"); }
+    STDMETHOD_(HRESULT, DrawRectPatch)(UINT handle, const float *segment_count, const D3DRECTPATCH_INFO *patch_info) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::DrawRectPatch"); }
+    STDMETHOD_(HRESULT, DrawTriPatch)(UINT handle, const float *segment_count, const D3DTRIPATCH_INFO *patch_info) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::DrawTriPatch"); }
+    STDMETHOD_(HRESULT, DeletePatch)(UINT Handle) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::DeletePatch"); }
+    STDMETHOD_(HRESULT, CreateQuery)(D3DQUERYTYPE Type, IDirect3DQuery9** ppQuery) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DDevice9::CreateQuery"); }
 
 protected:
-    std::atomic<ULONG> refs_{1};
+    ObjectRefs refs_;
 };
 
 class StubIDirect3DStateBlock9 : public IDirect3DStateBlock9 {
 public:
     virtual ~StubIDirect3DStateBlock9() = default;
     STDMETHOD(QueryInterface)(REFIID riid, void** out) override {
+        ApiLock api_lock(__func__);
         if (!out) return E_POINTER;
         if (riid == __uuidof(IDirect3DStateBlock9) || riid == __uuidof(IUnknown)) {
             *out = this;
@@ -191,24 +198,27 @@ public:
         *out = nullptr;
         return E_NOINTERFACE;
     }
-    STDMETHOD_(ULONG, AddRef)() override { return ++refs_; }
+    STDMETHOD_(ULONG, AddRef)() override { ApiLock api_lock(__func__); return refs_.add_ref(); }
     STDMETHOD_(ULONG, Release)() override {
-        const ULONG r = --refs_;
-        if (r == 0) delete this;
-        return r;
+        ApiLock api_lock(__func__);
+        return refs_.release(this);
     }
-    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { return stub_result<HRESULT>("IDirect3DStateBlock9::GetDevice"); }
-    STDMETHOD_(HRESULT, Capture)() override { return stub_result<HRESULT>("IDirect3DStateBlock9::Capture"); }
-    STDMETHOD_(HRESULT, Apply)() override { return stub_result<HRESULT>("IDirect3DStateBlock9::Apply"); }
+    void AddRefPrivate() { ApiLock api_lock(__func__); refs_.add_private(); }
+    void ReleasePrivate() { ApiLock api_lock(__func__); refs_.release_private(this); }
+    void SetDeviceParent(IUnknown* parent) { refs_.set_parent(parent); }
+    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DStateBlock9::GetDevice"); }
+    STDMETHOD_(HRESULT, Capture)() override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DStateBlock9::Capture"); }
+    STDMETHOD_(HRESULT, Apply)() override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DStateBlock9::Apply"); }
 
 protected:
-    std::atomic<ULONG> refs_{1};
+    ObjectRefs refs_;
 };
 
 class StubIDirect3DSwapChain9 : public IDirect3DSwapChain9 {
 public:
     virtual ~StubIDirect3DSwapChain9() = default;
     STDMETHOD(QueryInterface)(REFIID riid, void** out) override {
+        ApiLock api_lock(__func__);
         if (!out) return E_POINTER;
         if (riid == __uuidof(IDirect3DSwapChain9) || riid == __uuidof(IUnknown)) {
             *out = this;
@@ -218,28 +228,31 @@ public:
         *out = nullptr;
         return E_NOINTERFACE;
     }
-    STDMETHOD_(ULONG, AddRef)() override { return ++refs_; }
+    STDMETHOD_(ULONG, AddRef)() override { ApiLock api_lock(__func__); return refs_.add_ref(); }
     STDMETHOD_(ULONG, Release)() override {
-        const ULONG r = --refs_;
-        if (r == 0) delete this;
-        return r;
+        ApiLock api_lock(__func__);
+        return refs_.release(this);
     }
-    STDMETHOD_(HRESULT, Present)(const RECT *src_rect, const RECT *dst_rect, HWND dst_window_override, const RGNDATA *dirty_region, DWORD flags) override { return stub_result<HRESULT>("IDirect3DSwapChain9::Present"); }
-    STDMETHOD_(HRESULT, GetFrontBufferData)(struct IDirect3DSurface9 *pDestSurface) override { return stub_result<HRESULT>("IDirect3DSwapChain9::GetFrontBufferData"); }
-    STDMETHOD_(HRESULT, GetBackBuffer)(UINT iBackBuffer, D3DBACKBUFFER_TYPE Type, struct IDirect3DSurface9 **ppBackBuffer) override { return stub_result<HRESULT>("IDirect3DSwapChain9::GetBackBuffer"); }
-    STDMETHOD_(HRESULT, GetRasterStatus)(D3DRASTER_STATUS *pRasterStatus) override { return stub_result<HRESULT>("IDirect3DSwapChain9::GetRasterStatus"); }
-    STDMETHOD_(HRESULT, GetDisplayMode)(D3DDISPLAYMODE *pMode) override { return stub_result<HRESULT>("IDirect3DSwapChain9::GetDisplayMode"); }
-    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9 **ppDevice) override { return stub_result<HRESULT>("IDirect3DSwapChain9::GetDevice"); }
-    STDMETHOD_(HRESULT, GetPresentParameters)(D3DPRESENT_PARAMETERS *pPresentationParameters) override { return stub_result<HRESULT>("IDirect3DSwapChain9::GetPresentParameters"); }
+    void AddRefPrivate() { ApiLock api_lock(__func__); refs_.add_private(); }
+    void ReleasePrivate() { ApiLock api_lock(__func__); refs_.release_private(this); }
+    void SetDeviceParent(IUnknown* parent) { refs_.set_parent(parent); }
+    STDMETHOD_(HRESULT, Present)(const RECT *src_rect, const RECT *dst_rect, HWND dst_window_override, const RGNDATA *dirty_region, DWORD flags) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DSwapChain9::Present"); }
+    STDMETHOD_(HRESULT, GetFrontBufferData)(struct IDirect3DSurface9 *pDestSurface) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DSwapChain9::GetFrontBufferData"); }
+    STDMETHOD_(HRESULT, GetBackBuffer)(UINT iBackBuffer, D3DBACKBUFFER_TYPE Type, struct IDirect3DSurface9 **ppBackBuffer) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DSwapChain9::GetBackBuffer"); }
+    STDMETHOD_(HRESULT, GetRasterStatus)(D3DRASTER_STATUS *pRasterStatus) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DSwapChain9::GetRasterStatus"); }
+    STDMETHOD_(HRESULT, GetDisplayMode)(D3DDISPLAYMODE *pMode) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DSwapChain9::GetDisplayMode"); }
+    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9 **ppDevice) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DSwapChain9::GetDevice"); }
+    STDMETHOD_(HRESULT, GetPresentParameters)(D3DPRESENT_PARAMETERS *pPresentationParameters) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DSwapChain9::GetPresentParameters"); }
 
 protected:
-    std::atomic<ULONG> refs_{1};
+    ObjectRefs refs_;
 };
 
 class StubIDirect3DResource9 : public IDirect3DResource9 {
 public:
     virtual ~StubIDirect3DResource9() = default;
     STDMETHOD(QueryInterface)(REFIID riid, void** out) override {
+        ApiLock api_lock(__func__);
         if (!out) return E_POINTER;
         if (riid == __uuidof(IDirect3DResource9) || riid == __uuidof(IUnknown)) {
             *out = this;
@@ -249,29 +262,32 @@ public:
         *out = nullptr;
         return E_NOINTERFACE;
     }
-    STDMETHOD_(ULONG, AddRef)() override { return ++refs_; }
+    STDMETHOD_(ULONG, AddRef)() override { ApiLock api_lock(__func__); return refs_.add_ref(); }
     STDMETHOD_(ULONG, Release)() override {
-        const ULONG r = --refs_;
-        if (r == 0) delete this;
-        return r;
+        ApiLock api_lock(__func__);
+        return refs_.release(this);
     }
-    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { return stub_result<HRESULT>("IDirect3DResource9::GetDevice"); }
-    STDMETHOD_(HRESULT, SetPrivateData)(REFGUID guid, const void *data, DWORD data_size, DWORD flags) override { return stub_result<HRESULT>("IDirect3DResource9::SetPrivateData"); }
-    STDMETHOD_(HRESULT, GetPrivateData)(REFGUID refguid, void* pData, DWORD* pSizeOfData) override { return stub_result<HRESULT>("IDirect3DResource9::GetPrivateData"); }
-    STDMETHOD_(HRESULT, FreePrivateData)(REFGUID refguid) override { return stub_result<HRESULT>("IDirect3DResource9::FreePrivateData"); }
-    STDMETHOD_(DWORD, SetPriority)(DWORD PriorityNew) override { return stub_result<DWORD>("IDirect3DResource9::SetPriority"); }
-    STDMETHOD_(DWORD, GetPriority)() override { return stub_result<DWORD>("IDirect3DResource9::GetPriority"); }
-    STDMETHOD_(void, PreLoad)() override { stub_result<int>("IDirect3DResource9::PreLoad"); }
-    STDMETHOD_(D3DRESOURCETYPE, GetType)() override { return stub_result<D3DRESOURCETYPE>("IDirect3DResource9::GetType"); }
+    void AddRefPrivate() { ApiLock api_lock(__func__); refs_.add_private(); }
+    void ReleasePrivate() { ApiLock api_lock(__func__); refs_.release_private(this); }
+    void SetDeviceParent(IUnknown* parent) { refs_.set_parent(parent); }
+    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DResource9::GetDevice"); }
+    STDMETHOD_(HRESULT, SetPrivateData)(REFGUID guid, const void *data, DWORD data_size, DWORD flags) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DResource9::SetPrivateData"); }
+    STDMETHOD_(HRESULT, GetPrivateData)(REFGUID refguid, void* pData, DWORD* pSizeOfData) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DResource9::GetPrivateData"); }
+    STDMETHOD_(HRESULT, FreePrivateData)(REFGUID refguid) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DResource9::FreePrivateData"); }
+    STDMETHOD_(DWORD, SetPriority)(DWORD PriorityNew) override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DResource9::SetPriority"); }
+    STDMETHOD_(DWORD, GetPriority)() override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DResource9::GetPriority"); }
+    STDMETHOD_(void, PreLoad)() override { ApiLock api_lock(__func__); stub_result<int>("IDirect3DResource9::PreLoad"); }
+    STDMETHOD_(D3DRESOURCETYPE, GetType)() override { ApiLock api_lock(__func__); return stub_result<D3DRESOURCETYPE>("IDirect3DResource9::GetType"); }
 
 protected:
-    std::atomic<ULONG> refs_{1};
+    ObjectRefs refs_;
 };
 
 class StubIDirect3DVertexDeclaration9 : public IDirect3DVertexDeclaration9 {
 public:
     virtual ~StubIDirect3DVertexDeclaration9() = default;
     STDMETHOD(QueryInterface)(REFIID riid, void** out) override {
+        ApiLock api_lock(__func__);
         if (!out) return E_POINTER;
         if (riid == __uuidof(IDirect3DVertexDeclaration9) || riid == __uuidof(IUnknown)) {
             *out = this;
@@ -281,23 +297,26 @@ public:
         *out = nullptr;
         return E_NOINTERFACE;
     }
-    STDMETHOD_(ULONG, AddRef)() override { return ++refs_; }
+    STDMETHOD_(ULONG, AddRef)() override { ApiLock api_lock(__func__); return refs_.add_ref(); }
     STDMETHOD_(ULONG, Release)() override {
-        const ULONG r = --refs_;
-        if (r == 0) delete this;
-        return r;
+        ApiLock api_lock(__func__);
+        return refs_.release(this);
     }
-    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { return stub_result<HRESULT>("IDirect3DVertexDeclaration9::GetDevice"); }
-    STDMETHOD_(HRESULT, GetDeclaration)(D3DVERTEXELEMENT9*, UINT* pNumElements) override { return stub_result<HRESULT>("IDirect3DVertexDeclaration9::GetDeclaration"); }
+    void AddRefPrivate() { ApiLock api_lock(__func__); refs_.add_private(); }
+    void ReleasePrivate() { ApiLock api_lock(__func__); refs_.release_private(this); }
+    void SetDeviceParent(IUnknown* parent) { refs_.set_parent(parent); }
+    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVertexDeclaration9::GetDevice"); }
+    STDMETHOD_(HRESULT, GetDeclaration)(D3DVERTEXELEMENT9*, UINT* pNumElements) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVertexDeclaration9::GetDeclaration"); }
 
 protected:
-    std::atomic<ULONG> refs_{1};
+    ObjectRefs refs_;
 };
 
 class StubIDirect3DVertexShader9 : public IDirect3DVertexShader9 {
 public:
     virtual ~StubIDirect3DVertexShader9() = default;
     STDMETHOD(QueryInterface)(REFIID riid, void** out) override {
+        ApiLock api_lock(__func__);
         if (!out) return E_POINTER;
         if (riid == __uuidof(IDirect3DVertexShader9) || riid == __uuidof(IUnknown)) {
             *out = this;
@@ -307,23 +326,26 @@ public:
         *out = nullptr;
         return E_NOINTERFACE;
     }
-    STDMETHOD_(ULONG, AddRef)() override { return ++refs_; }
+    STDMETHOD_(ULONG, AddRef)() override { ApiLock api_lock(__func__); return refs_.add_ref(); }
     STDMETHOD_(ULONG, Release)() override {
-        const ULONG r = --refs_;
-        if (r == 0) delete this;
-        return r;
+        ApiLock api_lock(__func__);
+        return refs_.release(this);
     }
-    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { return stub_result<HRESULT>("IDirect3DVertexShader9::GetDevice"); }
-    STDMETHOD_(HRESULT, GetFunction)(void*, UINT* pSizeOfData) override { return stub_result<HRESULT>("IDirect3DVertexShader9::GetFunction"); }
+    void AddRefPrivate() { ApiLock api_lock(__func__); refs_.add_private(); }
+    void ReleasePrivate() { ApiLock api_lock(__func__); refs_.release_private(this); }
+    void SetDeviceParent(IUnknown* parent) { refs_.set_parent(parent); }
+    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVertexShader9::GetDevice"); }
+    STDMETHOD_(HRESULT, GetFunction)(void*, UINT* pSizeOfData) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVertexShader9::GetFunction"); }
 
 protected:
-    std::atomic<ULONG> refs_{1};
+    ObjectRefs refs_;
 };
 
 class StubIDirect3DPixelShader9 : public IDirect3DPixelShader9 {
 public:
     virtual ~StubIDirect3DPixelShader9() = default;
     STDMETHOD(QueryInterface)(REFIID riid, void** out) override {
+        ApiLock api_lock(__func__);
         if (!out) return E_POINTER;
         if (riid == __uuidof(IDirect3DPixelShader9) || riid == __uuidof(IUnknown)) {
             *out = this;
@@ -333,23 +355,26 @@ public:
         *out = nullptr;
         return E_NOINTERFACE;
     }
-    STDMETHOD_(ULONG, AddRef)() override { return ++refs_; }
+    STDMETHOD_(ULONG, AddRef)() override { ApiLock api_lock(__func__); return refs_.add_ref(); }
     STDMETHOD_(ULONG, Release)() override {
-        const ULONG r = --refs_;
-        if (r == 0) delete this;
-        return r;
+        ApiLock api_lock(__func__);
+        return refs_.release(this);
     }
-    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { return stub_result<HRESULT>("IDirect3DPixelShader9::GetDevice"); }
-    STDMETHOD_(HRESULT, GetFunction)(void*, UINT* pSizeOfData) override { return stub_result<HRESULT>("IDirect3DPixelShader9::GetFunction"); }
+    void AddRefPrivate() { ApiLock api_lock(__func__); refs_.add_private(); }
+    void ReleasePrivate() { ApiLock api_lock(__func__); refs_.release_private(this); }
+    void SetDeviceParent(IUnknown* parent) { refs_.set_parent(parent); }
+    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DPixelShader9::GetDevice"); }
+    STDMETHOD_(HRESULT, GetFunction)(void*, UINT* pSizeOfData) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DPixelShader9::GetFunction"); }
 
 protected:
-    std::atomic<ULONG> refs_{1};
+    ObjectRefs refs_;
 };
 
 class StubIDirect3DBaseTexture9 : public IDirect3DBaseTexture9 {
 public:
     virtual ~StubIDirect3DBaseTexture9() = default;
     STDMETHOD(QueryInterface)(REFIID riid, void** out) override {
+        ApiLock api_lock(__func__);
         if (!out) return E_POINTER;
         if (riid == __uuidof(IDirect3DBaseTexture9) || riid == __uuidof(IDirect3DResource9) || riid == __uuidof(IUnknown)) {
             *out = this;
@@ -359,35 +384,38 @@ public:
         *out = nullptr;
         return E_NOINTERFACE;
     }
-    STDMETHOD_(ULONG, AddRef)() override { return ++refs_; }
+    STDMETHOD_(ULONG, AddRef)() override { ApiLock api_lock(__func__); return refs_.add_ref(); }
     STDMETHOD_(ULONG, Release)() override {
-        const ULONG r = --refs_;
-        if (r == 0) delete this;
-        return r;
+        ApiLock api_lock(__func__);
+        return refs_.release(this);
     }
-    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { return stub_result<HRESULT>("IDirect3DBaseTexture9::GetDevice"); }
-    STDMETHOD_(HRESULT, SetPrivateData)(REFGUID guid, const void *data, DWORD data_size, DWORD flags) override { return stub_result<HRESULT>("IDirect3DBaseTexture9::SetPrivateData"); }
-    STDMETHOD_(HRESULT, GetPrivateData)(REFGUID refguid, void* pData, DWORD* pSizeOfData) override { return stub_result<HRESULT>("IDirect3DBaseTexture9::GetPrivateData"); }
-    STDMETHOD_(HRESULT, FreePrivateData)(REFGUID refguid) override { return stub_result<HRESULT>("IDirect3DBaseTexture9::FreePrivateData"); }
-    STDMETHOD_(DWORD, SetPriority)(DWORD PriorityNew) override { return stub_result<DWORD>("IDirect3DBaseTexture9::SetPriority"); }
-    STDMETHOD_(DWORD, GetPriority)() override { return stub_result<DWORD>("IDirect3DBaseTexture9::GetPriority"); }
-    STDMETHOD_(void, PreLoad)() override { stub_result<int>("IDirect3DBaseTexture9::PreLoad"); }
-    STDMETHOD_(D3DRESOURCETYPE, GetType)() override { return stub_result<D3DRESOURCETYPE>("IDirect3DBaseTexture9::GetType"); }
-    STDMETHOD_(DWORD, SetLOD)(DWORD LODNew) override { return stub_result<DWORD>("IDirect3DBaseTexture9::SetLOD"); }
-    STDMETHOD_(DWORD, GetLOD)() override { return stub_result<DWORD>("IDirect3DBaseTexture9::GetLOD"); }
-    STDMETHOD_(DWORD, GetLevelCount)() override { return stub_result<DWORD>("IDirect3DBaseTexture9::GetLevelCount"); }
-    STDMETHOD_(HRESULT, SetAutoGenFilterType)(D3DTEXTUREFILTERTYPE FilterType) override { return stub_result<HRESULT>("IDirect3DBaseTexture9::SetAutoGenFilterType"); }
-    STDMETHOD_(D3DTEXTUREFILTERTYPE, GetAutoGenFilterType)() override { return stub_result<D3DTEXTUREFILTERTYPE>("IDirect3DBaseTexture9::GetAutoGenFilterType"); }
-    STDMETHOD_(void, GenerateMipSubLevels)() override { stub_result<int>("IDirect3DBaseTexture9::GenerateMipSubLevels"); }
+    void AddRefPrivate() { ApiLock api_lock(__func__); refs_.add_private(); }
+    void ReleasePrivate() { ApiLock api_lock(__func__); refs_.release_private(this); }
+    void SetDeviceParent(IUnknown* parent) { refs_.set_parent(parent); }
+    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DBaseTexture9::GetDevice"); }
+    STDMETHOD_(HRESULT, SetPrivateData)(REFGUID guid, const void *data, DWORD data_size, DWORD flags) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DBaseTexture9::SetPrivateData"); }
+    STDMETHOD_(HRESULT, GetPrivateData)(REFGUID refguid, void* pData, DWORD* pSizeOfData) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DBaseTexture9::GetPrivateData"); }
+    STDMETHOD_(HRESULT, FreePrivateData)(REFGUID refguid) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DBaseTexture9::FreePrivateData"); }
+    STDMETHOD_(DWORD, SetPriority)(DWORD PriorityNew) override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DBaseTexture9::SetPriority"); }
+    STDMETHOD_(DWORD, GetPriority)() override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DBaseTexture9::GetPriority"); }
+    STDMETHOD_(void, PreLoad)() override { ApiLock api_lock(__func__); stub_result<int>("IDirect3DBaseTexture9::PreLoad"); }
+    STDMETHOD_(D3DRESOURCETYPE, GetType)() override { ApiLock api_lock(__func__); return stub_result<D3DRESOURCETYPE>("IDirect3DBaseTexture9::GetType"); }
+    STDMETHOD_(DWORD, SetLOD)(DWORD LODNew) override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DBaseTexture9::SetLOD"); }
+    STDMETHOD_(DWORD, GetLOD)() override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DBaseTexture9::GetLOD"); }
+    STDMETHOD_(DWORD, GetLevelCount)() override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DBaseTexture9::GetLevelCount"); }
+    STDMETHOD_(HRESULT, SetAutoGenFilterType)(D3DTEXTUREFILTERTYPE FilterType) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DBaseTexture9::SetAutoGenFilterType"); }
+    STDMETHOD_(D3DTEXTUREFILTERTYPE, GetAutoGenFilterType)() override { ApiLock api_lock(__func__); return stub_result<D3DTEXTUREFILTERTYPE>("IDirect3DBaseTexture9::GetAutoGenFilterType"); }
+    STDMETHOD_(void, GenerateMipSubLevels)() override { ApiLock api_lock(__func__); stub_result<int>("IDirect3DBaseTexture9::GenerateMipSubLevels"); }
 
 protected:
-    std::atomic<ULONG> refs_{1};
+    ObjectRefs refs_;
 };
 
 class StubIDirect3DTexture9 : public IDirect3DTexture9 {
 public:
     virtual ~StubIDirect3DTexture9() = default;
     STDMETHOD(QueryInterface)(REFIID riid, void** out) override {
+        ApiLock api_lock(__func__);
         if (!out) return E_POINTER;
         if (riid == __uuidof(IDirect3DTexture9) || riid == __uuidof(IDirect3DBaseTexture9) || riid == __uuidof(IDirect3DResource9) || riid == __uuidof(IUnknown)) {
             *out = this;
@@ -397,40 +425,43 @@ public:
         *out = nullptr;
         return E_NOINTERFACE;
     }
-    STDMETHOD_(ULONG, AddRef)() override { return ++refs_; }
+    STDMETHOD_(ULONG, AddRef)() override { ApiLock api_lock(__func__); return refs_.add_ref(); }
     STDMETHOD_(ULONG, Release)() override {
-        const ULONG r = --refs_;
-        if (r == 0) delete this;
-        return r;
+        ApiLock api_lock(__func__);
+        return refs_.release(this);
     }
-    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { return stub_result<HRESULT>("IDirect3DTexture9::GetDevice"); }
-    STDMETHOD_(HRESULT, SetPrivateData)(REFGUID guid, const void *data, DWORD data_size, DWORD flags) override { return stub_result<HRESULT>("IDirect3DTexture9::SetPrivateData"); }
-    STDMETHOD_(HRESULT, GetPrivateData)(REFGUID refguid, void* pData, DWORD* pSizeOfData) override { return stub_result<HRESULT>("IDirect3DTexture9::GetPrivateData"); }
-    STDMETHOD_(HRESULT, FreePrivateData)(REFGUID refguid) override { return stub_result<HRESULT>("IDirect3DTexture9::FreePrivateData"); }
-    STDMETHOD_(DWORD, SetPriority)(DWORD PriorityNew) override { return stub_result<DWORD>("IDirect3DTexture9::SetPriority"); }
-    STDMETHOD_(DWORD, GetPriority)() override { return stub_result<DWORD>("IDirect3DTexture9::GetPriority"); }
-    STDMETHOD_(void, PreLoad)() override { stub_result<int>("IDirect3DTexture9::PreLoad"); }
-    STDMETHOD_(D3DRESOURCETYPE, GetType)() override { return stub_result<D3DRESOURCETYPE>("IDirect3DTexture9::GetType"); }
-    STDMETHOD_(DWORD, SetLOD)(DWORD LODNew) override { return stub_result<DWORD>("IDirect3DTexture9::SetLOD"); }
-    STDMETHOD_(DWORD, GetLOD)() override { return stub_result<DWORD>("IDirect3DTexture9::GetLOD"); }
-    STDMETHOD_(DWORD, GetLevelCount)() override { return stub_result<DWORD>("IDirect3DTexture9::GetLevelCount"); }
-    STDMETHOD_(HRESULT, SetAutoGenFilterType)(D3DTEXTUREFILTERTYPE FilterType) override { return stub_result<HRESULT>("IDirect3DTexture9::SetAutoGenFilterType"); }
-    STDMETHOD_(D3DTEXTUREFILTERTYPE, GetAutoGenFilterType)() override { return stub_result<D3DTEXTUREFILTERTYPE>("IDirect3DTexture9::GetAutoGenFilterType"); }
-    STDMETHOD_(void, GenerateMipSubLevels)() override { stub_result<int>("IDirect3DTexture9::GenerateMipSubLevels"); }
-    STDMETHOD_(HRESULT, GetLevelDesc)(UINT Level, D3DSURFACE_DESC* pDesc) override { return stub_result<HRESULT>("IDirect3DTexture9::GetLevelDesc"); }
-    STDMETHOD_(HRESULT, GetSurfaceLevel)(UINT Level, IDirect3DSurface9** ppSurfaceLevel) override { return stub_result<HRESULT>("IDirect3DTexture9::GetSurfaceLevel"); }
-    STDMETHOD_(HRESULT, LockRect)(UINT level, D3DLOCKED_RECT *locked_rect, const RECT *rect, DWORD flags) override { return stub_result<HRESULT>("IDirect3DTexture9::LockRect"); }
-    STDMETHOD_(HRESULT, UnlockRect)(UINT Level) override { return stub_result<HRESULT>("IDirect3DTexture9::UnlockRect"); }
-    STDMETHOD_(HRESULT, AddDirtyRect)(const RECT *dirty_rect) override { return stub_result<HRESULT>("IDirect3DTexture9::AddDirtyRect"); }
+    void AddRefPrivate() { ApiLock api_lock(__func__); refs_.add_private(); }
+    void ReleasePrivate() { ApiLock api_lock(__func__); refs_.release_private(this); }
+    void SetDeviceParent(IUnknown* parent) { refs_.set_parent(parent); }
+    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DTexture9::GetDevice"); }
+    STDMETHOD_(HRESULT, SetPrivateData)(REFGUID guid, const void *data, DWORD data_size, DWORD flags) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DTexture9::SetPrivateData"); }
+    STDMETHOD_(HRESULT, GetPrivateData)(REFGUID refguid, void* pData, DWORD* pSizeOfData) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DTexture9::GetPrivateData"); }
+    STDMETHOD_(HRESULT, FreePrivateData)(REFGUID refguid) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DTexture9::FreePrivateData"); }
+    STDMETHOD_(DWORD, SetPriority)(DWORD PriorityNew) override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DTexture9::SetPriority"); }
+    STDMETHOD_(DWORD, GetPriority)() override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DTexture9::GetPriority"); }
+    STDMETHOD_(void, PreLoad)() override { ApiLock api_lock(__func__); stub_result<int>("IDirect3DTexture9::PreLoad"); }
+    STDMETHOD_(D3DRESOURCETYPE, GetType)() override { ApiLock api_lock(__func__); return stub_result<D3DRESOURCETYPE>("IDirect3DTexture9::GetType"); }
+    STDMETHOD_(DWORD, SetLOD)(DWORD LODNew) override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DTexture9::SetLOD"); }
+    STDMETHOD_(DWORD, GetLOD)() override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DTexture9::GetLOD"); }
+    STDMETHOD_(DWORD, GetLevelCount)() override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DTexture9::GetLevelCount"); }
+    STDMETHOD_(HRESULT, SetAutoGenFilterType)(D3DTEXTUREFILTERTYPE FilterType) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DTexture9::SetAutoGenFilterType"); }
+    STDMETHOD_(D3DTEXTUREFILTERTYPE, GetAutoGenFilterType)() override { ApiLock api_lock(__func__); return stub_result<D3DTEXTUREFILTERTYPE>("IDirect3DTexture9::GetAutoGenFilterType"); }
+    STDMETHOD_(void, GenerateMipSubLevels)() override { ApiLock api_lock(__func__); stub_result<int>("IDirect3DTexture9::GenerateMipSubLevels"); }
+    STDMETHOD_(HRESULT, GetLevelDesc)(UINT Level, D3DSURFACE_DESC* pDesc) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DTexture9::GetLevelDesc"); }
+    STDMETHOD_(HRESULT, GetSurfaceLevel)(UINT Level, IDirect3DSurface9** ppSurfaceLevel) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DTexture9::GetSurfaceLevel"); }
+    STDMETHOD_(HRESULT, LockRect)(UINT level, D3DLOCKED_RECT *locked_rect, const RECT *rect, DWORD flags) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DTexture9::LockRect"); }
+    STDMETHOD_(HRESULT, UnlockRect)(UINT Level) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DTexture9::UnlockRect"); }
+    STDMETHOD_(HRESULT, AddDirtyRect)(const RECT *dirty_rect) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DTexture9::AddDirtyRect"); }
 
 protected:
-    std::atomic<ULONG> refs_{1};
+    ObjectRefs refs_;
 };
 
 class StubIDirect3DVolumeTexture9 : public IDirect3DVolumeTexture9 {
 public:
     virtual ~StubIDirect3DVolumeTexture9() = default;
     STDMETHOD(QueryInterface)(REFIID riid, void** out) override {
+        ApiLock api_lock(__func__);
         if (!out) return E_POINTER;
         if (riid == __uuidof(IDirect3DVolumeTexture9) || riid == __uuidof(IDirect3DBaseTexture9) || riid == __uuidof(IDirect3DResource9) || riid == __uuidof(IUnknown)) {
             *out = this;
@@ -440,40 +471,43 @@ public:
         *out = nullptr;
         return E_NOINTERFACE;
     }
-    STDMETHOD_(ULONG, AddRef)() override { return ++refs_; }
+    STDMETHOD_(ULONG, AddRef)() override { ApiLock api_lock(__func__); return refs_.add_ref(); }
     STDMETHOD_(ULONG, Release)() override {
-        const ULONG r = --refs_;
-        if (r == 0) delete this;
-        return r;
+        ApiLock api_lock(__func__);
+        return refs_.release(this);
     }
-    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { return stub_result<HRESULT>("IDirect3DVolumeTexture9::GetDevice"); }
-    STDMETHOD_(HRESULT, SetPrivateData)(REFGUID guid, const void *data, DWORD data_size, DWORD flags) override { return stub_result<HRESULT>("IDirect3DVolumeTexture9::SetPrivateData"); }
-    STDMETHOD_(HRESULT, GetPrivateData)(REFGUID refguid, void* pData, DWORD* pSizeOfData) override { return stub_result<HRESULT>("IDirect3DVolumeTexture9::GetPrivateData"); }
-    STDMETHOD_(HRESULT, FreePrivateData)(REFGUID refguid) override { return stub_result<HRESULT>("IDirect3DVolumeTexture9::FreePrivateData"); }
-    STDMETHOD_(DWORD, SetPriority)(DWORD PriorityNew) override { return stub_result<DWORD>("IDirect3DVolumeTexture9::SetPriority"); }
-    STDMETHOD_(DWORD, GetPriority)() override { return stub_result<DWORD>("IDirect3DVolumeTexture9::GetPriority"); }
-    STDMETHOD_(void, PreLoad)() override { stub_result<int>("IDirect3DVolumeTexture9::PreLoad"); }
-    STDMETHOD_(D3DRESOURCETYPE, GetType)() override { return stub_result<D3DRESOURCETYPE>("IDirect3DVolumeTexture9::GetType"); }
-    STDMETHOD_(DWORD, SetLOD)(DWORD LODNew) override { return stub_result<DWORD>("IDirect3DVolumeTexture9::SetLOD"); }
-    STDMETHOD_(DWORD, GetLOD)() override { return stub_result<DWORD>("IDirect3DVolumeTexture9::GetLOD"); }
-    STDMETHOD_(DWORD, GetLevelCount)() override { return stub_result<DWORD>("IDirect3DVolumeTexture9::GetLevelCount"); }
-    STDMETHOD_(HRESULT, SetAutoGenFilterType)(D3DTEXTUREFILTERTYPE FilterType) override { return stub_result<HRESULT>("IDirect3DVolumeTexture9::SetAutoGenFilterType"); }
-    STDMETHOD_(D3DTEXTUREFILTERTYPE, GetAutoGenFilterType)() override { return stub_result<D3DTEXTUREFILTERTYPE>("IDirect3DVolumeTexture9::GetAutoGenFilterType"); }
-    STDMETHOD_(void, GenerateMipSubLevels)() override { stub_result<int>("IDirect3DVolumeTexture9::GenerateMipSubLevels"); }
-    STDMETHOD_(HRESULT, GetLevelDesc)(UINT Level, D3DVOLUME_DESC *pDesc) override { return stub_result<HRESULT>("IDirect3DVolumeTexture9::GetLevelDesc"); }
-    STDMETHOD_(HRESULT, GetVolumeLevel)(UINT Level, IDirect3DVolume9** ppVolumeLevel) override { return stub_result<HRESULT>("IDirect3DVolumeTexture9::GetVolumeLevel"); }
-    STDMETHOD_(HRESULT, LockBox)(UINT level, D3DLOCKED_BOX *locked_box, const D3DBOX *box, DWORD flags) override { return stub_result<HRESULT>("IDirect3DVolumeTexture9::LockBox"); }
-    STDMETHOD_(HRESULT, UnlockBox)(UINT Level) override { return stub_result<HRESULT>("IDirect3DVolumeTexture9::UnlockBox"); }
-    STDMETHOD_(HRESULT, AddDirtyBox)(const D3DBOX *dirty_box) override { return stub_result<HRESULT>("IDirect3DVolumeTexture9::AddDirtyBox"); }
+    void AddRefPrivate() { ApiLock api_lock(__func__); refs_.add_private(); }
+    void ReleasePrivate() { ApiLock api_lock(__func__); refs_.release_private(this); }
+    void SetDeviceParent(IUnknown* parent) { refs_.set_parent(parent); }
+    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVolumeTexture9::GetDevice"); }
+    STDMETHOD_(HRESULT, SetPrivateData)(REFGUID guid, const void *data, DWORD data_size, DWORD flags) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVolumeTexture9::SetPrivateData"); }
+    STDMETHOD_(HRESULT, GetPrivateData)(REFGUID refguid, void* pData, DWORD* pSizeOfData) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVolumeTexture9::GetPrivateData"); }
+    STDMETHOD_(HRESULT, FreePrivateData)(REFGUID refguid) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVolumeTexture9::FreePrivateData"); }
+    STDMETHOD_(DWORD, SetPriority)(DWORD PriorityNew) override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DVolumeTexture9::SetPriority"); }
+    STDMETHOD_(DWORD, GetPriority)() override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DVolumeTexture9::GetPriority"); }
+    STDMETHOD_(void, PreLoad)() override { ApiLock api_lock(__func__); stub_result<int>("IDirect3DVolumeTexture9::PreLoad"); }
+    STDMETHOD_(D3DRESOURCETYPE, GetType)() override { ApiLock api_lock(__func__); return stub_result<D3DRESOURCETYPE>("IDirect3DVolumeTexture9::GetType"); }
+    STDMETHOD_(DWORD, SetLOD)(DWORD LODNew) override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DVolumeTexture9::SetLOD"); }
+    STDMETHOD_(DWORD, GetLOD)() override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DVolumeTexture9::GetLOD"); }
+    STDMETHOD_(DWORD, GetLevelCount)() override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DVolumeTexture9::GetLevelCount"); }
+    STDMETHOD_(HRESULT, SetAutoGenFilterType)(D3DTEXTUREFILTERTYPE FilterType) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVolumeTexture9::SetAutoGenFilterType"); }
+    STDMETHOD_(D3DTEXTUREFILTERTYPE, GetAutoGenFilterType)() override { ApiLock api_lock(__func__); return stub_result<D3DTEXTUREFILTERTYPE>("IDirect3DVolumeTexture9::GetAutoGenFilterType"); }
+    STDMETHOD_(void, GenerateMipSubLevels)() override { ApiLock api_lock(__func__); stub_result<int>("IDirect3DVolumeTexture9::GenerateMipSubLevels"); }
+    STDMETHOD_(HRESULT, GetLevelDesc)(UINT Level, D3DVOLUME_DESC *pDesc) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVolumeTexture9::GetLevelDesc"); }
+    STDMETHOD_(HRESULT, GetVolumeLevel)(UINT Level, IDirect3DVolume9** ppVolumeLevel) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVolumeTexture9::GetVolumeLevel"); }
+    STDMETHOD_(HRESULT, LockBox)(UINT level, D3DLOCKED_BOX *locked_box, const D3DBOX *box, DWORD flags) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVolumeTexture9::LockBox"); }
+    STDMETHOD_(HRESULT, UnlockBox)(UINT Level) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVolumeTexture9::UnlockBox"); }
+    STDMETHOD_(HRESULT, AddDirtyBox)(const D3DBOX *dirty_box) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVolumeTexture9::AddDirtyBox"); }
 
 protected:
-    std::atomic<ULONG> refs_{1};
+    ObjectRefs refs_;
 };
 
 class StubIDirect3DCubeTexture9 : public IDirect3DCubeTexture9 {
 public:
     virtual ~StubIDirect3DCubeTexture9() = default;
     STDMETHOD(QueryInterface)(REFIID riid, void** out) override {
+        ApiLock api_lock(__func__);
         if (!out) return E_POINTER;
         if (riid == __uuidof(IDirect3DCubeTexture9) || riid == __uuidof(IDirect3DBaseTexture9) || riid == __uuidof(IDirect3DResource9) || riid == __uuidof(IUnknown)) {
             *out = this;
@@ -483,40 +517,43 @@ public:
         *out = nullptr;
         return E_NOINTERFACE;
     }
-    STDMETHOD_(ULONG, AddRef)() override { return ++refs_; }
+    STDMETHOD_(ULONG, AddRef)() override { ApiLock api_lock(__func__); return refs_.add_ref(); }
     STDMETHOD_(ULONG, Release)() override {
-        const ULONG r = --refs_;
-        if (r == 0) delete this;
-        return r;
+        ApiLock api_lock(__func__);
+        return refs_.release(this);
     }
-    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { return stub_result<HRESULT>("IDirect3DCubeTexture9::GetDevice"); }
-    STDMETHOD_(HRESULT, SetPrivateData)(REFGUID guid, const void *data, DWORD data_size, DWORD flags) override { return stub_result<HRESULT>("IDirect3DCubeTexture9::SetPrivateData"); }
-    STDMETHOD_(HRESULT, GetPrivateData)(REFGUID refguid, void* pData, DWORD* pSizeOfData) override { return stub_result<HRESULT>("IDirect3DCubeTexture9::GetPrivateData"); }
-    STDMETHOD_(HRESULT, FreePrivateData)(REFGUID refguid) override { return stub_result<HRESULT>("IDirect3DCubeTexture9::FreePrivateData"); }
-    STDMETHOD_(DWORD, SetPriority)(DWORD PriorityNew) override { return stub_result<DWORD>("IDirect3DCubeTexture9::SetPriority"); }
-    STDMETHOD_(DWORD, GetPriority)() override { return stub_result<DWORD>("IDirect3DCubeTexture9::GetPriority"); }
-    STDMETHOD_(void, PreLoad)() override { stub_result<int>("IDirect3DCubeTexture9::PreLoad"); }
-    STDMETHOD_(D3DRESOURCETYPE, GetType)() override { return stub_result<D3DRESOURCETYPE>("IDirect3DCubeTexture9::GetType"); }
-    STDMETHOD_(DWORD, SetLOD)(DWORD LODNew) override { return stub_result<DWORD>("IDirect3DCubeTexture9::SetLOD"); }
-    STDMETHOD_(DWORD, GetLOD)() override { return stub_result<DWORD>("IDirect3DCubeTexture9::GetLOD"); }
-    STDMETHOD_(DWORD, GetLevelCount)() override { return stub_result<DWORD>("IDirect3DCubeTexture9::GetLevelCount"); }
-    STDMETHOD_(HRESULT, SetAutoGenFilterType)(D3DTEXTUREFILTERTYPE FilterType) override { return stub_result<HRESULT>("IDirect3DCubeTexture9::SetAutoGenFilterType"); }
-    STDMETHOD_(D3DTEXTUREFILTERTYPE, GetAutoGenFilterType)() override { return stub_result<D3DTEXTUREFILTERTYPE>("IDirect3DCubeTexture9::GetAutoGenFilterType"); }
-    STDMETHOD_(void, GenerateMipSubLevels)() override { stub_result<int>("IDirect3DCubeTexture9::GenerateMipSubLevels"); }
-    STDMETHOD_(HRESULT, GetLevelDesc)(UINT Level,D3DSURFACE_DESC* pDesc) override { return stub_result<HRESULT>("IDirect3DCubeTexture9::GetLevelDesc"); }
-    STDMETHOD_(HRESULT, GetCubeMapSurface)(D3DCUBEMAP_FACES FaceType, UINT Level, IDirect3DSurface9** ppCubeMapSurface) override { return stub_result<HRESULT>("IDirect3DCubeTexture9::GetCubeMapSurface"); }
-    STDMETHOD_(HRESULT, LockRect)(D3DCUBEMAP_FACES face, UINT level, D3DLOCKED_RECT *locked_rect, const RECT *rect, DWORD flags) override { return stub_result<HRESULT>("IDirect3DCubeTexture9::LockRect"); }
-    STDMETHOD_(HRESULT, UnlockRect)(D3DCUBEMAP_FACES FaceType, UINT Level) override { return stub_result<HRESULT>("IDirect3DCubeTexture9::UnlockRect"); }
-    STDMETHOD_(HRESULT, AddDirtyRect)(D3DCUBEMAP_FACES face, const RECT *dirty_rect) override { return stub_result<HRESULT>("IDirect3DCubeTexture9::AddDirtyRect"); }
+    void AddRefPrivate() { ApiLock api_lock(__func__); refs_.add_private(); }
+    void ReleasePrivate() { ApiLock api_lock(__func__); refs_.release_private(this); }
+    void SetDeviceParent(IUnknown* parent) { refs_.set_parent(parent); }
+    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DCubeTexture9::GetDevice"); }
+    STDMETHOD_(HRESULT, SetPrivateData)(REFGUID guid, const void *data, DWORD data_size, DWORD flags) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DCubeTexture9::SetPrivateData"); }
+    STDMETHOD_(HRESULT, GetPrivateData)(REFGUID refguid, void* pData, DWORD* pSizeOfData) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DCubeTexture9::GetPrivateData"); }
+    STDMETHOD_(HRESULT, FreePrivateData)(REFGUID refguid) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DCubeTexture9::FreePrivateData"); }
+    STDMETHOD_(DWORD, SetPriority)(DWORD PriorityNew) override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DCubeTexture9::SetPriority"); }
+    STDMETHOD_(DWORD, GetPriority)() override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DCubeTexture9::GetPriority"); }
+    STDMETHOD_(void, PreLoad)() override { ApiLock api_lock(__func__); stub_result<int>("IDirect3DCubeTexture9::PreLoad"); }
+    STDMETHOD_(D3DRESOURCETYPE, GetType)() override { ApiLock api_lock(__func__); return stub_result<D3DRESOURCETYPE>("IDirect3DCubeTexture9::GetType"); }
+    STDMETHOD_(DWORD, SetLOD)(DWORD LODNew) override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DCubeTexture9::SetLOD"); }
+    STDMETHOD_(DWORD, GetLOD)() override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DCubeTexture9::GetLOD"); }
+    STDMETHOD_(DWORD, GetLevelCount)() override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DCubeTexture9::GetLevelCount"); }
+    STDMETHOD_(HRESULT, SetAutoGenFilterType)(D3DTEXTUREFILTERTYPE FilterType) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DCubeTexture9::SetAutoGenFilterType"); }
+    STDMETHOD_(D3DTEXTUREFILTERTYPE, GetAutoGenFilterType)() override { ApiLock api_lock(__func__); return stub_result<D3DTEXTUREFILTERTYPE>("IDirect3DCubeTexture9::GetAutoGenFilterType"); }
+    STDMETHOD_(void, GenerateMipSubLevels)() override { ApiLock api_lock(__func__); stub_result<int>("IDirect3DCubeTexture9::GenerateMipSubLevels"); }
+    STDMETHOD_(HRESULT, GetLevelDesc)(UINT Level,D3DSURFACE_DESC* pDesc) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DCubeTexture9::GetLevelDesc"); }
+    STDMETHOD_(HRESULT, GetCubeMapSurface)(D3DCUBEMAP_FACES FaceType, UINT Level, IDirect3DSurface9** ppCubeMapSurface) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DCubeTexture9::GetCubeMapSurface"); }
+    STDMETHOD_(HRESULT, LockRect)(D3DCUBEMAP_FACES face, UINT level, D3DLOCKED_RECT *locked_rect, const RECT *rect, DWORD flags) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DCubeTexture9::LockRect"); }
+    STDMETHOD_(HRESULT, UnlockRect)(D3DCUBEMAP_FACES FaceType, UINT Level) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DCubeTexture9::UnlockRect"); }
+    STDMETHOD_(HRESULT, AddDirtyRect)(D3DCUBEMAP_FACES face, const RECT *dirty_rect) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DCubeTexture9::AddDirtyRect"); }
 
 protected:
-    std::atomic<ULONG> refs_{1};
+    ObjectRefs refs_;
 };
 
 class StubIDirect3DVertexBuffer9 : public IDirect3DVertexBuffer9 {
 public:
     virtual ~StubIDirect3DVertexBuffer9() = default;
     STDMETHOD(QueryInterface)(REFIID riid, void** out) override {
+        ApiLock api_lock(__func__);
         if (!out) return E_POINTER;
         if (riid == __uuidof(IDirect3DVertexBuffer9) || riid == __uuidof(IDirect3DResource9) || riid == __uuidof(IUnknown)) {
             *out = this;
@@ -526,32 +563,35 @@ public:
         *out = nullptr;
         return E_NOINTERFACE;
     }
-    STDMETHOD_(ULONG, AddRef)() override { return ++refs_; }
+    STDMETHOD_(ULONG, AddRef)() override { ApiLock api_lock(__func__); return refs_.add_ref(); }
     STDMETHOD_(ULONG, Release)() override {
-        const ULONG r = --refs_;
-        if (r == 0) delete this;
-        return r;
+        ApiLock api_lock(__func__);
+        return refs_.release(this);
     }
-    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { return stub_result<HRESULT>("IDirect3DVertexBuffer9::GetDevice"); }
-    STDMETHOD_(HRESULT, SetPrivateData)(REFGUID guid, const void *data, DWORD data_size, DWORD flags) override { return stub_result<HRESULT>("IDirect3DVertexBuffer9::SetPrivateData"); }
-    STDMETHOD_(HRESULT, GetPrivateData)(REFGUID refguid, void* pData, DWORD* pSizeOfData) override { return stub_result<HRESULT>("IDirect3DVertexBuffer9::GetPrivateData"); }
-    STDMETHOD_(HRESULT, FreePrivateData)(REFGUID refguid) override { return stub_result<HRESULT>("IDirect3DVertexBuffer9::FreePrivateData"); }
-    STDMETHOD_(DWORD, SetPriority)(DWORD PriorityNew) override { return stub_result<DWORD>("IDirect3DVertexBuffer9::SetPriority"); }
-    STDMETHOD_(DWORD, GetPriority)() override { return stub_result<DWORD>("IDirect3DVertexBuffer9::GetPriority"); }
-    STDMETHOD_(void, PreLoad)() override { stub_result<int>("IDirect3DVertexBuffer9::PreLoad"); }
-    STDMETHOD_(D3DRESOURCETYPE, GetType)() override { return stub_result<D3DRESOURCETYPE>("IDirect3DVertexBuffer9::GetType"); }
-    STDMETHOD_(HRESULT, Lock)(UINT OffsetToLock, UINT SizeToLock, void** ppbData, DWORD Flags) override { return stub_result<HRESULT>("IDirect3DVertexBuffer9::Lock"); }
-    STDMETHOD_(HRESULT, Unlock)() override { return stub_result<HRESULT>("IDirect3DVertexBuffer9::Unlock"); }
-    STDMETHOD_(HRESULT, GetDesc)(D3DVERTEXBUFFER_DESC* pDesc) override { return stub_result<HRESULT>("IDirect3DVertexBuffer9::GetDesc"); }
+    void AddRefPrivate() { ApiLock api_lock(__func__); refs_.add_private(); }
+    void ReleasePrivate() { ApiLock api_lock(__func__); refs_.release_private(this); }
+    void SetDeviceParent(IUnknown* parent) { refs_.set_parent(parent); }
+    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVertexBuffer9::GetDevice"); }
+    STDMETHOD_(HRESULT, SetPrivateData)(REFGUID guid, const void *data, DWORD data_size, DWORD flags) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVertexBuffer9::SetPrivateData"); }
+    STDMETHOD_(HRESULT, GetPrivateData)(REFGUID refguid, void* pData, DWORD* pSizeOfData) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVertexBuffer9::GetPrivateData"); }
+    STDMETHOD_(HRESULT, FreePrivateData)(REFGUID refguid) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVertexBuffer9::FreePrivateData"); }
+    STDMETHOD_(DWORD, SetPriority)(DWORD PriorityNew) override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DVertexBuffer9::SetPriority"); }
+    STDMETHOD_(DWORD, GetPriority)() override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DVertexBuffer9::GetPriority"); }
+    STDMETHOD_(void, PreLoad)() override { ApiLock api_lock(__func__); stub_result<int>("IDirect3DVertexBuffer9::PreLoad"); }
+    STDMETHOD_(D3DRESOURCETYPE, GetType)() override { ApiLock api_lock(__func__); return stub_result<D3DRESOURCETYPE>("IDirect3DVertexBuffer9::GetType"); }
+    STDMETHOD_(HRESULT, Lock)(UINT OffsetToLock, UINT SizeToLock, void** ppbData, DWORD Flags) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVertexBuffer9::Lock"); }
+    STDMETHOD_(HRESULT, Unlock)() override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVertexBuffer9::Unlock"); }
+    STDMETHOD_(HRESULT, GetDesc)(D3DVERTEXBUFFER_DESC* pDesc) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVertexBuffer9::GetDesc"); }
 
 protected:
-    std::atomic<ULONG> refs_{1};
+    ObjectRefs refs_;
 };
 
 class StubIDirect3DIndexBuffer9 : public IDirect3DIndexBuffer9 {
 public:
     virtual ~StubIDirect3DIndexBuffer9() = default;
     STDMETHOD(QueryInterface)(REFIID riid, void** out) override {
+        ApiLock api_lock(__func__);
         if (!out) return E_POINTER;
         if (riid == __uuidof(IDirect3DIndexBuffer9) || riid == __uuidof(IDirect3DResource9) || riid == __uuidof(IUnknown)) {
             *out = this;
@@ -561,32 +601,35 @@ public:
         *out = nullptr;
         return E_NOINTERFACE;
     }
-    STDMETHOD_(ULONG, AddRef)() override { return ++refs_; }
+    STDMETHOD_(ULONG, AddRef)() override { ApiLock api_lock(__func__); return refs_.add_ref(); }
     STDMETHOD_(ULONG, Release)() override {
-        const ULONG r = --refs_;
-        if (r == 0) delete this;
-        return r;
+        ApiLock api_lock(__func__);
+        return refs_.release(this);
     }
-    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { return stub_result<HRESULT>("IDirect3DIndexBuffer9::GetDevice"); }
-    STDMETHOD_(HRESULT, SetPrivateData)(REFGUID guid, const void *data, DWORD data_size, DWORD flags) override { return stub_result<HRESULT>("IDirect3DIndexBuffer9::SetPrivateData"); }
-    STDMETHOD_(HRESULT, GetPrivateData)(REFGUID refguid, void* pData, DWORD* pSizeOfData) override { return stub_result<HRESULT>("IDirect3DIndexBuffer9::GetPrivateData"); }
-    STDMETHOD_(HRESULT, FreePrivateData)(REFGUID refguid) override { return stub_result<HRESULT>("IDirect3DIndexBuffer9::FreePrivateData"); }
-    STDMETHOD_(DWORD, SetPriority)(DWORD PriorityNew) override { return stub_result<DWORD>("IDirect3DIndexBuffer9::SetPriority"); }
-    STDMETHOD_(DWORD, GetPriority)() override { return stub_result<DWORD>("IDirect3DIndexBuffer9::GetPriority"); }
-    STDMETHOD_(void, PreLoad)() override { stub_result<int>("IDirect3DIndexBuffer9::PreLoad"); }
-    STDMETHOD_(D3DRESOURCETYPE, GetType)() override { return stub_result<D3DRESOURCETYPE>("IDirect3DIndexBuffer9::GetType"); }
-    STDMETHOD_(HRESULT, Lock)(UINT OffsetToLock, UINT SizeToLock, void** ppbData, DWORD Flags) override { return stub_result<HRESULT>("IDirect3DIndexBuffer9::Lock"); }
-    STDMETHOD_(HRESULT, Unlock)() override { return stub_result<HRESULT>("IDirect3DIndexBuffer9::Unlock"); }
-    STDMETHOD_(HRESULT, GetDesc)(D3DINDEXBUFFER_DESC* pDesc) override { return stub_result<HRESULT>("IDirect3DIndexBuffer9::GetDesc"); }
+    void AddRefPrivate() { ApiLock api_lock(__func__); refs_.add_private(); }
+    void ReleasePrivate() { ApiLock api_lock(__func__); refs_.release_private(this); }
+    void SetDeviceParent(IUnknown* parent) { refs_.set_parent(parent); }
+    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DIndexBuffer9::GetDevice"); }
+    STDMETHOD_(HRESULT, SetPrivateData)(REFGUID guid, const void *data, DWORD data_size, DWORD flags) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DIndexBuffer9::SetPrivateData"); }
+    STDMETHOD_(HRESULT, GetPrivateData)(REFGUID refguid, void* pData, DWORD* pSizeOfData) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DIndexBuffer9::GetPrivateData"); }
+    STDMETHOD_(HRESULT, FreePrivateData)(REFGUID refguid) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DIndexBuffer9::FreePrivateData"); }
+    STDMETHOD_(DWORD, SetPriority)(DWORD PriorityNew) override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DIndexBuffer9::SetPriority"); }
+    STDMETHOD_(DWORD, GetPriority)() override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DIndexBuffer9::GetPriority"); }
+    STDMETHOD_(void, PreLoad)() override { ApiLock api_lock(__func__); stub_result<int>("IDirect3DIndexBuffer9::PreLoad"); }
+    STDMETHOD_(D3DRESOURCETYPE, GetType)() override { ApiLock api_lock(__func__); return stub_result<D3DRESOURCETYPE>("IDirect3DIndexBuffer9::GetType"); }
+    STDMETHOD_(HRESULT, Lock)(UINT OffsetToLock, UINT SizeToLock, void** ppbData, DWORD Flags) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DIndexBuffer9::Lock"); }
+    STDMETHOD_(HRESULT, Unlock)() override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DIndexBuffer9::Unlock"); }
+    STDMETHOD_(HRESULT, GetDesc)(D3DINDEXBUFFER_DESC* pDesc) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DIndexBuffer9::GetDesc"); }
 
 protected:
-    std::atomic<ULONG> refs_{1};
+    ObjectRefs refs_;
 };
 
 class StubIDirect3DSurface9 : public IDirect3DSurface9 {
 public:
     virtual ~StubIDirect3DSurface9() = default;
     STDMETHOD(QueryInterface)(REFIID riid, void** out) override {
+        ApiLock api_lock(__func__);
         if (!out) return E_POINTER;
         if (riid == __uuidof(IDirect3DSurface9) || riid == __uuidof(IDirect3DResource9) || riid == __uuidof(IUnknown)) {
             *out = this;
@@ -596,35 +639,38 @@ public:
         *out = nullptr;
         return E_NOINTERFACE;
     }
-    STDMETHOD_(ULONG, AddRef)() override { return ++refs_; }
+    STDMETHOD_(ULONG, AddRef)() override { ApiLock api_lock(__func__); return refs_.add_ref(); }
     STDMETHOD_(ULONG, Release)() override {
-        const ULONG r = --refs_;
-        if (r == 0) delete this;
-        return r;
+        ApiLock api_lock(__func__);
+        return refs_.release(this);
     }
-    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { return stub_result<HRESULT>("IDirect3DSurface9::GetDevice"); }
-    STDMETHOD_(HRESULT, SetPrivateData)(REFGUID guid, const void *data, DWORD data_size, DWORD flags) override { return stub_result<HRESULT>("IDirect3DSurface9::SetPrivateData"); }
-    STDMETHOD_(HRESULT, GetPrivateData)(REFGUID refguid, void* pData, DWORD* pSizeOfData) override { return stub_result<HRESULT>("IDirect3DSurface9::GetPrivateData"); }
-    STDMETHOD_(HRESULT, FreePrivateData)(REFGUID refguid) override { return stub_result<HRESULT>("IDirect3DSurface9::FreePrivateData"); }
-    STDMETHOD_(DWORD, SetPriority)(DWORD PriorityNew) override { return stub_result<DWORD>("IDirect3DSurface9::SetPriority"); }
-    STDMETHOD_(DWORD, GetPriority)() override { return stub_result<DWORD>("IDirect3DSurface9::GetPriority"); }
-    STDMETHOD_(void, PreLoad)() override { stub_result<int>("IDirect3DSurface9::PreLoad"); }
-    STDMETHOD_(D3DRESOURCETYPE, GetType)() override { return stub_result<D3DRESOURCETYPE>("IDirect3DSurface9::GetType"); }
-    STDMETHOD_(HRESULT, GetContainer)(REFIID riid, void** ppContainer) override { return stub_result<HRESULT>("IDirect3DSurface9::GetContainer"); }
-    STDMETHOD_(HRESULT, GetDesc)(D3DSURFACE_DESC* pDesc) override { return stub_result<HRESULT>("IDirect3DSurface9::GetDesc"); }
-    STDMETHOD_(HRESULT, LockRect)(D3DLOCKED_RECT *locked_rect, const RECT *rect, DWORD flags) override { return stub_result<HRESULT>("IDirect3DSurface9::LockRect"); }
-    STDMETHOD_(HRESULT, UnlockRect)() override { return stub_result<HRESULT>("IDirect3DSurface9::UnlockRect"); }
-    STDMETHOD_(HRESULT, GetDC)(HDC* phdc) override { return stub_result<HRESULT>("IDirect3DSurface9::GetDC"); }
-    STDMETHOD_(HRESULT, ReleaseDC)(HDC hdc) override { return stub_result<HRESULT>("IDirect3DSurface9::ReleaseDC"); }
+    void AddRefPrivate() { ApiLock api_lock(__func__); refs_.add_private(); }
+    void ReleasePrivate() { ApiLock api_lock(__func__); refs_.release_private(this); }
+    void SetDeviceParent(IUnknown* parent) { refs_.set_parent(parent); }
+    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DSurface9::GetDevice"); }
+    STDMETHOD_(HRESULT, SetPrivateData)(REFGUID guid, const void *data, DWORD data_size, DWORD flags) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DSurface9::SetPrivateData"); }
+    STDMETHOD_(HRESULT, GetPrivateData)(REFGUID refguid, void* pData, DWORD* pSizeOfData) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DSurface9::GetPrivateData"); }
+    STDMETHOD_(HRESULT, FreePrivateData)(REFGUID refguid) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DSurface9::FreePrivateData"); }
+    STDMETHOD_(DWORD, SetPriority)(DWORD PriorityNew) override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DSurface9::SetPriority"); }
+    STDMETHOD_(DWORD, GetPriority)() override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DSurface9::GetPriority"); }
+    STDMETHOD_(void, PreLoad)() override { ApiLock api_lock(__func__); stub_result<int>("IDirect3DSurface9::PreLoad"); }
+    STDMETHOD_(D3DRESOURCETYPE, GetType)() override { ApiLock api_lock(__func__); return stub_result<D3DRESOURCETYPE>("IDirect3DSurface9::GetType"); }
+    STDMETHOD_(HRESULT, GetContainer)(REFIID riid, void** ppContainer) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DSurface9::GetContainer"); }
+    STDMETHOD_(HRESULT, GetDesc)(D3DSURFACE_DESC* pDesc) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DSurface9::GetDesc"); }
+    STDMETHOD_(HRESULT, LockRect)(D3DLOCKED_RECT *locked_rect, const RECT *rect, DWORD flags) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DSurface9::LockRect"); }
+    STDMETHOD_(HRESULT, UnlockRect)() override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DSurface9::UnlockRect"); }
+    STDMETHOD_(HRESULT, GetDC)(HDC* phdc) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DSurface9::GetDC"); }
+    STDMETHOD_(HRESULT, ReleaseDC)(HDC hdc) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DSurface9::ReleaseDC"); }
 
 protected:
-    std::atomic<ULONG> refs_{1};
+    ObjectRefs refs_;
 };
 
 class StubIDirect3DVolume9 : public IDirect3DVolume9 {
 public:
     virtual ~StubIDirect3DVolume9() = default;
     STDMETHOD(QueryInterface)(REFIID riid, void** out) override {
+        ApiLock api_lock(__func__);
         if (!out) return E_POINTER;
         if (riid == __uuidof(IDirect3DVolume9) || riid == __uuidof(IUnknown)) {
             *out = this;
@@ -634,29 +680,32 @@ public:
         *out = nullptr;
         return E_NOINTERFACE;
     }
-    STDMETHOD_(ULONG, AddRef)() override { return ++refs_; }
+    STDMETHOD_(ULONG, AddRef)() override { ApiLock api_lock(__func__); return refs_.add_ref(); }
     STDMETHOD_(ULONG, Release)() override {
-        const ULONG r = --refs_;
-        if (r == 0) delete this;
-        return r;
+        ApiLock api_lock(__func__);
+        return refs_.release(this);
     }
-    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { return stub_result<HRESULT>("IDirect3DVolume9::GetDevice"); }
-    STDMETHOD_(HRESULT, SetPrivateData)(REFGUID guid, const void *data, DWORD data_size, DWORD flags) override { return stub_result<HRESULT>("IDirect3DVolume9::SetPrivateData"); }
-    STDMETHOD_(HRESULT, GetPrivateData)(REFGUID refguid, void* pData, DWORD* pSizeOfData) override { return stub_result<HRESULT>("IDirect3DVolume9::GetPrivateData"); }
-    STDMETHOD_(HRESULT, FreePrivateData)(REFGUID refguid) override { return stub_result<HRESULT>("IDirect3DVolume9::FreePrivateData"); }
-    STDMETHOD_(HRESULT, GetContainer)(REFIID riid, void** ppContainer) override { return stub_result<HRESULT>("IDirect3DVolume9::GetContainer"); }
-    STDMETHOD_(HRESULT, GetDesc)(D3DVOLUME_DESC* pDesc) override { return stub_result<HRESULT>("IDirect3DVolume9::GetDesc"); }
-    STDMETHOD_(HRESULT, LockBox)(D3DLOCKED_BOX *locked_box, const D3DBOX *box, DWORD flags) override { return stub_result<HRESULT>("IDirect3DVolume9::LockBox"); }
-    STDMETHOD_(HRESULT, UnlockBox)() override { return stub_result<HRESULT>("IDirect3DVolume9::UnlockBox"); }
+    void AddRefPrivate() { ApiLock api_lock(__func__); refs_.add_private(); }
+    void ReleasePrivate() { ApiLock api_lock(__func__); refs_.release_private(this); }
+    void SetDeviceParent(IUnknown* parent) { refs_.set_parent(parent); }
+    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVolume9::GetDevice"); }
+    STDMETHOD_(HRESULT, SetPrivateData)(REFGUID guid, const void *data, DWORD data_size, DWORD flags) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVolume9::SetPrivateData"); }
+    STDMETHOD_(HRESULT, GetPrivateData)(REFGUID refguid, void* pData, DWORD* pSizeOfData) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVolume9::GetPrivateData"); }
+    STDMETHOD_(HRESULT, FreePrivateData)(REFGUID refguid) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVolume9::FreePrivateData"); }
+    STDMETHOD_(HRESULT, GetContainer)(REFIID riid, void** ppContainer) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVolume9::GetContainer"); }
+    STDMETHOD_(HRESULT, GetDesc)(D3DVOLUME_DESC* pDesc) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVolume9::GetDesc"); }
+    STDMETHOD_(HRESULT, LockBox)(D3DLOCKED_BOX *locked_box, const D3DBOX *box, DWORD flags) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVolume9::LockBox"); }
+    STDMETHOD_(HRESULT, UnlockBox)() override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DVolume9::UnlockBox"); }
 
 protected:
-    std::atomic<ULONG> refs_{1};
+    ObjectRefs refs_;
 };
 
 class StubIDirect3DQuery9 : public IDirect3DQuery9 {
 public:
     virtual ~StubIDirect3DQuery9() = default;
     STDMETHOD(QueryInterface)(REFIID riid, void** out) override {
+        ApiLock api_lock(__func__);
         if (!out) return E_POINTER;
         if (riid == __uuidof(IDirect3DQuery9) || riid == __uuidof(IUnknown)) {
             *out = this;
@@ -666,18 +715,20 @@ public:
         *out = nullptr;
         return E_NOINTERFACE;
     }
-    STDMETHOD_(ULONG, AddRef)() override { return ++refs_; }
+    STDMETHOD_(ULONG, AddRef)() override { ApiLock api_lock(__func__); return refs_.add_ref(); }
     STDMETHOD_(ULONG, Release)() override {
-        const ULONG r = --refs_;
-        if (r == 0) delete this;
-        return r;
+        ApiLock api_lock(__func__);
+        return refs_.release(this);
     }
-    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { return stub_result<HRESULT>("IDirect3DQuery9::GetDevice"); }
-    STDMETHOD_(D3DQUERYTYPE, GetType)() override { return stub_result<D3DQUERYTYPE>("IDirect3DQuery9::GetType"); }
-    STDMETHOD_(DWORD, GetDataSize)() override { return stub_result<DWORD>("IDirect3DQuery9::GetDataSize"); }
-    STDMETHOD_(HRESULT, Issue)(DWORD dwIssueFlags) override { return stub_result<HRESULT>("IDirect3DQuery9::Issue"); }
-    STDMETHOD_(HRESULT, GetData)(void* pData, DWORD dwSize, DWORD dwGetDataFlags) override { return stub_result<HRESULT>("IDirect3DQuery9::GetData"); }
+    void AddRefPrivate() { ApiLock api_lock(__func__); refs_.add_private(); }
+    void ReleasePrivate() { ApiLock api_lock(__func__); refs_.release_private(this); }
+    void SetDeviceParent(IUnknown* parent) { refs_.set_parent(parent); }
+    STDMETHOD_(HRESULT, GetDevice)(struct IDirect3DDevice9** ppDevice) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DQuery9::GetDevice"); }
+    STDMETHOD_(D3DQUERYTYPE, GetType)() override { ApiLock api_lock(__func__); return stub_result<D3DQUERYTYPE>("IDirect3DQuery9::GetType"); }
+    STDMETHOD_(DWORD, GetDataSize)() override { ApiLock api_lock(__func__); return stub_result<DWORD>("IDirect3DQuery9::GetDataSize"); }
+    STDMETHOD_(HRESULT, Issue)(DWORD dwIssueFlags) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DQuery9::Issue"); }
+    STDMETHOD_(HRESULT, GetData)(void* pData, DWORD dwSize, DWORD dwGetDataFlags) override { ApiLock api_lock(__func__); return stub_result<HRESULT>("IDirect3DQuery9::GetData"); }
 
 protected:
-    std::atomic<ULONG> refs_{1};
+    ObjectRefs refs_;
 };

@@ -41,6 +41,7 @@ def main() -> None:
         out.append("public:")
         out.append(f"    virtual ~Stub{name}() = default;")
         out.append("    STDMETHOD(QueryInterface)(REFIID riid, void** out) override {")
+        out.append("        ApiLock api_lock(__func__);")
         out.append("        if (!out) return E_POINTER;")
         iids = " || ".join(f"riid == __uuidof({i})" for i in chain + ["IUnknown"])
         out.append(f"        if ({iids}) {{")
@@ -51,12 +52,14 @@ def main() -> None:
         out.append("        *out = nullptr;")
         out.append("        return E_NOINTERFACE;")
         out.append("    }")
-        out.append("    STDMETHOD_(ULONG, AddRef)() override { return ++refs_; }")
+        out.append("    STDMETHOD_(ULONG, AddRef)() override { ApiLock api_lock(__func__); return refs_.add_ref(); }")
         out.append("    STDMETHOD_(ULONG, Release)() override {")
-        out.append("        const ULONG r = --refs_;")
-        out.append("        if (r == 0) delete this;")
-        out.append("        return r;")
+        out.append("        ApiLock api_lock(__func__);")
+        out.append("        return refs_.release(this);")
         out.append("    }")
+        out.append("    void AddRefPrivate() { ApiLock api_lock(__func__); refs_.add_private(); }")
+        out.append("    void ReleasePrivate() { ApiLock api_lock(__func__); refs_.release_private(this); }")
+        out.append("    void SetDeviceParent(IUnknown* parent) { refs_.set_parent(parent); }")
         for ret, n1, n2, args in METHOD.findall(m.group(2)):
             mname = n1 or n2
             if mname in ("QueryInterface", "AddRef", "Release"):
@@ -66,10 +69,10 @@ def main() -> None:
             body = (f"stub_result<{ret}>(\"{name}::{mname}\")" if ret != "void"
                     else f"stub_result<int>(\"{name}::{mname}\")")
             stmt = f"return {body};" if ret != "void" else f"{body};"
-            out.append(f"    STDMETHOD_({ret}, {mname})({args}) override {{ {stmt} }}")
+            out.append(f"    STDMETHOD_({ret}, {mname})({args}) override {{ ApiLock api_lock(__func__); {stmt} }}")
         out.append("")
         out.append("protected:")
-        out.append("    std::atomic<ULONG> refs_{1};")
+        out.append("    ObjectRefs refs_;")
         out.append("};")
         out.append("")
     open(sys.argv[2], "w").write("\n".join(out))

@@ -10,9 +10,11 @@ add_library(dirt2_shims OBJECT
   kernel32/locale.cpp
   user32/user32.cpp
   misc/misc.cpp
+  misc/envmap_list.cpp
   xlive/xlive.cpp
   ws2_32/ws2_32.cpp
   d3d9/bridge.cpp
+  d3d9/conformance.cpp
   frontend/menu_patch.cpp
   d3d11/reflect.cpp
   d3d11/compiler.cpp
@@ -42,16 +44,30 @@ foreach(flag ${VORBISFILE_STATIC_LDFLAGS} ${FFMPEG_STATIC_LDFLAGS})
     list(APPEND _deps_ldflags "${flag}")
   endif()
 endforeach()
+if(DIRT2_SWITCH_DXVK)
+  # The NVK SDK also ships a full FFmpeg build. Keep the game's existing
+  # minimal codecs/audio archives instead of resolving -l through SDK paths.
+  list(TRANSFORM _deps_ldflags REPLACE "^-l(avformat|avcodec|avutil|vorbisfile|vorbis|ogg)$"
+    "${DIRT2_DEPS_DIR}/lib/lib\\1.a")
+endif()
 target_include_directories(dirt2_shims PUBLIC ${VORBISFILE_STATIC_INCLUDE_DIRS} ${FFMPEG_STATIC_INCLUDE_DIRS})
 target_link_libraries(dirt2_shims PUBLIC recomp_runtime dxvk_d3d9 SDL3::SDL3 OpenAL::OpenAL ${_deps_ldflags})
 target_compile_options(dirt2_shims PRIVATE -Wall -Wno-unused-parameter -Wno-unused-function)
 
 # The D3D11/DXGI bridge compiles against DXMT's headers only: DXVK's include
 # path has its own d3d11.h, and both declare IUnknown.
-if(DIRT2_HAVE_DXMT)
+if(DIRT2_HAVE_DXMT OR DIRT2_HAVE_DXVK_D3D11)
   add_library(dirt2_shims_d3d11 OBJECT d3d11/bridge.cpp)
+  if(DIRT2_SWITCH_DXVK)
+    target_sources(dirt2_shims_d3d11 PRIVATE d3d11/shader_preload.cpp)
+  endif()
   target_compile_definitions(dirt2_shims_d3d11 PRIVATE NOMINMAX _WIN32_WINNT=0xa00)
   target_include_directories(dirt2_shims_d3d11 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-  target_link_libraries(dirt2_shims_d3d11 PUBLIC recomp_runtime dxmt)
+  if(DIRT2_HAVE_DXVK_D3D11)
+    target_compile_definitions(dirt2_shims_d3d11 PRIVATE DIRT2_D3D11_DXVK=1)
+    target_link_libraries(dirt2_shims_d3d11 PUBLIC recomp_runtime dxvk_d3d9)
+  else()
+    target_link_libraries(dirt2_shims_d3d11 PUBLIC recomp_runtime dxmt)
+  endif()
   target_compile_options(dirt2_shims_d3d11 PRIVATE -Wall -Wno-unused-parameter -Wno-unused-function)
 endif()

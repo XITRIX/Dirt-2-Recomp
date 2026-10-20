@@ -1,0 +1,78 @@
+diff --git a/src/util/util_file.cpp b/src/util/util_file.cpp
+--- a/src/util/util_file.cpp
++++ b/src/util/util_file.cpp
+@@ -154,7 +154,8 @@
+ 
+   public:
+ 
+-    StlFile(const std::string& path, FileFlags flags) {
++    StlFile(const std::string& path, FileFlags flags)
++    : m_flags(flags) {
+       std::ios_base::openmode mode = std::ios_base::binary;
+ 
+       if (flags.test(FileFlag::AllowRead))
+diff --git a/src/dxvk/dxvk_shader_cache.cpp b/src/dxvk/dxvk_shader_cache.cpp
+--- a/src/dxvk/dxvk_shader_cache.cpp
++++ b/src/dxvk/dxvk_shader_cache.cpp
+@@ -119,10 +119,16 @@
+     }
+ 
+     if (openReadWriteLocked()) {
+-      if (parseLut())
+-        return Status::OpenReadWrite;
+-    }
+-
++      try {
++        if (parseLut())
++          return Status::OpenReadWrite;
++      } catch (const std::exception& e) {
++        Logger::warn(str::format("Discarding unreadable shader cache: ", e.what()));
++      }
++    }
++
++    // Never retain offsets into a cache that is about to be truncated.
++    m_lut.clear();
+     if (openWriteOnlyLocked())
+       return Status::OpenWriteOnly;
+ 
+@@ -272,6 +278,12 @@
+ 
+ 
+   Rc<DxvkIrShader> DxvkShaderCache::loadCachedShaderLocked(const LutKey& key, const LutEntry& entry) {
++    const uint64_t fileSize = m_binFile.size();
++    if (entry.offset > fileSize || entry.binarySize > fileSize - entry.offset
++     || entry.metadataSize > fileSize - entry.offset - entry.binarySize) {
++      Logger::warn("Cached shader extends beyond the binary file");
++      return nullptr;
++    }
+     std::vector<uint8_t> ir(entry.binarySize);
+ 
+     size_t offset = entry.offset;
+@@ -457,6 +469,14 @@
+     uint32_t xfbCount = 0u;
+     status = status && read(stream, offset, xfbCount);
+ 
++    // Each stream-output entry has at least a uint16 string length, four
++    // uint8 fields and two uint16 fields. Validate before allocating: a torn
++    // cache tail must not turn arbitrary bytes into a multi-gigabyte resize.
++    const size_t fileSize = stream.size();
++    constexpr size_t minEntrySize = 10u;
++    if (!status || offset > fileSize || xfbCount > (fileSize - offset) / minEntrySize)
++      return false;
++
+     key.createInfo.xfbEntries.resize(xfbCount);
+ 
+     for (uint32_t i = 0u; i < xfbCount; i++)
+diff --git a/src/dxvk/dxvk_shader_cache.h b/src/dxvk/dxvk_shader_cache.h
+--- a/src/dxvk/dxvk_shader_cache.h
++++ b/src/dxvk/dxvk_shader_cache.h
+@@ -201,6 +201,9 @@
+     }
+ 
+     static bool readBytes(util::File& stream, char* data, size_t& offset, size_t size) {
++      const size_t fileSize = stream.size();
++      if (offset > fileSize || size > fileSize - offset)
++        return false;
+       bool result = stream.read(offset, size, data);
+       offset += size;
+       return result;

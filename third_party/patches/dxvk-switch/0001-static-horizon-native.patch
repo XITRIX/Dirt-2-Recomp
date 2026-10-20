@@ -1,0 +1,263 @@
+diff --git a/src/util/util_win32_compat.h b/src/util/util_win32_compat.h
+--- a/src/util/util_win32_compat.h
++++ b/src/util/util_win32_compat.h
+@@ -1,25 +1,31 @@
+ #pragma once
+ 
+-#if defined(__unix__) || defined(__APPLE__)
++#if defined(__unix__) || defined(__APPLE__) || defined(__SWITCH__)
+ 
+ #include <windows.h>
+-#include <dlfcn.h>
++#include <SDL3/SDL.h>
++#include <SDL3/SDL_vulkan.h>
++#include <cstring>
+ 
+ #include "log/log.h"
+ 
+ inline HMODULE LoadLibraryA(LPCSTR lpLibFileName) {
+-  return dlopen(lpLibFileName, RTLD_NOW);
++  return reinterpret_cast<HMODULE>(uintptr_t(1));
+ }
+ 
+ inline void FreeLibrary(HMODULE module) {
+-  dlclose(module);
++  (void)module;
+ }
+ 
+ inline void* GetProcAddress(HMODULE module, LPCSTR lpProcName) {
+   if (!module)
+     return nullptr;
+ 
+-  return dlsym(module, lpProcName);
++  #define SDL_PROC(ret, name, params) if (!std::strcmp(lpProcName, #name)) return reinterpret_cast<void*>(&::name);
++  #include "../wsi/sdl3/wsi_platform_sdl3_funcs.h"
++  if (!std::strcmp(lpProcName, "SDL_RunOnMainThread")) return reinterpret_cast<void*>(&::SDL_RunOnMainThread);
++  if (!std::strcmp(lpProcName, "SDL_IsMainThread")) return reinterpret_cast<void*>(&::SDL_IsMainThread);
++  return nullptr;
+ }
+ 
+ inline HANDLE CreateSemaphoreA(
+diff --git a/src/util/thread.h b/src/util/thread.h
+--- a/src/util/thread.h
++++ b/src/util/thread.h
+@@ -361,13 +361,14 @@
+     using std::thread::thread;
+ 
+     void set_priority(ThreadPriority priority) {
+-#ifdef __APPLE__
++#if defined(__APPLE__) || defined(__SWITCH__)
+       // Darwin's SCHED_OTHER priorities are 15..47 (default 31), so the
+       // priority 0 below starves the thread: a draw waiting for a pipeline
+       // on a compiler worker could stall for seconds. Keep the default.
+       (void)priority;
+       return;
+ #endif
++#ifndef __SWITCH__
+       ::sched_param param = {};
+       int32_t policy;
+       switch (priority) {
+@@ -380,6 +381,7 @@
+ #endif
+       }
+       ::pthread_setschedparam(this->native_handle(), policy, &param);
++#endif
+     }
+   };
+ 
+diff --git a/src/util/util_env.cpp b/src/util/util_env.cpp
+--- a/src/util/util_env.cpp
++++ b/src/util/util_env.cpp
+@@ -100,6 +100,8 @@
+     exePath.resize(len + 1);
+ 
+     return str::fromws(exePath.data());
++#elif defined(__SWITCH__)
++    return "dirt2_game.exe";
+ #elif defined(__linux__)
+     std::array<char, PATH_MAX> exePath = {};
+ 
+@@ -149,7 +151,9 @@
+ #ifdef __APPLE__
+     ::pthread_setname_np(posixName.data());
+ #else
++#ifndef __SWITCH__
+     ::pthread_setname_np(pthread_self(), posixName.data());
++#endif
+ #endif
+ #endif
+   }
+diff --git a/src/d3d11/d3d11_main.cpp b/src/d3d11/d3d11_main.cpp
+--- a/src/d3d11/d3d11_main.cpp
++++ b/src/d3d11/d3d11_main.cpp
+@@ -9,7 +9,7 @@
+ #include "d3d11_interop.h"
+ 
+ namespace dxvk {
+-  Logger Logger::s_instance("d3d11.log");
++
+ }
+   
+ extern "C" {
+diff --git a/src/d3d11/meson.build b/src/d3d11/meson.build
+--- a/src/d3d11/meson.build
++++ b/src/d3d11/meson.build
+@@ -79,15 +79,11 @@
+   d3d11_dxgi_deps = [ dxgi_dep ]
+ endif
+ 
+-d3d11_dll = shared_library(dxvk_name_prefix+'d3d11', dxgi_common_src + d3d11_src + d3d10_src,
++d3d11_dll = static_library(dxvk_name_prefix+'d3d11', dxgi_common_src + d3d11_src + d3d10_src,
+     glsl_generator.process(d3d11_shaders), d3d11_res,
+   dependencies        : d3d11_dxgi_deps + [ dxvk_dep, dxbc_spirv_dep ],
+   include_directories : dxvk_include_path,
+   install             : true,
+-  vs_module_defs      : 'd3d11'+def_spec_ext,
+-  link_args           : d3d11_ld_args,
+-  link_depends        : [ d3d11_link_depends ],
+-  kwargs              : dxvk_so_version,
+ )
+ 
+ d3d11_dep = declare_dependency(
+diff --git a/src/vulkan/vulkan_loader.cpp b/src/vulkan/vulkan_loader.cpp
+--- a/src/vulkan/vulkan_loader.cpp
++++ b/src/vulkan/vulkan_loader.cpp
+@@ -6,6 +6,8 @@
+ 
+ #include "../util/util_string.h"
+ #include "../util/util_win32_compat.h"
++
++extern "C" PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char*);
+ 
+ namespace dxvk::vk {
+ 
+@@ -52,7 +54,8 @@
+   }
+ 
+   LibraryLoader::LibraryLoader() {
+-    std::tie(m_library, m_getInstanceProcAddr) = loadVulkanLibrary();
++    m_library = nullptr;
++    m_getInstanceProcAddr = &::vkGetInstanceProcAddr;
+   }
+ 
+   LibraryLoader::LibraryLoader(PFN_vkGetInstanceProcAddr loaderProc) {
+diff --git a/src/d3d9/d3d9_util.h b/src/d3d9/d3d9_util.h
+--- a/src/d3d9/d3d9_util.h
++++ b/src/d3d9/d3d9_util.h
+@@ -121,7 +121,7 @@
+ 
+   VkFormat GetPackedDepthStencilFormat(D3D9Format Format);
+ 
+-  VkFormatFeatureFlags2 GetImageFormatFeatures(DWORD Usage);
++  VkFormatFeatureFlags2 D3D9GetImageFormatFeatures(DWORD Usage);
+ 
+   VkImageUsageFlags GetImageUsageFlags(DWORD Usage);
+ 
+diff --git a/src/d3d9/d3d9_util.cpp b/src/d3d9/d3d9_util.cpp
+--- a/src/d3d9/d3d9_util.cpp
++++ b/src/d3d9/d3d9_util.cpp
+@@ -97,7 +97,7 @@
+   }
+ 
+ 
+-  VkFormatFeatureFlags2 GetImageFormatFeatures(DWORD Usage) {
++  VkFormatFeatureFlags2 D3D9GetImageFormatFeatures(DWORD Usage) {
+     VkFormatFeatureFlags2 features = VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_BIT;
+ 
+     if (Usage & D3DUSAGE_DEPTHSTENCIL)
+diff --git a/src/d3d9/meson.build b/src/d3d9/meson.build
+--- a/src/d3d9/meson.build
++++ b/src/d3d9/meson.build
+@@ -60,7 +60,7 @@
+   d3d9_link_depends += files('d3d9.sym')
+ endif
+ 
+-if platform == 'darwin'
++if platform == 'darwin' or platform == 'horizon'
+   # Apple: a static library, linked into the app together with DXVK's internal
+   # static libraries (no loose dylibs; iOS apps cannot load arbitrary ones).
+   d3d9_dll = static_library(dxvk_name_prefix+'d3d9', d3d9_src, glsl_generator.process(d3d9_shaders), d3d9_res,
+diff --git a/src/d3d9/d3d9_main.cpp b/src/d3d9/d3d9_main.cpp
+--- a/src/d3d9/d3d9_main.cpp
++++ b/src/d3d9/d3d9_main.cpp
+@@ -9,7 +9,7 @@
+ using PSGPERRORID = UINT;
+ 
+ namespace dxvk {
+-  Logger Logger::s_instance("d3d9.log");
++
+   D3D9GlobalAnnotationList D3D9GlobalAnnotationList::s_instance;
+ 
+   HRESULT CreateD3D9(
+diff --git a/src/dxgi/dxgi_main.cpp b/src/dxgi/dxgi_main.cpp
+--- a/src/dxgi/dxgi_main.cpp
++++ b/src/dxgi/dxgi_main.cpp
+@@ -3,7 +3,7 @@
+ 
+ namespace dxvk {
+   
+-  Logger Logger::s_instance("dxgi.log");
++
+   
+   HRESULT createDxgiFactory(UINT Flags, REFIID riid, void **ppFactory) {
+     try {
+diff --git a/src/dxgi/meson.build b/src/dxgi/meson.build
+--- a/src/dxgi/meson.build
++++ b/src/dxgi/meson.build
+@@ -24,14 +24,10 @@
+   dxgi_link_depends += files('dxgi.sym')
+ endif
+ 
+-dxgi_dll = shared_library(dxvk_name_prefix+'dxgi', dxgi_src, dxgi_res,
++dxgi_dll = static_library(dxvk_name_prefix+'dxgi', dxgi_src, dxgi_res,
+   dependencies        : [ dxvk_dep, dxgi_extra_dep ],
+   include_directories : dxvk_include_path,
+   install             : true,
+-  vs_module_defs      : 'dxgi'+def_spec_ext,
+-  link_args           : dxgi_ld_args,
+-  link_depends        : [ dxgi_link_depends ],
+-  kwargs              : dxvk_so_version,
+ )
+ 
+ dxgi_dep = declare_dependency(
+diff --git a/src/wsi/sdl3/wsi_platform_sdl3.cpp b/src/wsi/sdl3/wsi_platform_sdl3.cpp
+--- a/src/wsi/sdl3/wsi_platform_sdl3.cpp
++++ b/src/wsi/sdl3/wsi_platform_sdl3.cpp
+@@ -9,7 +9,7 @@
+ 
+ namespace dxvk::wsi {
+ 
+-#if defined(__APPLE__)
++#if defined(__APPLE__) || defined(__SWITCH__)
+   // Cocoa/UIKit only allow window changes (and Metal view creation) on the
+   // main thread, while DXVK runs on the application's render thread. These
+   // wrappers marshal those calls with SDL_RunOnMainThread.
+@@ -64,7 +64,7 @@
+         "libSDL3.so.0"
+ #endif
+       );
+-#if defined(__APPLE__)
++#if defined(__APPLE__) || defined(__SWITCH__)
+     // SDL linked into the process (always the case on iOS).
+     if (libsdl == nullptr) {
+       HMODULE self = LoadLibraryA(nullptr);
+@@ -84,7 +84,7 @@
+       }
+     #include "wsi_platform_sdl3_funcs.h"
+ 
+-#if defined(__APPLE__)
++#if defined(__APPLE__) || defined(__SWITCH__)
+     g_runOnMain = reinterpret_cast<RunOnMainFn>(GetProcAddress(libsdl, "SDL_RunOnMainThread"));
+     g_isMain = reinterpret_cast<IsMainFn>(GetProcAddress(libsdl, "SDL_IsMainThread"));
+     rawSetWindowSize = SDL_SetWindowSize;               SDL_SetWindowSize = &mainSetWindowSize;
+diff --git a/src/util/log/log.cpp b/src/util/log/log.cpp
+--- a/src/util/log/log.cpp
++++ b/src/util/log/log.cpp
+@@ -5,6 +5,7 @@
+ #include "../util_env.h"
+ 
+ namespace dxvk {
++  Logger Logger::s_instance("dxvk-switch.log");
+   
+   Logger::Logger(const std::string& fileName)
+   : m_minLevel(getMinLogLevel()), m_fileName(fileName) {

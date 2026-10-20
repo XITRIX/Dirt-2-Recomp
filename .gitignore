@@ -14,3 +14,7 @@
 .cache/
 *.log
 /game-files/
+
+# Python tool caches
+__pycache__/
+*.pyc

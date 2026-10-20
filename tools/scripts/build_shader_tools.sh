@@ -34,3 +34,5 @@ cmake -S "$ROOT/tools/dx9shader" -B "$ROOT/build/tools/dx9shader" -G Ninja -DCMA
     -DMOJOSHADER_DIR="$MOJO" -DSPIRV_CROSS_DIR="$SPIRV_CROSS" > /dev/null
 cmake --build "$ROOT/build/tools/dx9shader"
 echo "build/tools/dx9shader/dx9shader"
+
+bash "$ROOT/tools/scripts/build_uam_tools.sh"

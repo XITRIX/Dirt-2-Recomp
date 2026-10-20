@@ -1,0 +1,63 @@
+--- a/mojoshader.c
++++ b/mojoshader.c
+@@ -753,9 +753,21 @@
+             // figure out what array we're in...
+             if (!ctx->ignores_ctab)
+             {
+-                if (!ctx->ctab.have_ctab)  // hard to do efficiently without!
+-                    fail(ctx, "relative addressing unsupported without a CTAB");
+-                else
++                if (!ctx->ctab.have_ctab && ctx->variables == NULL)
++                {
++                    // CTAB is optional debug information. Without it, the
++                    // addressable array is the complete native float bank.
++                    VariableList *bank = (VariableList *) Malloc(ctx, sizeof(VariableList));
++                    if (bank == NULL) return retval;
++                    memset(bank, 0, sizeof(*bank));
++                    bank->type = MOJOSHADER_UNIFORM_FLOAT;
++                    bank->count = shader_is_vertex(ctx) ? 256 : 224;
++                    bank->emit_position = -1;
++                    ctx->variables = bank;
++                    // DEF values remain individual constants, overlaid on
++                    // relative uniform reads by the SPIR-V backend.
++                    ctx->determined_constants_arrays = 1;
++                }
+                 {
+                     determine_constants_arrays(ctx);
+ 
+@@ -839,7 +851,8 @@
+         // !!! FIXME: Microsoft's shader validation explicitly checks temp
+         // !!! FIXME:  registers for this...do they check other writable ones?
+         if ((info->regtype == REG_TYPE_TEMP) && (reg) && (!reg->written))
+-            failf(ctx, "Temp register r%d used uninitialized", info->regnum);
++            if (strcmp(ctx->profile->name, MOJOSHADER_PROFILE_SPIRV) != 0)
++                failf(ctx, "Temp register r%d used uninitialized", info->regnum);
+     } // if
+ 
+     return retval;
+--- a/profiles/mojoshader_profile_spirv.c
++++ b/profiles/mojoshader_profile_spirv.c
+@@ -1099,6 +1099,23 @@
+             result.tid = spv_get_type(ctx, STI_VEC4);
+             result.id = spv_bumpid(ctx);
+             spv_emit(ctx, 4, SpvOpLoad, result.tid, result.id, id_pvalue);
++            if (!is_constant && !ctx->ctab.have_ctab)
++            {
++                // DEF overrides Set*ShaderConstantF even through an indirect
++                // address. Constants may be interspersed with API registers.
++                ConstantsList *item;
++                for (item = ctx->constants; item; item = item->next)
++                {
++                    if (item->constant.type != MOJOSHADER_UNIFORM_FLOAT) continue;
++                    SpirvResult literal = spv_loadreg(ctx, spv_getreg(ctx, REG_TYPE_CONST, item->constant.index));
++                    uint32 equal = spv_bumpid(ctx), mask = spv_bumpid(ctx), selected = spv_bumpid(ctx);
++                    spv_emit(ctx, 5, SpvOpIEqual, spv_get_type(ctx, STI_BOOL), equal, id_offset,
++                             spv_getscalari(ctx, item->constant.index));
++                    spv_emit(ctx, 7, SpvOpCompositeConstruct, spv_get_type(ctx, STI_BVEC4), mask, equal, equal, equal, equal);
++                    spv_emit(ctx, 6, SpvOpSelect, result.tid, selected, mask, literal.id, result.id);
++                    result.id = selected;
++                }
++            }
+         } // else
+     } // if
+     else

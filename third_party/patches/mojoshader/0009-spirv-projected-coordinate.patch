@@ -1,0 +1,27 @@
+--- a/profiles/mojoshader_profile_spirv.c
++++ b/profiles/mojoshader_profile_spirv.c
+@@ -3758,13 +3758,17 @@
+         {
+             if ((TextureType) sampler_reg->index == TEXTURE_TYPE_CUBE)
+                 fail(ctx, "TEXLDP on a cubemap");  // !!! FIXME: is this legal?
+-            else if ((TextureType) sampler_reg->index == TEXTURE_TYPE_2D)
+-            {
+-                // Need to move w to z, z can be discarded entirely
+-                uint32 vec3_tid = spv_get_type(ctx, STI_VEC3);
+-                texcoord = spv_emit_swizzle(ctx, texcoord, vec3_tid, (0 << 0) | (1 << 2) | (3 << 4), 0x7);
+-            }
+-            opcode = SpvOpImageSampleProjImplicitLod;
++            // Divide the full coordinate so the depth-comparison reference
++            // survives translation alongside s/t. A projected vec3(x,y,q)
++            // discards z before the bound texture's shadow mode is known.
++            uint32 vec4_tid = spv_get_type(ctx, STI_VEC4);
++            uint32 divisor = spv_emit_swizzle(ctx, texcoord, vec4_tid, 0xff, 0xf);
++            uint32 projected = spv_bumpid(ctx);
++            push_output(ctx, &ctx->mainline);
++            spv_emit(ctx, 5, SpvOpFDiv, vec4_tid, projected, texcoord, divisor);
++            pop_output(ctx);
++            texcoord = projected;
++            opcode = SpvOpImageSampleImplicitLod;
+         } // if
+         else
+             opcode = SpvOpImageSampleImplicitLod;

@@ -1,0 +1,31 @@
+--- a/profiles/mojoshader_profile_spirv.c
++++ b/profiles/mojoshader_profile_spirv.c
+@@ -2672,7 +2672,7 @@
+     uint32 implicit_input_count = sizeof(ctx->spirv.id_implicit_input) / sizeof(uint32);
+     if (shader_is_pixel(ctx))
+     {
+-        if (!shader_version_atleast(ctx, 1, 4))
++        if (!shader_version_atleast(ctx, 2, 0))
+         {
+             for (uint32 i = 0; i < implicit_input_count; i++)
+             {
+@@ -2723,7 +2723,7 @@
+     // only applies to pixel shaders
+     if (shader_is_pixel(ctx))
+     {
+-        if (!shader_version_atleast(ctx, 1, 4))
++        if (!shader_version_atleast(ctx, 2, 0))
+         {
+             for (uint32 i = 0; i < implicit_input_count; i++)
+             {
+--- a/profiles/mojoshader_profile_spirv.h
++++ b/profiles/mojoshader_profile_spirv.h
+@@ -218,7 +218,7 @@
+     // TEX opcode in ps_1_3 and below has one implicit texcoord input attribute for each texture
+     // register. We use this array to hold SSA id of this input attribute (see emit_SPIRV_global
+     // for details).
+-    uint32 id_implicit_input[4];
++    uint32 id_implicit_input[8];
+ 
+     int loop_stack_idx;
+     SpirvLoopInfo loop_stack[32];

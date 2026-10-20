@@ -55,12 +55,25 @@ elseif(APPLE)
 else()
   message(FATAL_ERROR "Unsupported platform: Apple (macOS, iOS) and Nintendo Switch are wired up")
 endif()
-set(DIRT2_DEPS_DIR "${CMAKE_SOURCE_DIR}/build/deps/${DIRT2_PLATFORM}" CACHE PATH "build_deps.sh output prefix")
+if(DIRT2_SWITCH)
+  option(DIRT2_SWITCH_DXVK "Primary Switch D3D11/DXVK renderer on native NVK (OFF: D3D9/deko3d fallback)" ON)
+endif()
+set(_deps_platform "${DIRT2_PLATFORM}")
+if(DIRT2_SWITCH_DXVK)
+  set(_deps_platform "switch-nvk")
+endif()
+set(DIRT2_DEPS_DIR "${CMAKE_SOURCE_DIR}/build/deps/${_deps_platform}" CACHE PATH "build_deps.sh output prefix")
 set(SDL3_DIR "${DIRT2_DEPS_DIR}/lib/cmake/SDL3")
 set(OpenAL_DIR "${DIRT2_DEPS_DIR}/lib/cmake/OpenAL")
 set(ENV{PKG_CONFIG_LIBDIR} "${DIRT2_DEPS_DIR}/lib/pkgconfig")
 set(ENV{PKG_CONFIG_PATH} "")
 if(DIRT2_SWITCH)
+  if(DIRT2_SWITCH_DXVK)
+    set(DIRT2_NVK_SDK "${CMAKE_SOURCE_DIR}/build/nvk-sdk/root/opt/devkitpro" CACHE PATH "Isolated NVK SDK")
+    # The shared devkitA64 toolchain resolves its own installation path. Its
+    # linker specs must instead see the matching isolated libnx linker script.
+    set(DEVKITPRO "${DIRT2_NVK_SDK}")
+  endif()
   # devkitPro's pkg-config wrapper only sees its portlibs: use the host's
   # pkg-config on our libraries, with the portlibs after them.
   find_program(DIRT2_HOST_PKG_CONFIG pkg-config NO_CMAKE_FIND_ROOT_PATH REQUIRED)
@@ -83,11 +96,31 @@ endif()
 # DXVK finds vkGetInstanceProcAddr and SDL's functions in the process.
 set(DIRT2_DXVK_DIR "${CMAKE_SOURCE_DIR}/build/src/dxvk")  # patched copy (prepare_sources.sh)
 if(DIRT2_SWITCH)
+  if(DIRT2_SWITCH_DXVK)
+    set(DIRT2_NVK_SDK "${CMAKE_SOURCE_DIR}/build/nvk-sdk/root/opt/devkitpro" CACHE PATH "Isolated NVK SDK")
+    set(DIRT2_DXVK_DIR "${CMAKE_SOURCE_DIR}/build/src/dxvk-switch")
+    set(DIRT2_DXVK_SWITCH_ARCHIVE "${CMAKE_SOURCE_DIR}/build/dxvk/switch-dx11/libdxvk_switch.a" CACHE FILEPATH "Native Switch DXVK archive")
+    add_library(dxvk_d3d9 STATIC IMPORTED)
+    set_target_properties(dxvk_d3d9 PROPERTIES
+      IMPORTED_LOCATION "${DIRT2_DXVK_SWITCH_ARCHIVE}"
+      INTERFACE_INCLUDE_DIRECTORIES "${DIRT2_DXVK_DIR}/include/native/directx;${DIRT2_DXVK_DIR}/include/native/windows")
+    add_library(switch_nvk STATIC IMPORTED)
+    set_target_properties(switch_nvk PROPERTIES
+      IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/build/nvk-sdk/libvulkan_dirt2.a"
+      INTERFACE_INCLUDE_DIRECTORIES "${DIRT2_NVK_SDK}/portlibs/switch/include"
+      INTERFACE_LINK_LIBRARIES "expat;zstd;z;nx")
+    # SDL's static package also requests a target/library named "vulkan".
+    # Resolve it to the same private archive, never a second unrenamed -lvulkan.
+    add_library(vulkan ALIAS switch_nvk)
+    set_property(TARGET dxvk_d3d9 APPEND PROPERTY INTERFACE_LINK_LIBRARIES switch_nvk)
+    set(DIRT2_HAVE_DXVK_D3D11 ON)
+  else()
   # Switch, Gate 0 (headless boot): the D3D9 bridge compiles against DXVK's
   # headers only; platform/switch provides a Direct3DCreate9 that stops there.
   add_library(dxvk_d3d9 INTERFACE)
   target_include_directories(dxvk_d3d9 INTERFACE
     "${DIRT2_DXVK_DIR}/include/native/directx" "${DIRT2_DXVK_DIR}/include/native/windows")
+  endif()
   set(DIRT2_HAVE_DXMT OFF)
 else()
 set(DIRT2_DXVK_BUILD_DIR "${CMAKE_SOURCE_DIR}/build/dxvk/${DIRT2_PLATFORM}" CACHE PATH "DXVK meson build directory")
@@ -134,12 +167,60 @@ endif()  # not DIRT2_SWITCH
 add_subdirectory(runtime)
 add_subdirectory(shims)
 
+option(DIRT2_BUILD_D3D9_TESTS "Build the standalone macOS D3D9 reference runner" OFF)
+if(DIRT2_BUILD_D3D9_TESTS AND APPLE AND NOT DIRT2_IOS)
+  add_executable(d3d9_conformance tests/d3d9/main.cpp shims/d3d9/conformance.cpp)
+  target_include_directories(d3d9_conformance PRIVATE runtime/include "${DIRT2_DXVK_DIR}/src")
+  target_link_libraries(d3d9_conformance PRIVATE dxvk_d3d9 SDL3::SDL3)
+  # DXVK resolves Vulkan and SDL's WSI functions from the process.
+  foreach(sym vkGetInstanceProcAddr vkGetDeviceProcAddr
+      SDL_GetClosestFullscreenDisplayMode SDL_GetCurrentDisplayMode SDL_GetDesktopDisplayMode SDL_GetDisplayBounds
+      SDL_GetDisplayForWindow SDL_GetDisplayUsableBounds SDL_GetDisplays SDL_GetError SDL_GetFullscreenDisplayModes
+      SDL_GetWindowFlags SDL_GetWindowSizeInPixels SDL_InitSubSystem SDL_IsMainThread SDL_QuitSubSystem
+      SDL_RunOnMainThread SDL_SetWindowFullscreen SDL_SetWindowFullscreenMode SDL_SetWindowPosition SDL_SetWindowSize
+      SDL_Vulkan_CreateSurface SDL_Vulkan_GetInstanceExtensions SDL_Vulkan_LoadLibrary SDL_free)
+    target_link_options(d3d9_conformance PRIVATE "LINKER:-u,_${sym}")
+  endforeach()
+endif()
+
+option(DIRT2_BUILD_WINE_D3D9_TESTS "Build native upstream Wine D3D9 test runner" OFF)
+if(DIRT2_BUILD_WINE_D3D9_TESTS)
+  add_subdirectory(tests/d3d9_wine)
+endif()
+
 # Recompiled game: built from the lifter output when it exists.
 set(DIRT2_GENERATED_DIR "${CMAKE_SOURCE_DIR}/generated" CACHE PATH "Lifter output directory")
 if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
   file(STRINGS "${DIRT2_GENERATED_DIR}/sources.txt" _gen)
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${DIRT2_GENERATED_DIR}/sources.txt")
   list(TRANSFORM _gen PREPEND "${DIRT2_GENERATED_DIR}/")
+  if(DIRT2_SWITCH)
+    # Build only the Switch mode-list check with a360p minimum. The shared
+    # generated sources and Apple builds retain the original480p check.
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(_resolution_patch "${CMAKE_SOURCE_DIR}/tools/scripts/switch_resolution_source.py")
+    execute_process(COMMAND "${Python3_EXECUTABLE}" "${_resolution_patch}" --find "${DIRT2_GENERATED_DIR}"
+      OUTPUT_VARIABLE _resolution_source OUTPUT_STRIP_TRAILING_WHITESPACE
+      RESULT_VARIABLE _resolution_result)
+    if(NOT _resolution_result EQUAL 0)
+      message(FATAL_ERROR "Cannot locate the Switch minimum-resolution check")
+    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_resolution_source}" "${_resolution_patch}")
+    set(_resolution_output "${CMAKE_CURRENT_BINARY_DIR}/switch-generated/resolution.c")
+    add_custom_command(OUTPUT "${_resolution_output}"
+      COMMAND "${Python3_EXECUTABLE}" "${_resolution_patch}" --patch "${_resolution_source}" "${_resolution_output}"
+      DEPENDS "${_resolution_source}" "${_resolution_patch}" VERBATIM)
+    list(REMOVE_ITEM _gen "${_resolution_source}")
+    list(APPEND _gen "${_resolution_output}")
+  endif()
+  set(DIRT2_SWITCH_GENERATED_ARCHIVE "" CACHE FILEPATH "Reuse an already built Switch lifted-code archive")
+  if(DIRT2_SWITCH AND DIRT2_SWITCH_GENERATED_ARCHIVE)
+    if(NOT EXISTS "${DIRT2_SWITCH_GENERATED_ARCHIVE}")
+      message(FATAL_ERROR "Missing prebuilt Switch lifted-code archive")
+    endif()
+    add_library(dirt2_gen STATIC IMPORTED)
+    set_target_properties(dirt2_gen PROPERTIES IMPORTED_LOCATION "${DIRT2_SWITCH_GENERATED_ARCHIVE}")
+  else()
   add_library(dirt2_gen STATIC ${_gen})
   target_include_directories(dirt2_gen PRIVATE "${DIRT2_GENERATED_DIR}/src")
   target_link_libraries(dirt2_gen PUBLIC recomp_runtime)
@@ -154,6 +235,7 @@ if(EXISTS "${DIRT2_GENERATED_DIR}/sources.txt")
   endif()
   if(DIRT2_TSO)
     target_compile_definitions(dirt2_gen PRIVATE RECOMP_TSO=1)
+  endif()
   endif()
 
   if(DIRT2_SWITCH)

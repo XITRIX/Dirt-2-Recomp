@@ -145,28 +145,35 @@ The first run builds the libraries, which takes about an hour; later runs use th
   - The previous run's log is kept as `dirt2.prev.log`.
 - **More detail:** [HANDOVER.md](HANDOVER.md) covers the build system, shader warm-up data, pitfalls and the debugging switches.
 
-## Nintendo Switch (homebrew, in progress)
+## Nintendo Switch (homebrew)
 
-Not playable yet. The renderer is our own D3D9 on deko3d (the Switch's native GPU API), with every DX9 shader translated offline; it is in bring-up and has not drawn a frame on hardware yet. Gate 0 (the game boots to its renderer on the Switch's CPU) passed. The plan and state are in [docs/SWITCH.md](docs/SWITCH.md).
+The primary Switch renderer is **DX11 → DXVK → Mesa NVK**. Hardware testing
+shows clean graphics; performance remains below the 30 FPS target (about20 FPS
+in menus and11–13 FPS in races at0.75x/low settings in the latest user test).
+D3D9/deko3d remains available as a fallback. See [docs/SWITCH.md](docs/SWITCH.md).
 
-You need [devkitPro](https://devkitpro.org/wiki/Getting_Started) with `switch-dev` (devkitA64, libnx, deko3d, uam) in `/opt/devkitpro`, a Switch running Atmosphère, and the lifter output from step 3 above (`generated/`, built on the Mac).
+Prepare devkitPro, the generated game code from step3, and the normal Switch
+SDL/audio dependencies, then build the isolated NVK SDK and renderer:
 
 ```bash
 tools/scripts/build_deps.sh switch
-tools/scripts/build_shader_tools.sh      # host: DX9 shader translator (needs build_graphics.sh macos first)
-tools/scripts/dx9_shader_census.py       # translates the game's 897 DX9 shaders -> build/shaders/dx9/dirt2.dkshpack
+bash tools/scripts/build_switch_dx11.sh
+# Once the dependencies are ready:
 cmake --preset switch
-cmake --build build/switch
+CCACHE_DISABLE=1 cmake --build --preset switch
 tools/scripts/package_switch.sh
 ```
 
-`build_deps.sh switch` builds SDL3 with the Switch port (devkitPro's, see `third_party/patches/README.md`), OpenAL Soft, Vorbis and FFmpeg with devkitA64. Compiling the lifted code with GCC takes over an hour.
+Extract `build/package/switch/DiRT2-switch.zip` onto the SD card and keep game
+assets at `sdmc:/switch/dirt2/Dirt 2`. Launch **DiRT 2** through title takeover
+(hold R while opening an installed game). The DX11 executable/settings/logs
+retain `sdmc:/switch/dirt2-dx11` for compatibility with earlier installations.
+Saves are shared with `sdmc:/switch/dirt2`. The0.5x option is640×360;1x is1280×720.
 
-To install, unzip `build/package/switch/DiRT2-switch.zip` onto the root of the SD card, then copy the game's `Dirt 2` folder into `sdmc:/switch/dirt2/`. Start it by **title takeover**: hold **R** while launching any installed game, then pick DiRT 2 in the Homebrew Menu. Started from the Album, it gets about 400 MB and refuses to run. The log is `sdmc:/switch/dirt2/dirt2.log`: `deko3d:` lines report the device, the shader pack, methods the game calls that are not implemented yet, and frame rate. Crashes log the faulting address as an offset into `build/switch/dirt2.elf`:
-
-```bash
-/opt/devkitpro/devkitA64/bin/aarch64-none-elf-addr2line -f -C -e build/switch/dirt2.elf <offset>
-```
+For the retained DX9/deko3d backend, use `cmake --preset switch-deko`,
+`cmake --build --preset switch-deko` and
+`tools/scripts/package_switch_deko.sh build/switch-deko build/package/switch-deko`.
+It uses the existing offline DX9 shader pack and the original system SDK.
 
 ## The recompiler on its own
 

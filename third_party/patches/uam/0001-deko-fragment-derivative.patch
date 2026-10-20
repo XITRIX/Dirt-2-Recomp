@@ -1,0 +1,34 @@
+--- a/mesa-imported/state_tracker/st_glsl_to_tgsi.cpp
++++ b/mesa-imported/state_tracker/st_glsl_to_tgsi.cpp
+@@ -1642,27 +1642,11 @@
+    case ir_unop_dFdy_coarse:
+    case ir_unop_dFdy_fine:
+    {
+-      /* The X component contains 1 or -1 depending on whether the framebuffer
+-       * is a FBO or the window system buffer, respectively.
+-       * It is then multiplied with the source operand of DDY.
+-       */
+-      static const gl_state_index16 transform_y_state[STATE_LENGTH]
+-         = { STATE_INTERNAL, STATE_FB_WPOS_Y_TRANSFORM };
+-
+-      unsigned transform_y_index =
+-         _mesa_add_state_reference(this->prog->Parameters,
+-                                   transform_y_state);
+-
+-      st_src_reg transform_y = st_src_reg(PROGRAM_STATE_VAR,
+-                                          transform_y_index,
+-                                          glsl_type::vec4_type);
+-      transform_y.swizzle = SWIZZLE_XXXX;
+-
+-      st_src_reg temp = get_temp(glsl_type::vec4_type);
+-
+-      emit_asm(ir, TGSI_OPCODE_MUL, st_dst_reg(temp), transform_y, op[0]);
++      /* deko3d fixes framebuffer orientation in device state and has no
++       * OpenGL STATE_FB_WPOS_Y_TRANSFORM constant. Loading it reads an
++       * unbound driver UBO and turns every derivative into zero. */
+       emit_asm(ir, ir->operation == ir_unop_dFdy_fine ?
+-           TGSI_OPCODE_DDY_FINE : TGSI_OPCODE_DDY, result_dst, temp);
++           TGSI_OPCODE_DDY_FINE : TGSI_OPCODE_DDY, result_dst, op[0]);
+       break;
+    }
+ 

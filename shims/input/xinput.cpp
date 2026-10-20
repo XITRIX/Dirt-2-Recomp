@@ -4,6 +4,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <mutex>
 #include <sstream>
@@ -11,6 +12,7 @@
 #include <vector>
 
 #include "../shim.h"
+#include "../d3d9/capture.h"
 
 using namespace shim;
 
@@ -35,6 +37,11 @@ std::mutex g_mu;
 SDL_Gamepad* g_pads[4] = {};
 PadState g_last[4];
 uint32_t g_packet[4] = {};
+#ifdef __SWITCH__
+bool g_dump_chord[4] = {};
+std::atomic<unsigned> g_dump_pad{0};
+Uint64 g_dump_feedback_until = 0;
+#endif
 
 // DIRT2_INPUT_TRACE=1 logs the first call per (function, index, result) and
 // every gamepad state change, to diagnose pads the game ignores.
@@ -205,6 +212,24 @@ STDCALL_ORD(xinput1_3, 2, 2) {  // XInputGetState(index, XINPUT_STATE*)
         trace_call(2, idx, ERROR_DEVICE_NOT_CONNECTED);
         return ERROR_DEVICE_NOT_CONNECTED;
     }
+#ifdef __SWITCH__
+    // Minus/Plus together: one request per full release, hidden from the game
+    // while the chord is held so it does not also pause/back out of this screen.
+    constexpr uint16_t dump_buttons = XI_START | XI_BACK;
+    if ((s.buttons & dump_buttons) == dump_buttons && !g_dump_chord[idx]) {
+        g_dump_chord[idx] = true;
+        if (request_gpu_dump()) {
+            g_dump_pad = idx;
+            if (g_pads[idx]) SDL_RumbleGamepad(g_pads[idx], 0x5000, 0x5000, 120);
+            g_dump_feedback_until = SDL_GetTicks() + 120;
+            rt::log("xinput: minus+plus GPU capture requested");
+        }
+    }
+    if (g_dump_chord[idx]) {
+        if (!(s.buttons & dump_buttons)) g_dump_chord[idx] = false;
+        s.buttons &= ~dump_buttons;
+    }
+#endif
     if (idx == 0) apply_script(s);
     if (!(s == g_last[idx])) {
         g_last[idx] = s;
@@ -225,11 +250,25 @@ STDCALL_ORD(xinput1_3, 2, 2) {  // XInputGetState(index, XINPUT_STATE*)
     return 0;
 }
 
+namespace shim {
+void gpu_dump_finished(bool success) {
+#ifdef __SWITCH__
+    std::lock_guard lk(g_mu);
+    if (SDL_Gamepad* p = g_pads[g_dump_pad.load()])
+        SDL_RumbleGamepad(p, success ? 0x9000 : 0x3000, success ? 0x9000 : 0, success ? 450 : 900);
+    g_dump_feedback_until = SDL_GetTicks() + (success ? 450 : 900);
+#endif
+}
+}  // namespace shim
+
 STDCALL_ORD(xinput1_3, 3, 2) {  // XInputSetState(index, XINPUT_VIBRATION*)
     const uint32_t idx = a[0];
     if (idx > 3) return ERROR_DEVICE_NOT_CONNECTED;
     std::lock_guard lk(g_mu);
     if (!g_pads[idx]) return idx == 0 ? 0 : ERROR_DEVICE_NOT_CONNECTED;
+#ifdef __SWITCH__
+    if (idx == g_dump_pad && SDL_GetTicks() < g_dump_feedback_until) return 0;
+#endif
     if (a[1]) SDL_RumbleGamepad(g_pads[idx], rd16(a[1]), rd16(a[1] + 2), 10000);
     return 0;
 }

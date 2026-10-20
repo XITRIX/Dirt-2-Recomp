@@ -1,0 +1,42 @@
+--- a/profiles/mojoshader_profile_spirv.c
++++ b/profiles/mojoshader_profile_spirv.c
+@@ -1084,6 +1084,20 @@
+                 spv_emit(ctx, 5, SpvOpIAdd, id_int, id_offset, id_a, id_b);
+             } // if
+ 
++            uint32 id_original_offset = id_offset;
++            uint32 id_in_bounds = 0;
++            if (!is_constant && !ctx->ctab.have_ctab) {
++                uint32 lower = spv_bumpid(ctx), upper = spv_bumpid(ctx), safe = spv_bumpid(ctx);
++                uint32 limit = spv_getscalari(ctx, shader_is_vertex(ctx) ? 256 : 224);
++                const uint32 tid_bool = spv_get_type(ctx, STI_BOOL);
++                spv_emit(ctx, 5, SpvOpSGreaterThanEqual, tid_bool, lower, id_offset, spv_getscalari(ctx, 0));
++                spv_emit(ctx, 5, SpvOpSLessThan, tid_bool, upper, id_offset, limit);
++                id_in_bounds = spv_bumpid(ctx);
++                spv_emit(ctx, 5, SpvOpLogicalAnd, tid_bool, id_in_bounds, lower, upper);
++                spv_emit(ctx, 8, SpvOpExtInst, id_int, safe, spv_getext(ctx), GLSLstd450SClamp, id_offset,
++                         spv_getscalari(ctx, 0), spv_getscalari(ctx, shader_is_vertex(ctx) ? 255 : 223));
++                id_offset = safe;
++            }
+             uint32 id_pvalue;
+             if (is_constant)
+             {
+@@ -1109,12 +1123,17 @@
+                     if (item->constant.type != MOJOSHADER_UNIFORM_FLOAT) continue;
+                     SpirvResult literal = spv_loadreg(ctx, spv_getreg(ctx, REG_TYPE_CONST, item->constant.index));
+                     uint32 equal = spv_bumpid(ctx), mask = spv_bumpid(ctx), selected = spv_bumpid(ctx);
+-                    spv_emit(ctx, 5, SpvOpIEqual, spv_get_type(ctx, STI_BOOL), equal, id_offset,
++                    spv_emit(ctx, 5, SpvOpIEqual, spv_get_type(ctx, STI_BOOL), equal, id_original_offset,
+                              spv_getscalari(ctx, item->constant.index));
+                     spv_emit(ctx, 7, SpvOpCompositeConstruct, spv_get_type(ctx, STI_BVEC4), mask, equal, equal, equal, equal);
+                     spv_emit(ctx, 6, SpvOpSelect, result.tid, selected, mask, literal.id, result.id);
+                     result.id = selected;
+                 }
++                uint32 mask = spv_bumpid(ctx), selected = spv_bumpid(ctx);
++                spv_emit(ctx, 7, SpvOpCompositeConstruct, spv_get_type(ctx, STI_BVEC4), mask,
++                         id_in_bounds, id_in_bounds, id_in_bounds, id_in_bounds);
++                spv_emit(ctx, 6, SpvOpSelect, result.tid, selected, mask, result.id, spv_getvec4_zero(ctx));
++                result.id = selected;
+             }
+         } // else
+     } // if

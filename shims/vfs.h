@@ -15,6 +15,10 @@ constexpr const char* kInstallDir = "C:\\Dirt2";
 
 void set_data_dir(const std::string& d);
 std::string data_dir();
+// Redirect only the game's savegame tree; settings remain in data_dir().
+void set_save_dir(const std::string& d);
+std::string save_dir();
+bool is_data_path(const std::string& host);
 
 // Absolute, normalised Windows path ("C:\a\b") from an absolute or relative one.
 std::string full_path(const std::string& win);

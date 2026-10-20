@@ -17,6 +17,8 @@ namespace {
 
 std::mutex g_mu;
 std::string g_data;
+std::string g_saves;
+constexpr const char* kSaveRelative = "/C/Users/Player/Documents/My Games/DiRT2/savegame";
 std::string g_cwd = kInstallDir;
 std::unordered_map<std::string, std::vector<std::string>> g_dirs;  // host dir -> entries
 std::unordered_map<std::string, std::string> g_overrides;          // lower-case "dir/file" -> host file
@@ -76,6 +78,28 @@ std::string data_dir() {
     return g_data;
 }
 
+void set_save_dir(const std::string& d) {
+    std::lock_guard lk(g_mu);
+    g_saves = d;
+    while (g_saves.size() > 1 && g_saves.back() == '/') g_saves.pop_back();
+    g_dirs.clear();
+}
+
+std::string save_dir() {
+    std::lock_guard lk(g_mu);
+    if (!g_saves.empty()) return g_saves;
+    if (g_data.empty()) g_data = default_data_dir();
+    return g_data + kSaveRelative;
+}
+
+bool is_data_path(const std::string& host) {
+    const auto inside = [&](const std::string& root) {
+        return host == root || (host.size() > root.size() &&
+               host.compare(0, root.size(), root) == 0 && host[root.size()] == '/');
+    };
+    return inside(data_dir()) || inside(save_dir());
+}
+
 std::string full_path(const std::string& in) {
     std::string p = in;
     if (p.rfind("\\\\?\\", 0) == 0) p = p.substr(4);
@@ -119,9 +143,17 @@ std::string host_path(const std::string& win) {
         skip = install.size();
     } else {
         root = data_dir() + "/" + full.substr(0, 1);
+        std::string save_root;
+        { std::lock_guard lk(g_mu); save_root = g_saves; }
+        const auto save_parts = split(std::string(kSaveRelative).substr(3));
+        if (!save_root.empty() && full[0] == 'C' && parts.size() >= save_parts.size() &&
+            std::equal(save_parts.begin(), save_parts.end(), parts.begin(), iequals)) {
+            root = save_root;
+            skip = save_parts.size();
+        }
     }
     std::lock_guard lk(g_mu);
-    if (skip && !g_overrides.empty()) {
+    if (root == rt::game_dir() && !g_overrides.empty()) {
         std::string rel;
         for (size_t i = skip; i < parts.size(); ++i) rel += (rel.empty() ? "" : "/") + lower(parts[i]);
         if (auto it = g_overrides.find(rel); it != g_overrides.end()) return it->second;

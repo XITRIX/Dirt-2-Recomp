@@ -4,11 +4,25 @@
 #include <switch.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 
 #include "recomp/host.h"
 
 namespace deko {
+
+std::recursive_mutex& api_mutex() {
+    static std::recursive_mutex mutex;
+    return mutex;
+}
+
+ApiLock::ApiLock(const char* method) : lock_(api_mutex(), std::defer_lock) {
+    if (lock_.try_lock()) return;
+    lock_.lock();
+    static std::atomic<unsigned> reported{0};
+    if (reported.fetch_add(1, std::memory_order_relaxed) < 8)
+        rt::log("deko3d: serialized concurrent %s call from thread %u", method, rt::current_thread_id());
+}
 
 namespace {
 
@@ -73,6 +87,7 @@ Alloc Pool::alloc(uint32_t size, uint32_t align) {
         Block b{make_block(size, flags_), {}, true};
         if (!b.mem) return {};
         blocks_.push_back(std::move(b));
+        allocated_+=size;
         return Alloc{blocks_.back().mem, 0, size};
     }
     for (int pass = 0; pass < 2; ++pass) {
@@ -85,6 +100,7 @@ Alloc Pool::alloc(uint32_t size, uint32_t align) {
                 b.free.erase(it);
                 if (start > off) b.free[off] = start - off;
                 if (start + size < off + len) b.free[start + size] = off + len - start - size;
+                allocated_+=size;
                 return Alloc{b.mem, start, size};
             }
         Block b{make_block(block_size_, flags_), {}, false};
@@ -98,6 +114,7 @@ Alloc Pool::alloc(uint32_t size, uint32_t align) {
 void Pool::free_now(const Alloc& a) {
     for (Block& b : blocks_) {
         if (b.mem != a.block) continue;
+        allocated_-=std::min<uint64_t>(allocated_,a.size);
         if (b.dedicated) {
             dkMemBlockDestroy(b.mem);
             b = std::move(blocks_.back());
@@ -121,6 +138,12 @@ void Pool::free_now(const Alloc& a) {
 }
 
 // ---- Ring ----
+
+void Pool::destroy() {
+    for (auto& block : blocks_) dkMemBlockDestroy(block.mem);
+    blocks_.clear();
+    allocated_=0;
+}
 
 void Ring::init(uint32_t flags, uint32_t size) {
     flags_ = flags;
@@ -146,6 +169,13 @@ void Ring::reset() {
     overflow_.clear();
 }
 
+void Ring::destroy() {
+    reset();
+    if (mem_) dkMemBlockDestroy(mem_);
+    mem_ = nullptr;
+    size_ = 0;
+}
+
 // ---- Ids ----
 
 int Ids::take() {
@@ -169,13 +199,11 @@ bool Gpu::init() {
     dm.cbDebug = debug_cb;
     device = dkDeviceCreate(&dm);
     if (!device) return false;
+    ++generation;
 
     DkQueueMaker qm;
     dkQueueMakerDefaults(&qm, device);
-    // No Zcull: its coarse per-tile depth went stale across the game's depth
-    // target use and rejected whole 4x4 tiles of draws (the frontend's depth
-    // MRT came out 72% empty, the focus pass then filled the screen with noise).
-    qm.flags = DkQueueFlags_Graphics | DkQueueFlags_HighPrio | DkQueueFlags_DisableZcull;
+    qm.flags = DkQueueFlags_Graphics | DkQueueFlags_HighPrio | DkQueueFlags_EnableZcull;
     qm.commandMemorySize = 1u << 20;
     qm.flushThreshold = 256u << 10;
     queue = dkQueueCreate(&qm);
@@ -226,10 +254,58 @@ bool Gpu::init() {
 
 void Gpu::begin_list() {
     ++list_id;
+    pending_operations = 0;
     const DkGpuAddr base = dkMemBlockGetGpuAddr(descriptors);
     dkCmdBufBindImageDescriptorSet(cmd, base, kMaxImages);
     dkCmdBufBindSamplerDescriptorSet(cmd, base + kMaxImages * sizeof(DkImageDescriptor), kMaxSamplers);
     descriptors_dirty = true;
+}
+
+void Gpu::checkpoint() {
+    // Loading may record thousands of uploads before the first Present. Native
+    // GPFIFO AutoKick alone does not perform deko's queue-ring/fence maintenance.
+    // Submit at completed API operations so deko can maintain its own queue,
+    // while keeping all staging, commands and deferred frees until the frame fence.
+    if (++pending_operations >= 16) flush(false, "an asynchronous command batch");
+}
+
+void Gpu::shutdown() {
+    if (!device) return;
+    // A failed Wine case can abandon live COM objects. Reclaim their backing
+    // allocations centrally; no D3D object may be used after this point.
+    if (queue) dkQueueWaitIdle(queue);
+    if (swapchain) dkSwapchainDestroy(swapchain);
+    swapchain = nullptr;
+    if (cmd) dkCmdBufDestroy(cmd);
+    cmd = nullptr;
+    if (queue) dkQueueDestroy(queue);
+    queue = nullptr;
+    for (auto& f : frames) {
+        for (auto& fn : f.on_done) fn();
+        f.on_done.clear();
+        f.transient.destroy();
+        for (auto block : f.cmd_extra) dkMemBlockDestroy(block);
+        f.cmd_extra.clear();
+        if (f.cmd_mem) dkMemBlockDestroy(f.cmd_mem);
+        f.cmd_mem = nullptr;
+        f.submitted = false;
+    }
+    buffers.destroy();
+    images.destroy();
+    readback.destroy();
+    if (swap_mem) dkMemBlockDestroy(swap_mem);
+    if (descriptors) dkMemBlockDestroy(descriptors);
+    if (code) dkMemBlockDestroy(code);
+    swap_mem = descriptors = code = nullptr;
+    // Also closes nv services and their transfer memory. NRO reload alone does
+    // not terminate the Horizon process or release these kernel mappings.
+    dkDeviceDestroy(device);
+    device = nullptr;
+    code_used = 0;
+    image_ids = Ids{kMaxImages};
+    sampler_ids = Ids{kMaxSamplers};
+    frame = 0;
+    rt::log("deko3d: GPU shutdown complete");
 }
 
 void Gpu::flush(bool wait, const char* what) {
@@ -242,6 +318,7 @@ void Gpu::flush(bool wait, const char* what) {
         dkQueueSignalFence(queue, &f, true);
         dkQueueFlush(queue);
         wait_fence(&f, what);
+        if (dkQueueIsInErrorState(queue)) rt::log("deko3d: GPU fault while completing %s", what);
     }
     else dkQueueFlush(queue);
     begin_list();
@@ -274,8 +351,10 @@ void Gpu::end_frame(int present_slot) {
 // ---- GpuImage ----
 
 bool GpuImage::create(DkImageType t, DkImageFormat f, uint32_t w, uint32_t h, uint32_t d, uint32_t lv, uint32_t ly,
-                      uint32_t flags) {
+                      uint32_t flags, DkMsMode ms) {
+    if (ms != DkMsMode_1x && t != DkImageType_2D && t != DkImageType_2DArray) return false;
     type = t;
+    ms_mode = ms;
     format = f;
     width = std::max<uint32_t>(w, 1);
     height = std::max<uint32_t>(h, 1);
@@ -284,8 +363,14 @@ bool GpuImage::create(DkImageType t, DkImageFormat f, uint32_t w, uint32_t h, ui
     layers = std::max<uint32_t>(ly, 1);
     DkImageLayoutMaker lm;
     dkImageLayoutMakerDefaults(&lm, gpu().device);
-    lm.type = t;
-    lm.flags = flags;
+    // msMode is ignored by deko for ordinary 2D layouts. Keep the logical
+    // resource dimension above, but allocate a genuinely multisampled image.
+    lm.type = ms == DkMsMode_1x ? t : t == DkImageType_2D ? DkImageType_2DMS : DkImageType_2DMSArray;
+    lm.msMode = ms;
+    // Volume uploads/readbacks and same-size copies use the DMA engine. The
+    // 2D engine cannot address 3D images, including our unbound-volume dummy.
+    // Normalize this here so textures and temporary images share the rule.
+    lm.flags = t == DkImageType_3D ? flags & ~DkImageFlags_Usage2DEngine : flags;
     lm.format = f;
     lm.dimensions[0] = width;
     lm.dimensions[1] = height;
@@ -298,21 +383,41 @@ bool GpuImage::create(DkImageType t, DkImageFormat f, uint32_t w, uint32_t h, ui
     return true;
 }
 
+DkImageFormat srgb_format(DkImageFormat format) {
+    switch(format) {
+        case DkImageFormat_RGBA8_Unorm:return DkImageFormat_RGBA8_Unorm_sRGB;
+        case DkImageFormat_RGBX8_Unorm:return DkImageFormat_RGBX8_Unorm_sRGB;
+        case DkImageFormat_BGRA8_Unorm:return DkImageFormat_BGRA8_Unorm_sRGB;
+        case DkImageFormat_BGRX8_Unorm:return DkImageFormat_BGRX8_Unorm_sRGB;
+        case DkImageFormat_RGB_BC1:return DkImageFormat_RGB_BC1_sRGB;
+        case DkImageFormat_RGBA_BC1:return DkImageFormat_RGBA_BC1_sRGB;
+        case DkImageFormat_RGBA_BC2:return DkImageFormat_RGBA_BC2_sRGB;
+        case DkImageFormat_RGBA_BC3:return DkImageFormat_RGBA_BC3_sRGB;
+        case DkImageFormat_RGBA_BC7_Unorm:return DkImageFormat_RGBA_BC7_Unorm_sRGB;
+        default:return format;
+    }
+}
+
 void GpuImage::destroy() {
     if (!mem) return;
     const Alloc m = mem;
-    const int id = desc;
-    gpu().defer([m, id] {
+    const int id = desc, srgb_id = desc_srgb;
+    const auto extra_ids = std::move(lod_descriptors);
+    lod_descriptors.clear();
+    gpu().defer([m, id, srgb_id, extra_ids] {
+        for (const auto& entry : extra_ids) gpu().image_ids.give(entry.second);
         gpu().images.free_now(m);
         if (id >= 0) gpu().image_ids.give(id);
+        if (srgb_id >= 0) gpu().image_ids.give(srgb_id);
     });
     mem = {};
-    desc = -1;
+    desc = desc_srgb = -1;
 }
 
-DkImageView GpuImage::view(uint32_t level, uint32_t layer, bool all, bool sampled) const {
+DkImageView GpuImage::view(uint32_t level, uint32_t layer, bool all, bool sampled, bool srgb) const {
     DkImageView v;
     dkImageViewDefaults(&v, &image);
+    if(srgb)v.format=srgb_format(format);
     if (sampled)
         for (int i = 0; i < 4; ++i) v.swizzle[i] = swizzle[i];
     if (!all) {
@@ -327,14 +432,38 @@ DkImageView GpuImage::view(uint32_t level, uint32_t layer, bool all, bool sample
     return v;
 }
 
-int GpuImage::descriptor() {
-    if (desc >= 0) return desc;
+int GpuImage::descriptor(bool srgb, uint32_t base_level) {
+    if(srgb_format(format)==format)srgb=false;
+    base_level = std::min(base_level, levels - 1);
+    const uint32_t key = base_level * 2 + uint32_t(srgb);
+    if (base_level && !lod_descriptors.count(key)) lod_descriptors[key] = -1;
+    int& descriptor_id = base_level ? lod_descriptors[key] : srgb ? desc_srgb : desc;
+    if (descriptor_id >= 0) return descriptor_id;
     Gpu& g = gpu();
-    desc = g.image_ids.take();
-    const DkImageView v = view(0, 0, true, true);
-    dkImageDescriptorInitialize(&g.image_desc()[desc], &v, false, false);
+    descriptor_id = g.image_ids.take();
+    DkImageView v = view(0, 0, true, true, srgb);
+    v.mipLevelOffset = uint8_t(base_level);
+    v.mipLevelCount = uint8_t(levels - base_level);
+    auto& descriptor = g.image_desc()[descriptor_id];
+    dkImageDescriptorInitialize(&descriptor, &v, false, false);
+    if (format == DkImageFormat_Z16 || format == DkImageFormat_Z24S8 || format == DkImageFormat_ZF32) {
+        // deko's maxwell/tic_generate.cpp deliberately overrides depth-view
+        // swizzles to (depth,depth,depth,1). D3D9 INTZ needs depth in alpha too,
+        // while DF16/DF24 require zero in green/blue. Preserve the SDK-selected
+        // physical depth component and replace only TIC word 0's swizzle bits.
+        uint32_t word;
+        std::memcpy(&word, &descriptor, sizeof(word));
+        const uint32_t depth_component = (word >> 19) & 7u;
+        for (unsigned component = 0; component < 4; ++component) {
+            const uint32_t selector = swizzle[component] == DkImageSwizzle_Zero ? 0u :
+                swizzle[component] == DkImageSwizzle_One || swizzle[component] == DkImageSwizzle_Alpha ? 7u : depth_component;
+            const unsigned shift = 19 + 3 * component;
+            word = (word & ~(7u << shift)) | (selector << shift);
+        }
+        std::memcpy(&descriptor, &word, sizeof(word));
+    }
     g.descriptors_dirty = true;
-    return desc;
+    return descriptor_id;
 }
 
 }  // namespace deko

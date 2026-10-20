@@ -1,0 +1,74 @@
+--- a/profiles/mojoshader_profile_spirv.c
++++ b/profiles/mojoshader_profile_spirv.c
+@@ -2077,6 +2077,11 @@
+ 
+     push_output(ctx, &ctx->mainline_intro);
+     spv_emit(ctx, 4, SpvOpVariable, tid, r->spirv.iddecl, sc);
++    if (regtype == REG_TYPE_TEMP && sc == SpvStorageClassPrivate) {
++        push_output(ctx, &ctx->mainline_top);
++        spv_emit(ctx, 3, SpvOpStore, r->spirv.iddecl, spv_getvec4_zero(ctx));
++        pop_output(ctx);
++    }
+     pop_output(ctx);
+ 
+     spv_output_regname(ctx, r->spirv.iddecl, regtype, regnum);
+@@ -3238,8 +3243,32 @@
+     spv_assign_destarg(ctx, result);
+ } // emit_SPIRV_DP2ADD
+ 
++static void spv_emit_address_move(Context *ctx)
++{
++    SpirvResult src = spv_load_srcarg_full(ctx, 0);
++    assert(src.tid == spv_get_type(ctx, STI_VEC4));
++
++    uint32 id_rounded = spv_bumpid(ctx);
++
++    SpirvResult dst;
++    dst.tid = spv_get_type(ctx, STI_IVEC4);
++    dst.id = spv_bumpid(ctx);
++
++    push_output(ctx, &ctx->mainline);
++    spv_emit(ctx, 5 + 1, SpvOpExtInst, spv_get_type(ctx, STI_VEC4), id_rounded,
++             spv_getext(ctx), (!shader_version_atleast(ctx, 1, 2) ? GLSLstd450Floor : GLSLstd450RoundEven), src.id);
++    spv_emit(ctx, 4, SpvOpConvertFToS, dst.tid, dst.id, id_rounded);
++    pop_output(ctx);
++
++    spv_assign_destarg(ctx, dst);
++}
++
+ void emit_SPIRV_MOV(Context *ctx)
+ {
++    if (shader_is_vertex(ctx) && ctx->dest_arg.regtype == REG_TYPE_ADDRESS) {
++        spv_emit_address_move(ctx);
++        return;
++    }
+     SpirvResult src0 = spv_load_srcarg_full(ctx, 0);
+     spv_assign_destarg(ctx, src0);
+ } // emit_SPIRV_MOV
+@@ -3455,25 +3484,7 @@
+     spv_assign_destarg(ctx, dst);
+ } // emit_SPIRV_SINCOS
+ 
+-void emit_SPIRV_MOVA(Context *ctx)
+-{
+-    SpirvResult src = spv_load_srcarg_full(ctx, 0);
+-    assert(src.tid == spv_get_type(ctx, STI_VEC4));
+-
+-    uint32 id_rounded = spv_bumpid(ctx);
+-
+-    SpirvResult dst;
+-    dst.tid = spv_get_type(ctx, STI_IVEC4);
+-    dst.id = spv_bumpid(ctx);
+-
+-    push_output(ctx, &ctx->mainline);
+-    spv_emit(ctx, 5 + 1, SpvOpExtInst, spv_get_type(ctx, STI_VEC4), id_rounded,
+-             spv_getext(ctx), GLSLstd450Round, src.id);
+-    spv_emit(ctx, 4, SpvOpConvertFToS, dst.tid, dst.id, id_rounded);
+-    pop_output(ctx);
+-
+-    spv_assign_destarg(ctx, dst);
+-} // emit_SPIRV_MOVA
++void emit_SPIRV_MOVA(Context *ctx) { spv_emit_address_move(ctx); } // emit_SPIRV_MOVA
+ 
+ void emit_SPIRV_CMP(Context *ctx)
+ {

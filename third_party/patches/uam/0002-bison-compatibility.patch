@@ -1,0 +1,26 @@
+--- a/mesa-imported/glsl/glcpp/glcpp-parse.y
++++ b/mesa-imported/glsl/glcpp/glcpp-parse.y
+@@ -154,8 +154,8 @@
+ 
+ %}
+ 
+-%define api.pure // fincs-edit
+-%define parse.error verbose // fincs-edit
++%pure-parser
++%error-verbose
+ 
+ %locations
+ %initial-action {
+--- a/mesa-imported/glsl/glsl_parser.yy
++++ b/mesa-imported/glsl/glsl_parser.yy
+@@ -80,8 +80,8 @@
+ 
+ %expect 0
+ 
+-%define api.pure // fincs-edit
+-%define parse.error verbose // fincs-edit
++%pure-parser
++%error-verbose
+ 
+ %locations
+ %initial-action {

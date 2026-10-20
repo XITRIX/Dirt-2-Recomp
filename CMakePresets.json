@@ -26,7 +26,9 @@
     {
       "name": "macos-tests",
       "inherits": "macos-arm64",
-      "cacheVariables": { "DIRT2_BUILD_TESTS": "ON" }
+      "cacheVariables": {
+        "DIRT2_BUILD_TESTS": "ON"
+      }
     },
     {
       "name": "ios",
@@ -43,7 +45,9 @@
     {
       "name": "ios-sim",
       "inherits": "ios",
-      "cacheVariables": { "CMAKE_OSX_SYSROOT": "iphonesimulator" }
+      "cacheVariables": {
+        "CMAKE_OSX_SYSROOT": "iphonesimulator"
+      }
     },
     {
       "name": "tvos",
@@ -68,28 +72,76 @@
     {
       "name": "switch",
       "inherits": "base",
-      "toolchainFile": "/opt/devkitpro/cmake/Switch.cmake",
-      "environment": { "DEVKITPRO": "/opt/devkitpro" },
+      "toolchainFile": "${sourceDir}/build/nvk-sdk/root/opt/devkitpro/cmake/Switch.cmake",
+      "environment": {
+        "DEVKITPRO": "${sourceDir}/build/nvk-sdk/root/opt/devkitpro"
+      },
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "DIRT2_BUILD_TOOLS": "OFF"
-      }
+        "DIRT2_BUILD_TOOLS": "OFF",
+        "DIRT2_SWITCH_DXVK": "ON",
+        "DIRT2_DEPS_DIR": "${sourceDir}/build/deps/switch-nvk"
+      },
+      "binaryDir": "${sourceDir}/build/switch-dxvk"
     },
     {
       "name": "linux-x64",
       "inherits": "base",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "switch-deko",
+      "inherits": "base",
+      "toolchainFile": "/opt/devkitpro/cmake/Switch.cmake",
+      "environment": {
+        "DEVKITPRO": "/opt/devkitpro"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "DIRT2_BUILD_TOOLS": "OFF",
+        "DIRT2_SWITCH_DXVK": "OFF"
+      }
     }
   ],
   "buildPresets": [
-    { "name": "macos-arm64", "configurePreset": "macos-arm64" },
-    { "name": "macos-debug", "configurePreset": "macos-debug" },
-    { "name": "macos-tests", "configurePreset": "macos-tests" },
-    { "name": "ios", "configurePreset": "ios" },
-    { "name": "ios-sim", "configurePreset": "ios-sim" },
-    { "name": "switch", "configurePreset": "switch" }
+    {
+      "name": "macos-arm64",
+      "configurePreset": "macos-arm64"
+    },
+    {
+      "name": "macos-debug",
+      "configurePreset": "macos-debug"
+    },
+    {
+      "name": "macos-tests",
+      "configurePreset": "macos-tests"
+    },
+    {
+      "name": "ios",
+      "configurePreset": "ios"
+    },
+    {
+      "name": "ios-sim",
+      "configurePreset": "ios-sim"
+    },
+    {
+      "name": "switch",
+      "configurePreset": "switch"
+    },
+    {
+      "name": "switch-deko",
+      "configurePreset": "switch-deko"
+    }
   ],
   "testPresets": [
-    { "name": "macos-tests", "configurePreset": "macos-tests", "output": { "outputOnFailure": true } }
+    {
+      "name": "macos-tests",
+      "configurePreset": "macos-tests",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
   ]
 }

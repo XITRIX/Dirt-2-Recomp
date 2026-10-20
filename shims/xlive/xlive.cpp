@@ -12,9 +12,14 @@
 // a --check-esp build.
 #include <atomic>
 #include <mutex>
+#include <memory>
 #include <thread>
 #include <unordered_map>
 #include <vector>
+
+#ifdef __SWITCH__
+#include <SDL3/SDL.h>
+#endif
 
 #include "../shim.h"
 #include "../../platform/platform.h"
@@ -184,7 +189,25 @@ STDCALL_ORD(xlive, 5216, 8) {
     };
     if (!ov) return run();
     wr32(ov + 0, ERROR_IO_PENDING);
+#ifdef __SWITCH__
+    // Horizon's pthread_detach is an ENOSYS stub: std::thread(...).detach()
+    // throws, and the still-joinable thread's destructor terminates the app.
+    // Queue the native modal UI itself; SDL owns its main-thread lifetime.
+    struct KeyboardRequest {
+        decltype(run) action;
+        uint32_t overlapped;
+    };
+    auto* request = new KeyboardRequest{run, ov};
+    if (!SDL_RunOnMainThread([](void* data) {
+            std::unique_ptr<KeyboardRequest> r(static_cast<KeyboardRequest*>(data));
+            complete(r->overlapped, r->action());
+        }, request, false)) {
+        delete request;
+        return complete(ov, ERROR_FUNCTION_FAILED);
+    }
+#else
     std::thread([=] { complete(ov, run()); }).detach();
+#endif
     return ERROR_IO_PENDING;
 }
 STDCALL_ORD(xlive, 5250, 1) { return 0; }  // XShowAchievementsUI

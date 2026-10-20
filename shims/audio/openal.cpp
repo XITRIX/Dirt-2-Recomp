@@ -90,7 +90,11 @@ CDECL(openal32, alcCloseDevice) {
 }
 CDECL(openal32, alcCreateContext) {
     ALCdevice* d = from_guest<ALCdevice>(a[0]);
-    return d ? to_guest(alcCreateContext(d, p<const ALCint>(a[1]))) : 0;
+    ALCcontext* context = d ? alcCreateContext(d, p<const ALCint>(a[1])) : nullptr;
+#if defined(DIRT2_SWITCH_DXVK)
+    rt::log("alcCreateContext(%p) -> %p", static_cast<void*>(d), static_cast<void*>(context));
+#endif
+    return to_guest(context);
 }
 CDECL(openal32, alcDestroyContext) {
     if (ALCcontext* ctx = from_guest<ALCcontext>(a[0])) alcDestroyContext(ctx);
