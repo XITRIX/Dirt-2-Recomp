@@ -54,12 +54,15 @@ ADB version is earlier in your search path. A first launch without assets displa
 required path instead of starting the guest.
 
 Assets:
-`/sdcard/Android/data/com.daniilvinogradov.dirt2/files/Dirt 2`
+`/data/user/0/com.daniilvinogradov.dirt2/files/Dirt 2`
 
 Settings, saves and logs:
-`/sdcard/Android/data/com.daniilvinogradov.dirt2/files/Dirt2Data`
+`/data/user/0/com.daniilvinogradov.dirt2/files/Dirt2Data`
 
-These are app-scoped directories and need no broad storage permission. Uninstalling
+These are private app directories and need no broad storage permission. The
+installer stages files in `/data/local/tmp`, then unpacks as the app UID through
+`run-as`. This avoids scoped-storage permission failures with shell-created
+external directories. Successful copies remove staging; interrupted copies can resume. Uninstalling
 the app removes its app-scoped data; APK updates preserve it. Saves follow the
 same `C/Users/Player/Documents/My Games/DiRT2/savegame` layout as the other ports,
 so existing saves can be copied there. Android does not sync saves through iCloud.
@@ -74,7 +77,7 @@ no Switch scheduler changes or instruction sampler are enabled.
 Retrieve evidence:
 
 ```sh
-adb pull /sdcard/Android/data/com.daniilvinogradov.dirt2/files/Dirt2Data build/android-device-logs
+adb exec-out run-as com.daniilvinogradov.dirt2 tar -cf - -C files Dirt2Data > build/android-device-logs.tar
 adb logcat -b crash -d > build/android-crash.log
 ```
 

@@ -87,8 +87,8 @@ manifest = {
     'size': apk.stat().st_size, 'abi': 'arm64-v8a', 'min_api': 28,
     'renderer': 'Direct3D 11 -> DXVK native -> Android Vulkan',
     'debug_signed': True, 'hardware_tested': False,
-    'assets': '/sdcard/Android/data/com.daniilvinogradov.dirt2/files/Dirt 2',
-    'data': '/sdcard/Android/data/com.daniilvinogradov.dirt2/files/Dirt2Data',
+    'assets': '/data/user/0/com.daniilvinogradov.dirt2/files/Dirt 2',
+    'data': '/data/user/0/com.daniilvinogradov.dirt2/files/Dirt2Data',
 }
 (out/'manifest.json').write_text(json.dumps(manifest, indent=2)+'\n')
 print(apk)

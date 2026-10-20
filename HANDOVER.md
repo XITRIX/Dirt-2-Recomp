@@ -1,3 +1,44 @@
+## Android installed over Wi-Fi; Press Start renders (2026-10-21)
+
+ACTIVE TABLET: Xiaomi Pad8Pro, Android16, Adreno830. Paired through wireless ADB.
+Current address192.168.1.63:41307. SDK36 adb uses isolated server port15038 with
+ADB_BURST_MODE=1; normal Homebrew35 server5037 also existed. Use SDK executable
+~/Library/Android/sdk/platform-tools/adb -P15038 -s192.168.1.63:41307.
+Pair code was ephemeral; no code is stored in repo. Switch remains parked.
+
+Installed FULL (nonincremental) original-icon APK and all6371 game files.
+An earlier incremental install reported success but package registration was lost;
+full install now stable. Installed APK byte hash verified after final update.
+Original dirt2.ico is extracted at packaging and wrapped in Android adaptive icon;
+artwork PNG remains generated in build/. Icon/helper checkpointd3462ec.
+
+First startup failed before GPU: shell-created Android/data assets gave EACCES.
+Fixed Android launcher to SDL_GetAndroidInternalStoragePath; both assets and
+Dirt2Data now in private files/. Copied data locally via shell tar | run-as tar,
+without another11GB network upload. ALL6371 private files SHA256 match PC sources,
+checked under app UID. External duplicate game folder removed only after private
+verification + successful startup. Sourceinstaller now stages resumable copy in
+/data/local/tmp/dirt2-install-assets, extracts as app UID, removes successful stage.
+No broad storage permission. Full APK updates preserve private assets/saves.
+
+FINAL buildb0988215319e7b74fd46d20abb84c28bbfad2d36, APK SHA256
+13c1e418c204def7f89ffff3347d39692d680bf3b37a1a5fcd85a5c0bf373ee6.
+Package build/package/android/DiRT2-android-arm64-debug.apk,184218604bytes.
+Matching ELF/nm archived under package symbols/<build-id>. Manifest installedtrue,
+startup_verifiedtrue, assets_sha256_verifiedtrue; gameplay_verifiedFALSE.
+
+Hardware result: Direct3D11 device FL11_0 created, Vulkan surface/swapchain active,
+Press Start frame rendered. Screenshot build/android-install/private-startup.png
+shows31.1FPS HUD; no race/steady performance claim. Physical output3200x2136;
+this is NOT proof of internal render resolution. App left running on Press Start.
+Input/name keyboard/race/background/Quit still need testing. No synthetic input
+or career/save changes were made. Existing data source unmodified.
+
+Evidence build/android-install/: source-sha256.json, private-sha256.txt,
+private-verification.json, final-apk-verification.json, private-startup.log/png,
+startup-data.tar, Vulkan capabilities. Source/full build logs in build/.
+Native storage correction cross-build + signed APK/16KB validations PASS.
+
 ## Android ARM64 port built; tablet test pending (2026-10-21)
 
 Switch parked by user; checkpoint31aadf3 (prior sampler6940c23). No further Switch

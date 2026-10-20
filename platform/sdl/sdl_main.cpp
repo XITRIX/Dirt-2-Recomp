@@ -616,20 +616,25 @@ int main(int argc, char** argv) {
         }
     }
 #elif defined(SDL_PLATFORM_ANDROID)
-    // App-scoped external storage needs no broad storage permission. Assets and
-    // writable settings/saves are separate; the APK contains no game data.
-    const char* external = SDL_GetAndroidExternalStoragePath();
-    if (!external) {
+    // Private app storage has stable POSIX ownership. Shell-created external
+    // directories can remain inaccessible under Android scoped-storage rules.
+    const char* internal = SDL_GetAndroidInternalStoragePath();
+    if (!internal) {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "DiRT 2", "App storage is unavailable.", nullptr);
         return 2;
     }
-    const std::string storage = external;
+    const std::string storage = internal;
     const std::string android_data = storage + "/Dirt2Data";
-    std::filesystem::create_directories(android_data);
+    std::error_code storage_error;
+    std::filesystem::create_directories(android_data, storage_error);
+    if (storage_error) {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "DiRT 2", storage_error.message().c_str(), nullptr);
+        return 2;
+    }
     setenv("DIRT2_DATA_DIR", android_data.c_str(), 1);
     if (dir.empty()) dir = storage + "/Dirt 2";
-    if (!std::filesystem::exists(dir + "/dirt2_game.exe")) {
-        const std::string message = "Copy your PC game's Dirt 2 folder, including dirt2_game.exe, to:\n\n" + dir + "\n\nThen reopen DiRT 2. A gamepad is required.";
+    if (!std::filesystem::exists(dir + "/dirt2_game.exe", storage_error)) {
+        const std::string message = "Use the installation helper to copy your PC game's Dirt 2 folder, including dirt2_game.exe, to:\n\n" + dir + "\n\nThen reopen DiRT 2. A gamepad is required.";
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "DiRT 2: game data missing", message.c_str(), nullptr);
         return 2;
     }

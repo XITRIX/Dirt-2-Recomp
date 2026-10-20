@@ -10,7 +10,11 @@ fi
 "$ADB" install --no-incremental -r build/package/android/DiRT2-android-arm64-debug.apk
 if [ $# -gt 0 ]; then
  [ -f "$1/dirt2_game.exe" ] || { echo 'Expected a game folder containing dirt2_game.exe' >&2; exit 1; }
- "$ADB" shell "mkdir -p '/sdcard/Android/data/com.daniilvinogradov.dirt2/files/Dirt 2'"
- "$ADB" push --sync -a -z zstd "$1/." '/sdcard/Android/data/com.daniilvinogradov.dirt2/files/Dirt 2'
+ # Resume the network copy in shell-owned staging, then unpack as the app UID.
+ # Android scoped storage may deny files created by shell in Android/data.
+ "$ADB" shell mkdir -p /data/local/tmp/dirt2-install-assets
+ "$ADB" push --sync -a -z zstd "$1/." /data/local/tmp/dirt2-install-assets
+ "$ADB" shell "set -o pipefail; toybox tar -cf - -C /data/local/tmp/dirt2-install-assets . | run-as com.daniilvinogradov.dirt2 sh -c \"mkdir -p 'files/Dirt 2' && toybox tar -xof - -C 'files/Dirt 2'\""
+ "$ADB" shell rm -rf /data/local/tmp/dirt2-install-assets
 fi
 "$ADB" shell am start -n com.daniilvinogradov.dirt2/.Dirt2Activity
