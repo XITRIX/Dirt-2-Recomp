@@ -1,3 +1,129 @@
+## CURRENT CONSOLE: PRIMARY DX11 PERFORMANCE PROFILER INSTALLED/VERIFIED
+
+Checkpoint41d7774 committedallinitialwork inclDX11primary/DX9fallback andhalfresXML.
+User CONFIRMS640x360works. Newprofilerbuild8d28b243d48a3b802312548bfa9dd2d9a810a857
+FULLYINSTALLED/RETRverified env/README/NRO, manifesttrue in
+build/package/switch-performance-current/. SHAabd8c14e55ea649500dd5fa6bb1bd9ccf72db78dbbefdf5a8f3eb4f74ce4d6e7.
+MatchingELF/symbolsarchived. Latestpreinstalllogs preservedunderpackagebefore-install-*.
+ConsoleappnameDiRT2 indirt2-dx11folder; originaldekoentryuntouched. Userinstructed
+menu30s thenrace1–2min unchangedsettings, close/openFTP forCPU/driverlogs. Await.
+Do NOT claim30FPSachieved. Useradditionallyreportsresolutionreductiondoesnotchange
+FPSandGPU30–40%, stronglyCPUbound; newtraceaimstoidentifyCPUthread/driver/waits.
+
+Profileenabled: guestCPUticks10s+affinity/queryRC; DXVKcounters/Present+allnativeMap
+wall andshadowcopyMiB5s. CPUonlyguestthreads; queueidleNOTGPUshaderoccupancy;
+concurrentwaitcountersnotexclusivephases; copybytesnotcopytime. No threadpauses
+ornewGPUwaits. Brightnessfresh+async/cacheoffdisk retained, exposureCSVoff.
+StackPointerArray<=16ON (largeheapfallback/getterzero/moveASANtested). COMlookup
+cacheOPTINONLY viaDIRT2_COM_CACHE=1; defaultOFF inclcurrentconsoleprofilebaseline.
+Mac4runABcompleted,noerrors: FPS214.55/208.05/202.35/203.85 forcache0/1/1/0;
+sampledlookup4.95/2.71/2.63/3.47%. CPUworkreduced butNOFPSgainestablished.
+MacnativeDXMTdistinctfromNVK; docs/SWITCH_PERFORMANCE.md fullrepro/limits.
+
+Allbuilds/tests/bench/atos/transferscomplete; credential/tempbenchmarkscriptcleanup
+completedbeforeturnend. Nextretrieveprofilerlogs+config fromFTP and analyzeCPU
+saturation,Map/copybandwidth,CSwaits,compiler/submissionpressure BEFOREfurther
+pixelreductions/unsafeTSOchanges. No affinity/clockchangesmade; disassemblyshows
+libnxpthreadalreadybroadensallowedcoremask. Newperformanceworkseparatecommit
+from41d7774; sourcecanbereviewedagainstcheckpoint. Shaderpreload remainsOFF.
+
+## USER STEERING: RESOLUTION DOES NOT AFFECT FPS; GPU LOAD30–40%
+
+User reports resolutionreductionunchangedFPS andGPUload30–40%, stronglysupporting
+CPU-sidebottleneck. PrioritizeCPUengine/bridge/driver-submission/synchronization;
+do NOT spendnextstepreducingpixels. Explain exact CPUthread/stallcause stillneeds
+newprofile. Installer53955stillrunning; poll beforetellinguserlaunch.
+
+## LATEST: HALF-RES CONFIRMED; PROFILING BUILD INSTALL IN PROGRESS
+
+User confirms640x360 works andFTPready. Requestedallworkcheckpoint is41d7774;
+DX11primary/DX9fallback preserved. Newperfworkseparatependingcommit.
+Currentprofilebuild8d28b243d48a3b802312548bfa9dd2d9a810a857,
+NRO166876969B SHAabd8c14e55ea649500dd5fa6bb1bd9ccf72db78dbbefdf5a8f3eb4f74ce4d6e7.
+Packagebuild/package/switch-performance-current/DiRT2-switch.zip verifiedagainst
+actualELF/NRO andZIP. MatchingELF/symbolsarchived. CacheOFF (optin1 only),
+stackPointerArrayON, performance traceON/exposureCSVoff, cache-diskOFF, fresh+asyncON.
+Installer session53955 running fullatomic/fullRETR; preserve latestlogsfirst.
+Do notclaiminstalled untilsessionreturnsCOMPLETE+manifesttrue. Nextuser launch
+DiRT2 in dirt2-dx11 folder, menu30s/race60–120s,samesettings, thenFTP/logs.
+CPUaccounting +DXVKwait/draw/compiler/mapbytecounterswillguideactual30FPSeffort.
+No30FPSclaim. NoFPSgainprovenonMacAB; COMcachedefaultOFFallplatforms.
+Afterinstall remove/tmp/dirt2-profile-install.py (credentials) andbenchmarktemp
+scripts. UpdateHANDOVERmanifest; commitnewperfworkseparatefrom41d7774.
+AllMacbenchmarkprocesses+atoscompleted. FinalcompileSwitchPASS/currentASANtests
+PASS; preparepatchreversechecksPASS; noactivebuilds exceptinstaller.
+
+## PERFORMANCE UPDATE: CHECKPOINT41d7774 SAFE; AWAIT FTP/HARDWARE PROFILE
+
+Do notclaim30FPS or performancefix. Usergoal30+ notyetachieved.
+Allinitialwork+DX11primary/DX9fallback+halfresfix committed41d7774. Halfres48d03
+installed/fullverified beforepromotion. Asyncquestionpendingwhether640x360works
+andFTPopen. LastFTP refused; no profiler installed. Currentconsole remains48d03.
+
+MacABfour50s runs samebinary/cache0,1,1,0 completedexit0, no unknownproxyerrors.
+Median15–30sFPS214.55/208.05/202.35/203.85; to_hostsample4.95/2.71/2.63/3.47%.
+CPUworkreduced but NO FPSgainproven; cache nowOPT-INonlyDIRT2_COM_CACHE=1 (default
+OFFallplatforms). StackPointerArray<=16 avoidsheapalloc; largefallback/getterzero/
+move testedASANUBSAN. Cache100krandomretirement/reuse/collisionASANUBSAN PASS.
+
+Profilerexpanded: guestCPUticks10s +affinity/queryRC; nativeDXVK15counters/Present
+wall5s; Mapnativeelapsed+shadowcopyMiB perframe. Nothreadpause/noGPUwaitadded.
+NativeCPUtimeexcludesdriver/audio/compiler; queueidleNOTHWoccupancy; copybytesnot
+memcpytime; waitcountersconcurrentnotexclusivephases. Nativepthreaddisassembly
+confirms__syscall_thread_create alreadysetsALLallowedcoremask; noaffinityfixmade.
+
+Latestbuildsession7228completed; newpackage session44764 produced earlierbefore
+lastconfigchanges? Mustensurecurrentbuild/NROSHA package freshlymatches.
+Rootbuild/switch-dxvk currentlycacheOFF-bydefault+stackarrays+fullprofiling.
+MacbinaryusedAB defaultcacheON butexplicit0/1constant; source nowdefaultOFF and
+Switch-onlyprofilerextra may requireMacbridgefreshrebuild ifcomparingfuture.
+Allbenchprocesses/slowatos finished; scripts /tmp/dirt2-mac* no creds canremove.
+/tmp/dirt2-profile-install.py STILL containsFTPcredentials and pointsOLD5c66
+package; UPDATEto switch-performance-current beforeinstallorDELETEbeforeturnend.
+Fullprofilingcurrentpackage shouldremaincacheOFF forbaseline; cache can be enabled
+later viaenv withoutNROupload. Preserveold5c66symbols/packageasprovenance.
+Docs/SWITCH_PERFORMANCE.md containsfindings/reproduction/limits. Next finishfresh
+package/symbolchecks, commitprofiling/CPUworkseparatelyfrom41d7774, ifFTPavailable
+atomic/fullRETRinstalllatest withpreservedlogs. Otherwisedeletecredentialscript,
+reportinstallblockedbyFTPandaskuser runwhenready. Nohardwaretimingsavailableyet.
+
+## CHECKPOINT COMMITTED; PERFORMANCE PROFILER + FIRST CPU OPTIMIZATION IN PROGRESS
+
+Checkpoint41d7774 includes ALL accumulated work, DX11primary/DX9fallback, halfresXMLfix.
+Userfeedback latestasyncgraphicsclean,11–13FPSrace/20menu. Halfres48d03 install
+alreadyfullverified. Laterprimary521fc375 built/packageNOTinstalled.
+
+New low-frequency Switch profiler built5c661e1f0f43fbb9ba7b28514639f583164f44e8,
+SHA363fe22c8edff33acf243de225478ee219986e1c17f122f640138cedde0478d3,
+packagebuild/package/switch-performance/ primaryDiRT2NACP +halfresfix. CPUtick
+accountingguestthreadsviaInfoThreadTickCount every10s, no pause/stackreading;
+DXVKnativeexport15counters plusPresentwalltime every5s. GPUqueueidle NOThardware
+occupancy; CPUlogger excludesnativecompiler/driver/audio. Sourcechangesuncommitted
+separatefrom41d7774. Perfexportpatch0005 preparedapplied/nativearchivebuilt.
+InstallattemptconnectionREFUSED; no mutation. AsyncquestionpendingopenFTP/check
+640x360 works. Script/tmp/dirt2-profile-install.py containscredentials; DELETE
+whenfinishedorwaitingturn. Itpreserveslatestlogs beforeatomic/fullRETRinstall.
+Do notclaim profiler installed! Matching5c66ELF/symbolsarchivedbeforelaterbuilds.
+
+Mac75secondisolatedmenu/intro run COMPLETE viaexplicituserauthorization; own
+benchmarkdata build/performance/mac-menu. SandboxedSDLnodisplays; escalatedrun
+workedM1Max; exitcode0. CurrentMacbinaryoldOct19, nativeDXMT so Switch-specific
+bottleneckinferenceslimited. ExistingAppleprofilerallthreadPCsample5windows30–70s.
+functions-summary.json resolvedwithnm/c++filt: outside-main43.37%, to_host4.558%,
+lookup1.24%, BinkWait1.238%, f_011D5F30~0.98%, IASetVertexBuffers~0.966%, vectorUAV
+resize~0.764%. Percentdenominatorallnonkernelthreads; top40 truncation; NOTframewall%.
+Slowatoschild remains /summarize.py session13681; functions-summary usingnmcompleted.
+/tmp/dirt2-mac-profile.py no creds; completedownprocessMacgameclosed.
+
+Firstoptimizationinprogress: sharedCOMto_host perthread64slotcache, atomicgeneration
+invalidated atbothforget+hostreuse; registrymutexauthoritativeonmiss, no cachednull,
+no COMrefcountchanges. DIRT2_COM_CACHE=0 supportscomparison. HostASAN/UBSAN random
+100kcollision/retirement/reuse regressionPASS. Crossbuildsession55459 running.
+Thiscachechange NOT included5c66baselineprofilerpackage. Needfinishbuild, separate
+optimizedpackage, noinstallbeforebaselineprofile/userclarification. CanrunMacsame
+scenecomparisonafterrebuildingbridge; do notclaim30FPSachieved orpromisespeedup.
+Originalobjective still30FPS requiresactualhardwareprofilethen targetedrepairs.
+
 ## DX11 PRIMARY PROMOTION + HALF-RESOLUTION FIX; CHECKPOINT BEFORE PERFORMANCE
 
 User explicitly requests commit ALL current work, promoteDX11 primary, keepDX9,

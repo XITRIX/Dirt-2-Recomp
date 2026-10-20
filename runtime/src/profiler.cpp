@@ -165,7 +165,7 @@ void start_profiler() {
 
 }  // namespace rt
 
-#else
+#elif !defined(__SWITCH__)
 namespace rt {
 void start_profiler() {}
 }  // namespace rt

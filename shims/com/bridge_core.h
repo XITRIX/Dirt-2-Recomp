@@ -33,6 +33,8 @@
 // The standard headers below must already be included above that namespace:
 // included for the first time inside it, they would land in the wrong scope.
 #pragma once
+#include "proxy_lookup_cache.h"
+#include "pointer_array.h"
 
 #include <algorithm>
 #include <array>
@@ -67,6 +69,7 @@ struct Entry {
 };
 
 std::recursive_mutex g_mu;
+std::atomic<uint64_t> g_proxy_generation{1};
 std::unordered_map<uint32_t, Entry> g_by_guest;
 std::unordered_map<IUnknown*, uint32_t> g_by_host;
 std::unordered_map<const VTableDesc*, uint32_t> g_vtables;
@@ -101,6 +104,7 @@ uint32_t wrap_with(IUnknown* host, const VTableDesc& d) {
                     old->second.desc->name, it->second, d.name);
         g_by_guest.erase(old);
         g_by_host.erase(it);
+        g_proxy_generation.fetch_add(1, std::memory_order_release);
     }
     const uint32_t p = rt::heap_alloc(16, true);
     wr32(p, guest_vtable(d));
@@ -112,12 +116,17 @@ uint32_t wrap_with(IUnknown* host, const VTableDesc& d) {
 
 IUnknown* to_host(uint32_t guest) {
     if (!guest) return nullptr;
+    static const bool cache_enabled = [] { const char* e = std::getenv("DIRT2_COM_CACHE"); return e && e[0] == '1'; }();
+    static thread_local ProxyLookupCache<IUnknown*> cache;
+    if (cache_enabled)
+        if (auto* host = cache.find(guest, g_proxy_generation.load(std::memory_order_acquire))) return host;
     std::lock_guard lk(g_mu);
     auto it = g_by_guest.find(guest);
     if (it == g_by_guest.end()) {
         rt::log("%s: unknown proxy 0x%08X", kBridge, guest);
         return nullptr;
     }
+    if (cache_enabled) cache.put(guest, g_proxy_generation.load(std::memory_order_relaxed), it->second.host);
     return it->second.host;
 }
 
@@ -127,6 +136,7 @@ void forget(uint32_t guest) {
     if (it == g_by_guest.end()) return;
     g_by_host.erase(it->second.host);
     g_by_guest.erase(it);
+    g_proxy_generation.fetch_add(1, std::memory_order_release);
     // The proxy memory is left in place: the game may still compare the pointer.
 }
 
@@ -253,7 +263,7 @@ template <typename I>
 struct ArrayArg<I* const*> {
     static constexpr bool unsafe = false;
     uint32_t s, n;
-    std::vector<I*> v;
+    PointerArray<I*> v;
     I* const* get() {
         if (!s) return nullptr;
         v.resize(n);
@@ -266,10 +276,10 @@ template <typename I>
 struct ArrayArg<I**> {
     static constexpr bool unsafe = false;
     uint32_t s, n;
-    std::vector<I*> v;
+    PointerArray<I*> v;
     I** get() {
         if (!s) return nullptr;
-        v.assign(n, nullptr);
+        v.resize(n, true);
         return v.data();
     }
     void done() {

@@ -1,0 +1,30 @@
+--- a/src/d3d11/d3d11_main.cpp
++++ b/src/d3d11/d3d11_main.cpp
+@@ -464,3 +464,27 @@
+   }
+ 
+ }
++
++#ifdef __SWITCH__
++extern "C" {
++  using namespace dxvk;
++  // Ordered, versioned by the game-side perf_stats.h; snapshot only, no waits.
++  DLLEXPORT uint32_t dirt2D3D11GetPerfStats(ID3D11Device* device,
++      uint64_t* values, uint32_t count) {
++    static constexpr DxvkStatCounter counters[] = {
++      DxvkStatCounter::CmdDrawCalls, DxvkStatCounter::CmdDispatchCalls,
++      DxvkStatCounter::CmdRenderPassCount, DxvkStatCounter::CmdBarrierCount,
++      DxvkStatCounter::QueueSubmitCount, DxvkStatCounter::QueuePresentCount,
++      DxvkStatCounter::GpuSyncCount, DxvkStatCounter::GpuSyncTicks,
++      DxvkStatCounter::GpuIdleTicks, DxvkStatCounter::CsSyncCount,
++      DxvkStatCounter::CsSyncTicks, DxvkStatCounter::CsIdleTicks,
++      DxvkStatCounter::CsChunkCount, DxvkStatCounter::PipeTasksDone,
++      DxvkStatCounter::PipeTasksTotal
++    };
++    if (!device || !values || count != 15) return 0;
++    auto stats = static_cast<D3D11Device*>(device)->GetDXVKDevice()->getStatCounters();
++    for (uint32_t i = 0; i < count; ++i) values[i] = stats.getCtr(counters[i]);
++    return 1;
++  }
++}
++#endif

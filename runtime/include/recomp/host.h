@@ -77,6 +77,10 @@ void dump_watch();  // watch.cpp  // signal handler with a guest-aware report
 void log(const char* fmt, ...);
 // In-process sampling profiler (runtime/src/profiler.cpp); logs hot spots every 10 s.
 void start_profiler();
+#if defined(__SWITCH__)
+void profile_register_thread(uint32_t entry, uint32_t guest_id);
+void profile_unregister_thread();
+#endif
 std::string game_dir();
 void set_game_dir(const std::string& d);
 

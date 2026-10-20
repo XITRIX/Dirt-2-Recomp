@@ -97,6 +97,9 @@ Thread* make_thread(uint32_t stack_size) {
 void* thread_main(void* arg) {
     auto* t = static_cast<Thread*>(arg);
     t_cur = t;
+#if defined(__SWITCH__)
+    profile_register_thread(t->entry, t->id);
+#endif
     {
         // Named by guest entry point, for profilers and debuggers.
         char name[32];
@@ -115,6 +118,9 @@ void* thread_main(void* arg) {
     }
     if (setjmp(t->exit_jmp) == 0) t->exit_code = invoke(&t->cpu, t->entry, {t->param}, true);
     if (t->on_exit) t->on_exit(t->exit_code);
+#if defined(__SWITCH__)
+    profile_unregister_thread();
+#endif
     return nullptr;
 }
 
@@ -128,6 +134,9 @@ uint32_t current_teb() { return t_cur ? t_cur->teb : 0; }
 X86* create_main_thread() {
     Thread* t = make_thread(recomp_image_info.image_size ? (2u << 20) : (1u << 20));
     t_cur = t;
+#if defined(__SWITCH__)
+    profile_register_thread(recomp_image_info.entry, t->id);
+#endif
     return &t->cpu;
 }
 

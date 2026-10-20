@@ -32,12 +32,14 @@
 #include "../shim.h"
 #include "guest_string.h"
 #include "render_size.h"
+#include "perf_stats.h"
 
 namespace shim {
 void* host_window(uint32_t hwnd);
 }
 #if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
 extern "C" void dirt2_dx11_present_succeeded();
+extern "C" uint32_t dirt2D3D11GetPerfStats(ID3D11Device*, uint64_t*, uint32_t);
 namespace shim::d3d11 { void preload_switch_shaders(ID3D11Device*, IDXGISwapChain*); }
 #endif
 
@@ -289,6 +291,13 @@ struct MapShadow {
 };
 std::map<std::pair<uint32_t, uint32_t>, MapShadow> g_maps;
 std::atomic<uint32_t> g_present_frames{0};
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+bool performance_trace() {
+    static const bool on = [] { const char* e = std::getenv("DIRT2_DX11_PERF"); return e && e[0] == '1'; }();
+    return on;
+}
+std::atomic<uint64_t> g_map_calls{0}, g_map_ns{0}, g_map_read_bytes{0}, g_map_write_bytes{0};
+#endif
 struct ExposureCopy { uint32_t proxy = 0, frame = 0; uint64_t ns = 0; uint32_t context = 0; };
 std::map<uint32_t, ExposureCopy> g_exposure_copies;
 std::map<uint32_t, ExposureCopy> g_exposure_latest; // context proxy -> most recently queued readback
@@ -470,7 +479,11 @@ void ctx_map(X86* c) {
         bool already_mapped = false;
         D3D11_TEXTURE2D_DESC readback_desc{};
         const bool exposure_read = type == D3D11_MAP_READ && small_float_readback(res, sub, readback_desc);
-        const auto map_start = exposure_read ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        bool measure_map = exposure_read;
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+        measure_map = measure_map || performance_trace();
+#endif
+        const auto map_start = measure_map ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
 #if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
         static const bool fresh_exposure = [] { const char* e = std::getenv("DIRT2_DX11_FRESH_EXPOSURE"); return e && e[0] == '1'; }();
         // Opt-in DiRT2 compatibility experiment, not a change to general D3D11
@@ -521,7 +534,13 @@ void ctx_map(X86* c) {
             m = {};
             hr = self->Map(actual, sub, D3D11_MAP(type), a[4], &m);
         }
-        const double map_ms = exposure_read ? std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - map_start).count() : 0;
+        const double map_ms = measure_map ? std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - map_start).count() : 0;
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+        if (performance_trace()) {
+            g_map_calls.fetch_add(1, std::memory_order_relaxed);
+            g_map_ns.fetch_add(uint64_t(map_ms * 1e6), std::memory_order_relaxed);
+        }
+#endif
         if (SUCCEEDED(hr)) {
             std::lock_guard lk(g_mu);
             MapShadow& sh = g_maps[{a[1], sub}];
@@ -537,8 +556,12 @@ void ctx_map(X86* c) {
             sh.host = m.pData;
             sh.mapped_resource = actual;
             sh.write = type != D3D11_MAP_READ;
-            if (type == D3D11_MAP_READ || type == D3D11_MAP_READ_WRITE)
+            if (type == D3D11_MAP_READ || type == D3D11_MAP_READ_WRITE) {
                 std::memcpy(rt::host_ptr(sh.guest), m.pData, size);
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+                if (performance_trace()) g_map_read_bytes.fetch_add(size, std::memory_order_relaxed);
+#endif
+            }
             // The game reads its scene luminance back through a ring of 1x1 RGBA32F
             // staging textures (16 bytes, from 00FAF55C). A non-finite or negative
             // value there (an HDR edge case on some track spots) sent the auto
@@ -608,7 +631,12 @@ void ctx_unmap(X86* c) {
             std::lock_guard lk(g_mu);
             auto it = g_maps.find({a[1], a[2]});
             if (it != g_maps.end() && it->second.host) {
-                if (it->second.write) std::memcpy(it->second.host, rt::host_ptr(it->second.guest), it->second.size);
+                if (it->second.write) {
+                    std::memcpy(it->second.host, rt::host_ptr(it->second.guest), it->second.size);
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+                    if (performance_trace()) g_map_write_bytes.fetch_add(it->second.size, std::memory_order_relaxed);
+#endif
+                }
                 it->second.host = nullptr;
                 if (it->second.mapped_resource) actual = it->second.mapped_resource;
                 it->second.mapped_resource = nullptr;
@@ -841,6 +869,44 @@ void update_upscale_target(uint32_t proxy, bool force = false) {
 #endif
 }
 
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+void profile_dx11_frame(IDXGISwapChain* self, double present_ms) {
+    static const bool enabled = [] { const char* e = std::getenv("DIRT2_DX11_PERF"); return e && e[0] == '1'; }();
+    if (!enabled || !self) return;
+    using namespace shim::d3d11;
+    static PerfStats previous{};
+    static bool have = false;
+    static auto start = std::chrono::steady_clock::now();
+    static unsigned frames = 0;
+    static double present_total = 0;
+    ++frames; present_total += present_ms;
+    const auto now = std::chrono::steady_clock::now();
+    const double ms = std::chrono::duration<double, std::milli>(now - start).count();
+    if (have && ms < 5000) return;
+    ID3D11Device* device = nullptr;
+    if (FAILED(self->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&device)))) return;
+    PerfStats counters{};
+    const bool valid = dirt2D3D11GetPerfStats(device, counters.data(), counters.size()) != 0;
+    device->Release();
+    if (!valid) return;
+    if (have) {
+        const auto d = perf_delta(counters, previous);
+        const double f = frames;
+        rt::log("perf-dx11: %u frames %.1f fps, frame %.3f ms, Present %.3f ms/frame", frames, f * 1000 / ms, ms / f, present_total / f);
+        rt::log("perf-dx11: per frame draws %.1f dispatches %.1f passes %.1f barriers %.1f submissions %.1f cs-chunks %.1f", d[Draws]/f, d[Dispatches]/f, d[RenderPasses]/f, d[Barriers]/f, d[Submits]/f, d[CsChunks]/f);
+        rt::log("perf-dx11: wait ms/frame GPU %.3f CS %.3f, waits/frame GPU %.1f CS %.1f, queue-idle %.3f ms/frame, cs-idle %.3f ms/frame", d[GpuWaitUs]/(1000*f), d[CsWaitUs]/(1000*f), d[GpuWaits]/f, d[CsWaits]/f, d[GpuIdleUs]/(1000*f), d[CsIdleUs]/(1000*f));
+        rt::log("perf-dx11: maps/frame %.1f native-Map %.3f ms/frame, shadow copies read %.3f MiB/frame write %.3f MiB/frame",
+            g_map_calls.exchange(0, std::memory_order_relaxed)/f, g_map_ns.exchange(0, std::memory_order_relaxed)/(1e6*f),
+            g_map_read_bytes.exchange(0, std::memory_order_relaxed)/(1048576*f), g_map_write_bytes.exchange(0, std::memory_order_relaxed)/(1048576*f));
+        rt::log("perf-dx11: compiler %llu/%llu completed (window +%llu/+%llu); queue-idle is not a hardware GPU occupancy measurement", (unsigned long long)counters[CompileDone], (unsigned long long)counters[CompileTotal], (unsigned long long)d[CompileDone], (unsigned long long)d[CompileTotal]);
+    }
+    if (!have) {
+        g_map_calls = 0; g_map_ns = 0; g_map_read_bytes = 0; g_map_write_bytes = 0;
+    }
+    previous = counters; have = true; frames = 0; present_total = 0; start = now;
+}
+#endif
+
 // Present(sync interval, flags): the render thread parks here in the background.
 void swap_present(X86* c) {
     const Args a{c};
@@ -854,7 +920,14 @@ void swap_present(X86* c) {
     update_upscale_target(a[0]);
     static uint32_t frames = 0;
     if (self) capture(self, ++frames);
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+    static const bool timing = [] { const char* e = std::getenv("DIRT2_DX11_PERF"); return e && e[0] == '1'; }();
+    const auto present_start = timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+#endif
     const HRESULT hr = self ? self->Present(a[1], a[2]) : E_INVALIDARG;
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+    if (timing) profile_dx11_frame(self, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - present_start).count());
+#endif
 #if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
     if (SUCCEEDED(hr)) dirt2_dx11_present_succeeded();
 #endif

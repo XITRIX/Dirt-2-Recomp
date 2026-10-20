@@ -7,7 +7,7 @@ from pathlib import Path
 import hashlib,json,shutil,subprocess,zipfile,sys,argparse
 root=Path.cwd();build=root/'build/switch-dxvk'
 parser=argparse.ArgumentParser()
-for flag in ['standalone-preflight','startup-watchdog','no-disk-shader-cache','exposure-trace','preflight','shader-preload','fresh-exposure','async-exposure','primary']:
+for flag in ['standalone-preflight','startup-watchdog','no-disk-shader-cache','exposure-trace','preflight','shader-preload','fresh-exposure','async-exposure','primary','performance-trace']:
  parser.add_argument('--'+flag,action='store_true')
 parser.add_argument('--output-dir',type=Path,default=root/'build/package/switch-dx11')
 args=parser.parse_args()
@@ -35,6 +35,9 @@ if no_disk_cache:
 if exposure_trace:
  with (sd/'env.txt').open('a') as f:f.write('DIRT2_LOG_EXPOSURE=1\nDIRT2_EXPOSURE_TRACE_SECONDS=600\n')
  with (sd/'README.txt').open('a') as f:f.write('Records small float texture readbacks and frame timing in exposure.csv for ten minutes. Writes are batched; tracing adds no extra GPU readbacks or waits.\n')
+if args.performance_trace:
+ with (sd/'env.txt').open('a') as f:f.write('DIRT2_PROFILE=1\nDIRT2_DX11_PERF=1\n')
+ with (sd/'README.txt').open('a') as f:f.write('Performance trace: guest CPU usage every ten seconds, DXVK counters and Present timing every five seconds in dirt2.log. Does not pause threads or add GPU timestamp waits.\n')
 if args.shader_preload:
  bundle=root/'build/shaders/dx11/dirt2.dx11-shaders'
  shutil.copyfile(bundle,sd/bundle.name)
@@ -60,6 +63,7 @@ manifest={'build_id':build_id,'nro_sha256':hashlib.sha256(nro.read_bytes()).hexd
 manifest['mode'] = 'standalone graphics preflight' if standalone else ('isolated graphics preflight' if preflight else ('game startup watchdog' if watchdog else 'game'))
 manifest['binary'] = binary
 manifest['exposure_trace'] = exposure_trace
+manifest['performance_trace'] = args.performance_trace
 manifest['shader_preload'] = args.shader_preload
 manifest['fresh_exposure'] = args.fresh_exposure
 manifest['async_exposure'] = args.async_exposure
