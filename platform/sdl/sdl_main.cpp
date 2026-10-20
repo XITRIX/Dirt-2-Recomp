@@ -92,7 +92,7 @@ void on_main(F&& f) {
 #endif
 
 #if defined(SDL_PLATFORM_IOS) || defined(SDL_PLATFORM_TVOS) || defined(SDL_PLATFORM_VISIONOS) || \
-    defined(SDL_PLATFORM_SWITCH)
+    defined(SDL_PLATFORM_SWITCH) || defined(SDL_PLATFORM_ANDROID)
 // One window per screen: every top-level game window (the loading splash, then
 // the main window) shares it; it goes away with the last one.
 constexpr bool kSingleWindow = true;
@@ -117,7 +117,9 @@ Window create_window(int width, int height, const char* title) {
             return;
         }
         const float d = display_density();
-#if defined(SDL_PLATFORM_SWITCH)
+#if defined(SDL_PLATFORM_ANDROID)
+        const SDL_WindowFlags api = SDL_WINDOW_VULKAN | SDL_WINDOW_FULLSCREEN;
+#elif defined(SDL_PLATFORM_SWITCH)
 #if defined(DIRT2_SWITCH_DXVK)
         const SDL_WindowFlags api = SDL_WINDOW_VULKAN;
 #else
@@ -160,6 +162,9 @@ Renderer renderer() {
 }
 
 void* metal_layer(Window w) {
+#if defined(SDL_PLATFORM_ANDROID)
+    return nullptr;
+#else
     static std::mutex mu;
     static std::unordered_map<Window, SDL_MetalView> views;
     std::lock_guard lk(mu);
@@ -171,6 +176,7 @@ void* metal_layer(Window w) {
         else layer = SDL_Metal_GetLayer(v);
     });
     return layer;
+#endif
 }
 
 void destroy_window(Window w) {
@@ -609,6 +615,27 @@ int main(int argc, char** argv) {
             return 2;
         }
     }
+#elif defined(SDL_PLATFORM_ANDROID)
+    // App-scoped external storage needs no broad storage permission. Assets and
+    // writable settings/saves are separate; the APK contains no game data.
+    const char* external = SDL_GetAndroidExternalStoragePath();
+    if (!external) {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "DiRT 2", "App storage is unavailable.", nullptr);
+        return 2;
+    }
+    const std::string storage = external;
+    const std::string android_data = storage + "/Dirt2Data";
+    std::filesystem::create_directories(android_data);
+    setenv("DIRT2_DATA_DIR", android_data.c_str(), 1);
+    if (dir.empty()) dir = storage + "/Dirt 2";
+    if (!std::filesystem::exists(dir + "/dirt2_game.exe")) {
+        const std::string message = "Copy your PC game's Dirt 2 folder, including dirt2_game.exe, to:\n\n" + dir + "\n\nThen reopen DiRT 2. A gamepad is required.";
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "DiRT 2: game data missing", message.c_str(), nullptr);
+        return 2;
+    }
+    setenv("DIRT2_DX11_FRESH_EXPOSURE", "1", 0);
+    setenv("DIRT2_DX11_ASYNC_EXPOSURE", "1", 0);
+    setenv("DXVK_HUD", "fps,compiler", 0);
 #elif defined(SDL_PLATFORM_IOS) || defined(SDL_PLATFORM_TVOS) || defined(SDL_PLATFORM_VISIONOS)
     // The game data is copied into the app's Documents folder (Finder or the
     // Files app): either the "Dirt 2" folder itself or its contents.

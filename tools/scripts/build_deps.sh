@@ -40,6 +40,9 @@ fetch "https://downloads.xiph.org/releases/vorbis/libvorbis-$VORBIS_VER.tar.gz" 
 fetch "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VER.tar.xz" "ffmpeg-$FFMPEG_VER" -J
 rmdir "$SRC.lock"
 
+# Android uses the same pinned inputs with a separate NDK build script.
+if [ "${1:-}" = "--fetch-only" ]; then exit 0; fi
+
 for SDK in $SDKS; do
     PREFIX=$ROOT/build/deps/$SDK
     BLD=$ROOT/build/deps/$SDK-work

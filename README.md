@@ -6,8 +6,9 @@ The game's own code is lifted mechanically. Windows, DirectX, OpenAL, Bink and G
 
 | Original | Replacement |
 |---|---|
-| Direct3D 11 (the default on iOS) | DXMT → Metal |
-| Direct3D 9 (the default on macOS for now) | DXVK (d3d9) → Vulkan → MoltenVK → Metal |
+| Direct3D 11 (Apple) | DXMT → Metal |
+| Direct3D 11 (Switch / Android) | DXVK → Vulkan (NVK on Switch; device driver on Android) |
+| Direct3D 9 (Apple fallback) | DXVK (d3d9) → Vulkan → MoltenVK → Metal |
 | OpenAL / Rapture3D | OpenAL Soft |
 | XInput / DirectInput | SDL3 gamepad (GameController on Apple) |
 | Win32 window and messages | SDL3 |
@@ -26,6 +27,8 @@ shims/          per-DLL import implementations
 platform/       SDL3 host and per-platform glue (platform/apple)
 generated/      recompiler output (not committed)
 ```
+
+Android build and installation instructions: [docs/ANDROID.md](docs/ANDROID.md).
 
 ## Build and install (macOS and iOS)
 

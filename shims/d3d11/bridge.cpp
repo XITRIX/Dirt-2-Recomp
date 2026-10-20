@@ -219,7 +219,7 @@ OVERRIDE(ID3D11Device, CreateTexture3D, dev_create_texture3d)
 OVERRIDE(ID3D11Device, CreateInputLayout, dev_create_input_layout)
 OVERRIDE(ID3D11DeviceContext, Map, ctx_map)
 OVERRIDE(ID3D11DeviceContext, Unmap, ctx_unmap)
-#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+#if defined(DIRT2_D3D11_DXVK) && (defined(__SWITCH__) || defined(__ANDROID__))
 OVERRIDE(ID3D11DeviceContext, CopyResource, ctx_copy_resource)
 OVERRIDE(ID3D11DeviceContext, CopySubresourceRegion, ctx_copy_region)
 #endif
@@ -232,7 +232,7 @@ OVERRIDE(IDXGISwapChain, ResizeBuffers, swap_resize_buffers)
 OVERRIDE(IDXGIAdapter, GetDesc, adapter_get_desc)
 OVERRIDE(IDXGIAdapter1, GetDesc1, adapter1_get_desc1)
 OVERRIDE(IDXGIOutput, GetDesc, output_get_desc)
-#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+#if defined(DIRT2_D3D11_DXVK) && (defined(__SWITCH__) || defined(__ANDROID__))
 OVERRIDE(IDXGISwapChain, ResizeTarget, swap_resize_target)
 OVERRIDE(IDXGIOutput, GetDisplayModeList, output_get_modes)
 OVERRIDE(IDXGIOutput, FindClosestMatchingMode, output_find_mode)
@@ -395,7 +395,7 @@ void on_release(uint32_t proxy) {
     }
 }
 
-#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+#if defined(DIRT2_D3D11_DXVK) && (defined(__SWITCH__) || defined(__ANDROID__))
 void record_exposure_copy(uint32_t context, uint32_t proxy, ID3D11Resource* dst, ID3D11Resource* src) {
     D3D11_TEXTURE2D_DESC desc{};
     if (!dst || !small_float_readback(dst, 0, desc) || desc.Format != DXGI_FORMAT_R16G16B16A16_FLOAT) return;
@@ -484,7 +484,7 @@ void ctx_map(X86* c) {
         measure_map = measure_map || performance_trace();
 #endif
         const auto map_start = measure_map ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+#if defined(DIRT2_D3D11_DXVK) && (defined(__SWITCH__) || defined(__ANDROID__))
         static const bool fresh_exposure = [] { const char* e = std::getenv("DIRT2_DX11_FRESH_EXPOSURE"); return e && e[0] == '1'; }();
         // Opt-in DiRT2 compatibility experiment, not a change to general D3D11
         // mapping semantics: consume the latest queued exposure pixel, not an
@@ -974,7 +974,7 @@ void swap_resize_buffers(X86* c) {
             std::lock_guard lk(g_mu);
             if (auto it = g_swaps.find(a[0]); it != g_swaps.end()) {
                 win = it->second.window;
-#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+#if defined(DIRT2_D3D11_DXVK) && (defined(__SWITCH__) || defined(__ANDROID__))
                 target = {it->second.target_width, it->second.target_height};
 #endif
             }
@@ -991,7 +991,7 @@ void swap_resize_buffers(X86* c) {
     c->esp += 4 * 7;
 }
 
-#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+#if defined(DIRT2_D3D11_DXVK) && (defined(__SWITCH__) || defined(__ANDROID__))
 void swap_resize_target(X86* c) {
     const Args a{c};
     auto* self = static_cast<IDXGISwapChain*>(to_host(a[0]));
@@ -999,7 +999,10 @@ void swap_resize_target(X86* c) {
     // Native DXVK resizes the SDL window here. Retain a fixed physical output;
     // the original requested size is applied to the game's rendering buffers.
     DXGI_MODE_DESC physical = mode ? *mode : DXGI_MODE_DESC{};
-    if (mode && mode->Width && mode->Height) { physical.Width = 1280; physical.Height = 720; }
+    if (mode && mode->Width && mode->Height) {
+        int width=0, height=0; platform::display_size(&width,&height);
+        physical.Width = uint32_t(width); physical.Height = uint32_t(height);
+    }
     const HRESULT hr = self ? self->ResizeTarget(mode ? &physical : nullptr) : E_INVALIDARG;
     if (SUCCEEDED(hr) && mode && mode->Width && mode->Height) {
         std::lock_guard lk(g_mu);
@@ -1123,7 +1126,7 @@ void output_get_desc(X86* c) {
     DXGI_OUTPUT_DESC d{};
     const HRESULT hr = self && a[1] ? self->GetDesc(&d) : E_INVALIDARG;
     if (SUCCEEDED(hr)) {
-#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+#if defined(DIRT2_D3D11_DXVK) && (defined(__SWITCH__) || defined(__ANDROID__))
         int w = 0, h = 0;
         platform::display_size(&w, &h);
         d.DesktopCoordinates = {0, 0, w, h};

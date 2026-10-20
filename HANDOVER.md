@@ -1,3 +1,38 @@
+## Android ARM64 port built; tablet test pending (2026-10-21)
+
+Switch parked by user; checkpoint31aadf3 (prior sampler6940c23). No further Switch
+FTP changes. Android requested backend is primary DX11 -> native DXVK -> Android
+system Vulkan; first target Xiaomi Pad8Pro. ADB detects NO device yet. Asked user
+to connect USB debugging/authorize computer. Do not claim installed or gameplay tested.
+
+Build: bash tools/scripts/build_android.sh. End-to-end SUCCESS in
+build/android-end-to-end.log. Full540 generated sources compiled with NDK29 ARM64,
+TSO ON, fast-math OFF. All native runtime/shim/SDL/JNI sources compile; static
+DXVK D3D11/DXGI/D3D9 archive built from isolated prepared Android copy. Existing
+runtime dispatch/cache/memory/PC regression CTests3/3PASS; native Java compiles.
+Private directories Android only; Apple/Switch binary libraries untouched.
+
+Android SDLActivity loads c++_shared, SDL3, dirt2; exported SDL_main verified.
+APK minAPI28, target35, Vulkan1.3 feature requirement, landscape, gamepad input,
+native Android keyboard via JNI/EditText dialog. App-scoped external assets and
+separate Dirt2Data saves/settings/logs. No game assets in APK; no broad storage
+permission. Fresh+async exposure fix reused; no Switch worker remapping or sampler.
+Android retains OS crash handling/tombstones instead of unavailable execinfo.
+Shared image hides private static archive symbols (--exclude-libs=ALL), required
+for FFmpeg NEON direct PIC references to internal FFT tables. Driver is device's
+libvulkan.so, not NVK/MoltenVK. Native16KB LOAD alignment verified for all3libs;
+APK signature and ZIP16KB alignment verified. Packaging enforces alignment.
+
+APK: build/package/android/DiRT2-android-arm64-debug.apk (about176MiB).
+Matching game build ID056a57131c8d53a4c5a571d42695c4c9d6d97ece.
+Latest APK SHA/size in package manifest.json; ZIP/signature timestamps can change.
+Unstripped game/SDL symbols archived under package symbols/<build-id>/.
+Debug signing key in build/android-apk/debug.keystore; preserve for updates.
+Docs docs/ANDROID.md. Install helper tools/scripts/install_android.sh accepts
+optional PC game directory. When tablet connects, install/copy assets, test first
+menu/race/input/keyboard/resolution/background/Quit; retrieve Dirt2Data + crash
+logcat. No hardware FPS or visual correctness claims yet.
+
 ## Switch work parked by user (2026-10-20)
 
 User considers the current DX11 version a useful playable checkpoint despite low FPS.

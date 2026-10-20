@@ -128,5 +128,7 @@ prepare_moltenvk() {
 }
 
 prepare_dxvk
+# Native Android needs DXVK, without preparing Apple-only graphics libraries.
+if [ "${1:-}" = "--dxvk-only" ]; then exit 0; fi
 prepare_moltenvk
 prepare_dxmt

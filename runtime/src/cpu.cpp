@@ -12,7 +12,9 @@
 #if defined(__SWITCH__)
 #include <switch.h>
 #else
+#if !defined(__ANDROID__)
 #include <execinfo.h>
+#endif
 #include <signal.h>
 #endif
 
@@ -24,7 +26,7 @@ namespace {
 
 // Host backtrace to stderr (none on Horizon: crashes go through libnx's exception hook).
 void host_backtrace(int depth) {
-#if defined(__SWITCH__)
+#if defined(__SWITCH__) || defined(__ANDROID__)
     (void)depth;
 #else
     void* frames[48];
@@ -143,7 +145,7 @@ void __libnx_exception_handler(ThreadExceptionDump* ctx) {
 namespace rt {
 
 void install_crash_handler() {
-#if !defined(__SWITCH__)  // Horizon: __libnx_exception_handler above
+#if !defined(__SWITCH__) && !defined(__ANDROID__)  // Android keeps its native tombstone handler.
     static char altstack[1 << 16];
     stack_t ss{};
     ss.ss_sp = altstack;

@@ -1,7 +1,7 @@
 // Debug write-watch: RECOMP_WATCH=<hex addr>[,<hex len>] records the last
 // guest stores into that range (thread, value, guest return address, host
 // backtrace) and prints them on fatal errors. Needs the DIRT2_WATCH build.
-#if !defined(__SWITCH__)
+#if !defined(__SWITCH__) && !defined(__ANDROID__)
 #include <execinfo.h>
 #endif
 
@@ -56,7 +56,7 @@ void dump_watch() {
         const Hit& h = g_ring[i % kRing];
         std::fprintf(stderr, "  #%llu t%u [%08X]/%u <- %08llX  (esp %08X, [esp] %08X)\n", (unsigned long long)i, h.tid,
                      h.addr, h.size, (unsigned long long)h.value, h.esp, h.esp_ret);
-#if !defined(__SWITCH__)  // no execinfo on Horizon: nframes stays 0
+#if !defined(__SWITCH__) && !defined(__ANDROID__)  // no execinfo on Horizon: nframes stays 0
         char** syms = backtrace_symbols(h.frames, h.nframes);
         for (int k = 1; syms && k < h.nframes; ++k) std::fprintf(stderr, "      %s\n", syms[k]);
         std::free(syms);
@@ -76,7 +76,7 @@ extern "C" void recomp_watch_hit(uint32_t a, uint64_t v, uint32_t size) {
         h.esp = c->esp;
         h.esp_ret = c->esp > 0x10000 ? rd32(c->esp) : 0;
     }
-#if !defined(__SWITCH__)
+#if !defined(__SWITCH__) && !defined(__ANDROID__)
     h.nframes = backtrace(h.frames, 8);
 #endif
     std::lock_guard lk(rt::g_mu);
