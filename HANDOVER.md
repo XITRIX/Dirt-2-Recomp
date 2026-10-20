@@ -1,3 +1,13 @@
+## Switch work parked by user (2026-10-20)
+
+User considers the current DX11 version a useful playable checkpoint despite low FPS.
+All Switch source changes are committed through6940c23. Latest installed build is
+ba6d11682ffc46460a04c034c26cc909aab6b3fa (instruction sampler enabled); its next
+hardware trace has not been collected. For ordinary play, remove DIRT2_PROFILE_PC
+and DIRT2_PROFILE_PC_TID from env.txt. Do not resume Switch experiments unless asked.
+DX11/DXVK/NVK remains primary; DX9/deko fallback preserved. No30FPS claim.
+New requested work: Android ARM64 using native DXVK D3D11 -> device Vulkan.
+
 ## Current: Clang race trace collected; instruction sampler installed and verified
 
 User confirms race loads with the stock worker map, but no visible FPS gain.
