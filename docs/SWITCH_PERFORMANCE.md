@@ -94,3 +94,31 @@ The first full profiling build was installed and byte-verified on hardware as
 Its baseline leaves the lookup cache disabled; enable it later through env.txt
 for comparison with the same executable. Actual Switch profiling results are
 pending the next user run. The640×360 fix was tested separately and confirmed.
+
+## First hardware profile and quit repair (2026-10-20)
+
+Evidence: `build/performance/switch-20261020-203708/`. In the185–306 second
+race window, median frame time was86.185ms (11.6FPS). Guest worker264, entry
+`01161370`, consumed93.3% of one core; main260 used39.45% and worker340 used
+18.5%. Allowed affinity mask was7. Native Map calls totaled0.533ms/frame;
+Present0.057ms/frame; GPU and command-stream wait counters were zero. Compiler
+progress was complete at1361/1361. These identify a saturated game worker,
+without identifying the task executed inside its generic worker wrapper.
+
+`--performance-trace --indirect-profile` enables100Hz cooperative sampling of
+active indirect-call target/return address. Each guest thread publishes atomic
+TLS context; registry locking protects TLS lifetime. Reports rank inclusive wall
+contexts for threads above20% CPU. These are neither instruction PC samples nor
+self CPU time. Nested calls restore context on return/C++ exceptions; a guest
+longjmp can bypass that restoration, so context remains best-effort. The mode
+adds atomic stores per indirect call and is diagnostic, not an FPS optimization.
+
+The matching quit crash ends at SDL touch polling after libnx service cleanup
+started from guest ExitProcess. Switch ExitProcess/TerminateProcess now terminate
+all threads through svcExitProcess rather than invoking concurrent SDK cleanup.
+The build passes; hardware quit validation is pending.
+
+The uploaded start-grid recording shows wheel motion at14–15FPS. Low frame rate
+is a candidate explanation, not an established physics diagnosis. An isolated
+Mac12FPS intro ran, but the attempted app-controlled race comparison produced a
+black screen; no matching race reference or physics fix has been validated.

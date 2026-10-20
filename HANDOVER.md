@@ -1,3 +1,35 @@
+## CURRENT: QUIT REPAIR BUILT; FTP INSTALL BLOCKED
+
+Latest user reported Quit crash + wobbling wheels in recorded grid introduction;
+completed 30s menu/2min race profile. Evidence downloaded to
+build/performance/switch-20261020-203708 (logs, matching Atmosphere crash, video).
+Quit crash matches installed 8d28b243 ELF: ExitProcess(0) -> libnx cleanup races
+SDL main-thread hidGetTouchScreenStates -> UserBreak 0x1159. Switch ExitProcess /
+TerminateProcess now use svcExitProcess, matching existing DX11 guest-return path.
+Cross-build passes; hardware validation pending.
+
+NEW BUILD 438df7fa8aaeae87cf14884513834ecd33475718, SHA256
+fff4be07c09d868a8c1716021df478c0e65fb38e3c49ced3b09ffbd318db0dc3
+in build/package/switch-quit-profile/; matching ELF/nm archived under symbols/.
+NOT INSTALLED: installer timed out connecting before any remote write. Console
+still has 8d28b243. Asked user to reopen FTP at192.168.1.148:5000. No credential
+should be committed. Temporary installer /tmp/dirt2-install-quit.py pending cleanup.
+
+Race profile185–306s: median11.6FPS,86.185ms/frame. Guest tid264 entry01161370
+uses93.3% of one core; main26039.45%,worker34018.5%. GPU/CS waits0,
+Present0.057ms/frame, Map0.533ms/frame, compiler stable1361/1361. GPU queue idle
+is not occupancy. Identifies saturated worker, not actual work yet. New opt-in
+DIRT2_PROFILE_INDIRECT=1 samples active indirect-call contexts100Hz without
+suspension; reports inclusive wall contexts for threads above20%core. Not PC/self
+CPU sampling; extra diagnostic overhead requires profile-off final comparison.
+
+Video2026102020353800...mp4 shows start-grid wheel motion at14–15FPS. Physics
+cause NOT established/fixed. Mac12FPS comparison launched with isolated copied
+save/settings; relative game path failed; absolute launch reached12.2FPS intro.
+CUA bundle comparison gave black screen (one screenshot call stalled42min),
+so no usable Mac race comparison. Test process17721 terminated; no verified
+physics conclusion. Do not call wheel issue fixed or claim30FPS achieved.
+
 ## CURRENT CONSOLE: PRIMARY DX11 PERFORMANCE PROFILER INSTALLED/VERIFIED
 
 Checkpoint41d7774 committedallinitialwork inclDX11primary/DX9fallback andhalfresXML.

@@ -2,6 +2,9 @@
 #pragma once
 
 #include <cstdint>
+#if defined(__SWITCH__)
+#include <atomic>
+#endif
 #include <functional>
 #include <string>
 
@@ -78,6 +81,8 @@ void log(const char* fmt, ...);
 // In-process sampling profiler (runtime/src/profiler.cpp); logs hot spots every 10 s.
 void start_profiler();
 #if defined(__SWITCH__)
+extern std::atomic<bool> profile_indirect_enabled;
+extern thread_local std::atomic<uint64_t> profile_indirect_context;
 void profile_register_thread(uint32_t entry, uint32_t guest_id);
 void profile_unregister_thread();
 #endif

@@ -119,6 +119,17 @@ uint32_t invoke(X86* c, uint32_t addr, std::initializer_list<uint32_t> args, boo
 
 extern "C" void recomp_call(X86* c, uint32_t target) {
     if (recomp_fn fn = rt::lookup(target)) {
+#if defined(__SWITCH__)
+        if (rt::profile_indirect_enabled.load(std::memory_order_relaxed)) {
+            struct ContextScope {
+                uint64_t previous;
+                ~ContextScope() { rt::profile_indirect_context.store(previous, std::memory_order_relaxed); }
+            } scope{rt::profile_indirect_context.load(std::memory_order_relaxed)};
+            rt::profile_indirect_context.store((uint64_t(target) << 32) | rd32(c->esp), std::memory_order_relaxed);
+            fn(c);
+            return;
+        }
+#endif
         fn(c);
         return;
     }

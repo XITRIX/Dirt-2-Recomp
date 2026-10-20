@@ -1,5 +1,8 @@
 // kernel32: process, modules, environment, system information, time.
 #include <unistd.h>
+#if defined(__SWITCH__)
+#include <switch.h>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -171,7 +174,14 @@ STDCALL(kernel32, CreateProcessW, 10) {
 STDCALL(kernel32, ExitProcess, 1) {
     rt::log("ExitProcess(%u)", a[0]);
     std::fflush(nullptr);
+#if defined(__SWITCH__)
+    // _Exit runs libnx service teardown on this worker while SDL can still
+    // poll HID on the main thread. End all threads atomically, as on the
+    // normal DX11 guest-return path, instead of invalidating live services.
+    svcExitProcess();
+#else
     std::_Exit(int(a[0]));
+#endif
 }
 STDCALL(kernel32, TerminateProcess, 2) {
     rt::log("TerminateProcess(%u)", a[1]);
@@ -187,7 +197,11 @@ STDCALL(kernel32, TerminateProcess, 2) {
     }
     rt::log("TerminateProcess: return addresses on the guest stack:%s", chain.c_str());
     std::fflush(nullptr);
+#if defined(__SWITCH__)
+    svcExitProcess();
+#else
     std::_Exit(int(a[1]));
+#endif
 }
 STDCALL(kernel32, FatalAppExitA, 2) { rt::fatal("FatalAppExitA: %s", a.str(1)); }
 STDCALL(kernel32, GetStartupInfoA, 1) {
