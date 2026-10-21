@@ -1,4 +1,8 @@
 find_package(Threads REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME runtime_critical_section_generation COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_critical_sections.py
+  ${CMAKE_SOURCE_DIR}/shims/kernel32/sync.cpp ${CMAKE_CXX_COMPILER} "${CMAKE_OSX_SYSROOT}")
 add_executable(runtime_dispatch_cache test_dispatch_cache.cpp ${CMAKE_SOURCE_DIR}/runtime/src/dispatch.cpp)
 target_include_directories(runtime_dispatch_cache PRIVATE ${CMAKE_SOURCE_DIR}/runtime/include)
 target_link_libraries(runtime_dispatch_cache PRIVATE Threads::Threads)
@@ -32,3 +36,8 @@ if(EXISTS "${DIRT2_GAME_DIR}/system/workerMap8Core.xml")
     ${CMAKE_SOURCE_DIR}/tests/switch/test_worker_topology.py $<TARGET_FILE:switch_worker_topology>
     "${DIRT2_GAME_DIR}/system/workerMap8Core.xml")
 endif()
+
+add_executable(d3d11_shadow_write ../d3d11/test_shadow_write.cpp)
+target_include_directories(d3d11_shadow_write PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_options(d3d11_shadow_write PRIVATE -UNDEBUG)
+add_test(NAME d3d11_shadow_write COMMAND d3d11_shadow_write)

@@ -1,0 +1,49 @@
+--- a/src/dxvk/dxvk_context.cpp
++++ b/src/dxvk/dxvk_context.cpp
+@@ -1,5 +1,7 @@
+ #include <algorithm>
+ #include <cmath>
++#include <cstdio>
++#include <cstdlib>
+ #include <cstring>
+ #include <map>
+ #include <vector>
+@@ -3617,6 +3619,38 @@
+           copyInfo.regionCount = 1;
+           copyInfo.pRegions = &copyRegion;
+ 
++#ifdef __ANDROID__
++          // Opt-in CPU-side breadcrumbs: no GPU waits or readbacks. The last
++          // line identifies the exact transfer if the vendor driver crashes.
++          static const bool traceUploads = [] {
++            const char* dataDir = std::getenv("DIRT2_DATA_DIR");
++            if (!dataDir) return false;
++            const std::string marker = std::string(dataDir) + "/trace-uploads";
++            if (auto* file = std::fopen(marker.c_str(), "r")) {
++              std::fclose(file);
++              return true;
++            }
++            return false;
++          }();
++          if (traceUploads) {
++            const auto& info = image->info();
++            Logger::info(str::format("Android upload: image=", image->handle(),
++              " type=", info.type, " format=", info.format,
++              " extent=", info.extent.width, "x", info.extent.height, "x", info.extent.depth,
++              " mips=", info.mipLevels, " layers=", info.numLayers,
++              " flags=", info.flags, " usage=", info.usage,
++              " mip=", copyRegion.imageSubresource.mipLevel,
++              " layer=", copyRegion.imageSubresource.baseArrayLayer,
++              " count=", copyRegion.imageSubresource.layerCount,
++              " aspect=", copyRegion.imageSubresource.aspectMask,
++              " copy=", copyRegion.imageExtent.width, "x", copyRegion.imageExtent.height, "x", copyRegion.imageExtent.depth,
++              " offset=", copyRegion.imageOffset.x, ",", copyRegion.imageOffset.y, ",", copyRegion.imageOffset.z,
++              " layout=", imageLayout, " buffer=", bufferSlice.buffer,
++              " bufferOffset=", copyRegion.bufferOffset, " sliceBytes=", bufferSlice.size,
++              " rowLength=", copyRegion.bufferRowLength,
++              " imageHeight=", copyRegion.bufferImageHeight));
++          }
++#endif
+           m_cmd->cmdCopyBufferToImage(cmd, &copyInfo);
+         } else {
+           VkCopyImageToBufferInfo2 copyInfo = { VK_STRUCTURE_TYPE_COPY_IMAGE_TO_BUFFER_INFO_2 };

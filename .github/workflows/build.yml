@@ -1,212 +1,289 @@
-# Builds the macOS app and an unsigned iOS .ipa.
-#
-# The game's own files are not in this repository. The job takes dirt2_game.exe
-# (Steam v1.1) and dirt2.ico from, in this order:
-#   - a private repository (variable DIRT2_GAME_REPO, default XITRIX/Dirt2-_recomp_private_repo)
-#     cloned with a read-only deploy key in the secret DIRT2_GAME_DEPLOY_KEY;
-#   - a zip at the URL in the secret DIRT2_GAME_URL.
-# It checks the exe's SHA-256 before using it.
-#
-# Artifacts:
-#   DiRT2-macOS.zip           DiRT2.app, ad hoc signed (right-click > Open the first time)
-#   DiRT2-iOS-unsigned.ipa    sign it with a profile granting the entitlements in
-#                             platform/apple/dirt2.entitlements (4 GB address space,
-#                             increased memory limit; iCloud optional)
-#
-# The library builds (deps, MoltenVK/DXVK, LLVM, DXMT) take about an hour and
-# are cached, keyed on their scripts, patches and submodule commits; they are
-# saved as soon as they are built. The game's own compile goes through ccache.
+# Shared host preparation, then independent macOS/iOS/Android/Switch builds.
+# Only preparation reads the private game input; no original executable or
+# playable assets are uploaded. See README.md for required repository secrets.
 name: Build
 
 on:
   push:
     branches: [main]
     tags: ["v*"]
-  workflow_dispatch:  # Actions > Build > Run workflow
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash
+
 env:
   GAME_EXE_SHA256: 49b1e00ea1d4bd02e633ceed63390b5cae07601333f673c4efd8d2f0eb54fe48
-  HAVE_DEPLOY_KEY: ${{ secrets.DIRT2_GAME_DEPLOY_KEY != '' }}
   CCACHE_DIR: ${{ github.workspace }}/.ccache
   CCACHE_BASEDIR: ${{ github.workspace }}
   CCACHE_COMPILERCHECK: content
   CCACHE_MAXSIZE: 4G
+  DIRT2_ENABLE_CCACHE: '1'
+  DIRT2_BUILD_JOBS: '6'
 
 jobs:
-  build:
+  prepare:
+    name: Prepare shared recompiler and generated sources
     runs-on: macos-26
-    timeout-minutes: 300
+    timeout-minutes: 60
+    env:
+      HAVE_DEPLOY_KEY: ${{ secrets.DIRT2_GAME_DEPLOY_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Xcode
+      - uses: ./.github/actions/build-tools
+      - name: Host identity
+        id: host
         run: |
-          xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-version
-
-      - name: Build tools
-        run: brew install ninja meson glslang pkgconf ccache || true
-
-      - name: Game files from a private repository
-        if: ${{ env.HAVE_DEPLOY_KEY == 'true' }}
+          key=$(bash tools/ci/cache-key.sh host)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: build/ci-host-tools
+          key: host-recompiler-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.host.outputs.key }}-${{ hashFiles('CMakeLists.txt', 'tools/recomp/**', 'runtime/include/**') }}
+      - name: Build host recompiler without target libraries
+        run: |
+          cmake -S . -B build/ci-host-tools -G Ninja -DCMAKE_BUILD_TYPE=Release -DDIRT2_TOOLS_ONLY=ON
+          cmake --build build/ci-host-tools --target recomp -j6
+      - name: Game files from private repository
+        if: env.HAVE_DEPLOY_KEY == 'true'
         uses: actions/checkout@v4
         with:
           repository: ${{ vars.DIRT2_GAME_REPO || 'XITRIX/Dirt2-_recomp_private_repo' }}
           ssh-key: ${{ secrets.DIRT2_GAME_DEPLOY_KEY }}
           path: game-files
           lfs: true
-
-      - name: Game files
+          persist-credentials: false
+      - name: Verify input and generate shared sources
         env:
           DIRT2_GAME_URL: ${{ secrets.DIRT2_GAME_URL }}
         run: |
           if [ ! -d game-files ]; then
-            if [ -z "$DIRT2_GAME_URL" ]; then
-              echo "::error::Set the secret DIRT2_GAME_DEPLOY_KEY (private game repository) or DIRT2_GAME_URL (zip)"
-              exit 1
-            fi
+            [ -n "$DIRT2_GAME_URL" ] || { echo '::error::Set DIRT2_GAME_DEPLOY_KEY or DIRT2_GAME_URL'; exit 1; }
             mkdir -p game-files
             curl -fsSL "$DIRT2_GAME_URL" -o "$RUNNER_TEMP/game.zip"
             unzip -q "$RUNNER_TEMP/game.zip" -d game-files
             rm "$RUNNER_TEMP/game.zip"
           fi
-          EXE=$(find "$PWD/game-files" -name dirt2_game.exe -not -path '*/.git/*' | head -1)
-          [ -n "$EXE" ] || { echo "::error::dirt2_game.exe not found in the game files"; exit 1; }
-          echo "$GAME_EXE_SHA256  $EXE" | shasum -a 256 -c --quiet || { echo "::error::dirt2_game.exe is not v1.1 (SHA-256 mismatch)"; exit 1; }
-          echo "GAME_DIR=$(dirname "$EXE")" >> "$GITHUB_ENV"
-
-      - name: Cache keys
-        id: keys
-        run: |
-          echo "deps=${{ hashFiles('tools/scripts/build_deps.sh') }}" >> "$GITHUB_OUTPUT"
-          echo "llvm=${{ hashFiles('tools/scripts/build_llvm.sh') }}" >> "$GITHUB_OUTPUT"
-          subs=$(git submodule status --recursive | shasum | cut -d' ' -f1)
-          echo "xcode=$(xcodebuild -version | shasum | cut -c1-12)" >> "$GITHUB_OUTPUT"
-          echo "graphics=$subs-${{ hashFiles('third_party/patches/**', 'tools/scripts/prepare_sources.sh', 'tools/scripts/build_graphics.sh', 'tools/scripts/build_moltenvk.sh', 'tools/scripts/build_mvk_externals.sh', 'tools/scripts/build_dxmt.sh', 'tools/scripts/build_llvm.sh') }}" >> "$GITHUB_OUTPUT"
-
-      # Restored here and saved right after the library builds, so a later
-      # failure or a cancelled run does not throw the hour of work away.
-      - name: Restore libraries
-        id: cache-deps
-        uses: actions/cache/restore@v4
-        with:
-          path: build/deps
-          key: deps-${{ steps.keys.outputs.deps }}
-
-      - name: Restore LLVM
-        id: cache-llvm
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            build/llvm/macos
-            build/llvm/iphoneos
-            build/llvm/work-macos/bin/llvm-tblgen
-          key: llvm-${{ steps.keys.outputs.llvm }}
-
-      - name: Restore graphics stack
-        id: cache-graphics
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            build/src
-            build/moltenvk
-            build/dxvk
-            build/dxmt
-            build/tools
-          key: graphics-${{ steps.keys.outputs.graphics }}
-
-      - name: Libraries
-        run: |
-          tools/scripts/build_deps.sh macos iphoneos
-          tools/scripts/build_graphics.sh macos iphoneos
-          tools/scripts/build_llvm.sh macos iphoneos
-          tools/scripts/build_dxmt.sh macos iphoneos
-
-      - name: Save libraries
-        if: steps.cache-deps.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: build/deps
-          key: deps-${{ steps.keys.outputs.deps }}
-
-      - name: Save LLVM
-        if: steps.cache-llvm.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            build/llvm/macos
-            build/llvm/iphoneos
-            build/llvm/work-macos/bin/llvm-tblgen
-          key: llvm-${{ steps.keys.outputs.llvm }}
-
-      - name: Save graphics stack
-        if: steps.cache-graphics.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            build/src
-            build/moltenvk
-            build/dxvk
-            build/dxmt
-            build/tools
-          key: graphics-${{ steps.keys.outputs.graphics }}
-
-      # The game's own code (the lifted C is most of the compile time) goes
-      # through ccache (CMakeLists.txt picks it up from PATH). One entry per
-      # run, restored from the newest one; old entries age out.
-      - name: Restore compiler cache
-        uses: actions/cache/restore@v4
-        with:
-          path: .ccache
-          key: ccache-${{ steps.keys.outputs.xcode }}-${{ github.run_id }}
-          restore-keys: ccache-${{ steps.keys.outputs.xcode }}-
-
-      - name: Recompile the game
-        id: recomp
-        run: |
-          ccache -z
-          cmake --preset macos-arm64 -DDIRT2_GAME_DIR="$GAME_DIR"
-          cmake --build build/macos-arm64 --target recomp
-          ./build/macos-arm64/tools/recomp/recomp lift "$GAME_DIR/dirt2_game.exe" --out generated \
+          EXE=$(find "$PWD/game-files" -name dirt2_game.exe -not -path '*/.git/*' -print -quit)
+          [ -n "$EXE" ] || { echo '::error::dirt2_game.exe missing'; exit 1; }
+          echo "$GAME_EXE_SHA256  $EXE" | shasum -a 256 -c --quiet
+          mkdir -p build/ci-game build/ci-tools
+          cp "$(dirname "$EXE")/dirt2.ico" build/ci-game/
+          cp build/ci-host-tools/tools/recomp/recomp build/ci-tools/
+          build/ci-tools/recomp lift "$EXE" --out generated \
             --entries tools/recomp/config/entries.txt --hooks tools/recomp/config/hooks.txt --include-dead
-
-      - name: macOS app
-        run: |
-          cmake --preset macos-arm64 -DDIRT2_GAME_DIR="$GAME_DIR"
-          cmake --build build/macos-arm64
-          tools/scripts/package_macos.sh build/package/macos "$GAME_DIR"
-
-      - name: iOS app (unsigned)
-        run: |
-          cmake --preset ios -DDIRT2_GAME_DIR="$GAME_DIR"
-          cmake --build build/ios
-          tools/scripts/package_ios.sh unsigned
-
-      - name: Compiler cache statistics
-        if: always() && steps.recomp.outcome != 'skipped'
-        run: ccache -s
-
-      - name: Save compiler cache
-        if: always() && steps.recomp.outcome != 'skipped'
-        uses: actions/cache/save@v4
-        with:
-          path: .ccache
-          key: ccache-${{ steps.keys.outputs.xcode }}-${{ github.run_id }}
-
+          # Tar preserves executability and avoids artifact hidden-file filtering.
+          tar -czf "$RUNNER_TEMP/shared-game.tar.gz" generated build/ci-game build/ci-tools
       - uses: actions/upload-artifact@v4
         with:
-          name: DiRT2-macOS
-          path: build/package/macos/DiRT2-macOS.zip
+          name: shared-game-inputs
+          path: ${{ runner.temp }}/shared-game.tar.gz
+          retention-days: 1
           if-no-files-found: error
 
+  prepare-apple:
+    name: Prepare shared Apple host tools and graphics dependencies
+    runs-on: macos-26
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/build-tools
+      - name: Cache identity
+        id: keys
+        run: |
+          key=$(bash tools/ci/cache-key.sh apple-host)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: shared
+        with:
+          path: |
+            build/src
+            build/llvm/macos
+            build/llvm/work-macos/bin/llvm-tblgen
+          key: apple-host-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.keys.outputs.key }}
+      - name: Build shared inputs once
+        if: steps.shared.outputs.cache-hit != 'true'
+        run: |
+          bash tools/scripts/prepare_sources.sh
+          bash tools/scripts/build_mvk_externals.sh
+          bash tools/scripts/build_llvm.sh macos
+      - uses: actions/cache/save@v4
+        if: steps.shared.outputs.cache-hit != 'true'
+        with:
+          path: |
+            build/src
+            build/llvm/macos
+            build/llvm/work-macos/bin/llvm-tblgen
+          key: apple-host-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.keys.outputs.key }}
+      - name: Archive shared host tools and Apple inputs
+        run: |
+          tar -czf "$RUNNER_TEMP/apple-host.tar.gz" build/src build/llvm/macos build/llvm/work-macos/bin/llvm-tblgen
       - uses: actions/upload-artifact@v4
         with:
-          name: DiRT2-iOS-unsigned
-          path: build/package/iphoneos/DiRT2-iOS-unsigned.ipa
+          name: shared-apple-host
+          path: ${{ runner.temp }}/apple-host.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: [prepare, prepare-apple]
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            runner: macos-26
+            container: ''
+            target: macos
+            artifact: DiRT2-macOS
+            package: build/package/macos/DiRT2-macOS.zip
+          - platform: ios
+            runner: macos-26
+            container: ''
+            target: iphoneos
+            artifact: DiRT2-iOS-unsigned
+            package: build/package/iphoneos/DiRT2-iOS-unsigned.ipa
+          - platform: android
+            runner: macos-26
+            container: ''
+            target: android-arm64
+            artifact: DiRT2-Android
+            package: build/package/android/DiRT2-android-arm64-debug.apk
+          - platform: switch
+            runner: ubuntu-24.04-arm
+            # Same pinned ARM64 SDK image used by fetch_switch_nvk_sdk.py.
+            container: ghcr.io/autorunhq/switch-dev@sha256:c130418a889d8f9afc3d80c5bda699dfcc83741a22d2f15f800ca5afba17fca1
+            target: switch-nvk
+            artifact: DiRT2-Switch
+            package: build/package/switch/DiRT2-switch.zip
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/build-tools
+      - name: Android Java
+        if: matrix.platform == 'android'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Android SDK
+        if: matrix.platform == 'android'
+        uses: android-actions/setup-android@v3
+      - name: Cache pinned Android SDK packages
+        if: matrix.platform == 'android'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.ANDROID_HOME }}/ndk/29.0.14206865
+            ${{ env.ANDROID_HOME }}/platforms/android-35
+            ${{ env.ANDROID_HOME }}/build-tools/35.0.1
+          key: android-sdk-v1-${{ runner.os }}-${{ runner.arch }}-ndk29.0.14206865-api35-tools35.0.1
+      - name: Install pinned Android toolchain
+        if: matrix.platform == 'android'
+        run: |
+          sdkmanager 'platforms;android-35' 'build-tools;35.0.1' 'ndk;29.0.14206865'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          name: shared-game-inputs
+          path: ${{ runner.temp }}/shared-game
+      - name: Unpack generated sources
+        run: tar -xzf "$RUNNER_TEMP/shared-game/shared-game.tar.gz"
+      - uses: actions/download-artifact@v4
+        if: matrix.platform == 'macos' || matrix.platform == 'ios'
+        with:
+          name: shared-apple-host
+          path: ${{ runner.temp }}/shared-apple
+      - name: Unpack Apple tools and dependencies
+        if: matrix.platform == 'macos' || matrix.platform == 'ios'
+        run: tar -xzf "$RUNNER_TEMP/shared-apple/apple-host.tar.gz"
+      - name: Platform cache identity
+        id: keys
+        run: |
+          key=$(bash tools/ci/cache-key.sh '${{ matrix.platform }}')
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+      # Exact matches only: scripts have completion stamps, so restoring an old
+      # dependency cache by prefix could silently use incompatible libraries.
+      - name: Restore target libraries
+        id: libraries
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/deps/${{ matrix.target }}
+            build/deps/${{ matrix.target }}-work
+            build/deps/src
+            build/deps/switch
+            build/deps/switch-work
+            build/moltenvk/${{ matrix.target }}
+            build/dxvk
+            build/dxmt
+            build/llvm/iphoneos
+            build/nvk-sdk
+            build/src/dxvk-android
+            build/src/dxvk-switch
+          key: target-libs-v1-${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.keys.outputs.key }}
+      - name: Restore compiler cache
+        id: compiler
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: compiler-v1-${{ matrix.platform }}-${{ steps.keys.outputs.key }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: compiler-v1-${{ matrix.platform }}-${{ steps.keys.outputs.key }}-
+      - name: Build target libraries
+        if: steps.libraries.outputs.cache-hit != 'true'
+        run: bash tools/ci/build-platform.sh '${{ matrix.platform }}' libraries
+      - name: Save libraries before compiling game
+        if: steps.libraries.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build/deps/${{ matrix.target }}
+            build/deps/${{ matrix.target }}-work
+            build/deps/src
+            build/deps/switch
+            build/deps/switch-work
+            build/moltenvk/${{ matrix.target }}
+            build/dxvk
+            build/dxmt
+            build/llvm/iphoneos
+            build/nvk-sdk
+            build/src/dxvk-android
+            build/src/dxvk-switch
+          key: target-libs-v1-${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.keys.outputs.key }}
+      - name: Prepare native headers on cache hits
+        if: steps.libraries.outputs.cache-hit == 'true' && (matrix.platform == 'android' || matrix.platform == 'switch')
+        run: bash tools/scripts/prepare_sources.sh --dxvk-only
+      - name: Build and package game
+        id: game
+        run: |
+          ccache -z
+          bash tools/ci/build-platform.sh '${{ matrix.platform }}' game
+      - name: Compiler cache statistics
+        if: always() && steps.compiler.outcome == 'success'
+        run: ccache -s
+      - name: Save compiler cache even if game build fails
+        if: always() && steps.compiler.outcome == 'success' && steps.compiler.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: compiler-v1-${{ matrix.platform }}-${{ steps.keys.outputs.key }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.package }}
           if-no-files-found: error

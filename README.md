@@ -113,9 +113,12 @@ xcrun devicectl device install app --device <device id> build/ios/dirt2.app
 
 ### Prebuilt binaries (GitHub Actions)
 
-`.github/workflows/build.yml` builds both on every push to `main`, on `v*` tags, and on demand (**Actions → Build → Run workflow**):
+`.github/workflows/build.yml` builds macOS, iOS, Android and Switch in an independent platform matrix on every push to `main`, on `v*` tags, and on demand (**Actions → Build → Run workflow**):
+
 - `DiRT2-macOS.zip`: the app, ad hoc signed. Right-click it and choose **Open** the first time.
 - `DiRT2-iOS-unsigned.ipa`: unsigned. Sign it with your own team, using a profile that grants the entitlements in `platform/apple/dirt2.entitlements`: the 4 GB address space and the increased memory limit (iCloud is optional).
+- `DiRT2-android-arm64-debug.apk`: Android ARM64 development build.
+- `DiRT2-switch.zip`: Switch homebrew package using DX11/DXVK/NVK.
 
 The game files aren't in this repository. CI takes `dirt2_game.exe` (v1.1; the job checks its SHA-256) and `dirt2.ico` from a **private repository** of your own:
 
@@ -133,7 +136,11 @@ The game files aren't in this repository. CI takes `dirt2_game.exe` (v1.1; the j
 
 Alternatively, set the secret `DIRT2_GAME_URL` to a downloadable zip with the same two files.
 
-The first run builds the libraries, which takes about an hour; later runs use the cache. Shader warm-up data (`build/pipelines`) is game-derived and not in CI, so CI builds compile shaders on first sight.
+A preparation job builds the host recompiler once and lifts the game once for all four platforms. A second preparation job builds LLVM's macOS libraries/`llvm-tblgen` and MoltenVK's shared external libraries once for the Apple jobs. These inputs are passed between runners as short-lived tar artifacts, preserving executable permissions and hidden build stamps. The original game executable and playable data are never included in these artifacts.
+
+Each platform has an exact dependency cache keyed by its runner/toolchain, submodule revisions, scripts and patches, plus a separate rolling compiler cache. Libraries are saved before compiling the game, and compiler caches are saved even on game compilation failure. Android uses the pinned NDK on a macOS runner; Switch uses the pinned ARM64 NVK SDK container on an ARM64 Linux runner. The Switch artifact uses the primary DX11/DXVK/NVK renderer. No device deployment runs in CI.
+
+Additional artifacts are `DiRT2-Android` (development-signed APK) and `DiRT2-Switch` (homebrew ZIP). The Android development key is generated per clean runner, so these APKs are build/test artifacts rather than a stable signed update channel. The first run builds the libraries; later runs use the caches. Shader warm-up data (`build/pipelines`) is game-derived and not in CI, so CI builds compile shaders on first sight.
 
 ### Troubleshooting
 

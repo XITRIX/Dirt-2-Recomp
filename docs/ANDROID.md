@@ -71,7 +71,9 @@ so existing saves can be copied there. Android does not sync saves through iClou
 
 Check launch/menu, controller input, player-name keyboard, resolution changes,
 race loading/rendering/audio, background/resume and Quit. The FPS/compiler HUD is
-shown. Fresh/async exposure handling from the working Switch DX11 path is enabled;
+shown. Android defaults to FIFO/vsync presentation: the tested Xiaomi compositor
+held mailbox frames for tens of seconds in its QTI frame-early check while the
+game continued presenting. `DXVK_CONFIG` can override the default. Fresh/async exposure handling from the working Switch DX11 path is enabled;
 no Switch scheduler changes or instruction sampler are enabled.
 
 Retrieve evidence:
@@ -88,3 +90,57 @@ Building and APK signature verification do not establish gameplay correctness.
 Platform references: [SDL3 Android integration](https://wiki.libsdl.org/SDL3/README-android),
 [Android Vulkan](https://developer.android.com/ndk/guides/graphics),
 [16KB page sizes](https://developer.android.com/guide/practices/page-sizes).
+
+## Android graphics diagnostics
+
+The private Android DXVK source copy applies `third_party/patches/dxvk-android`.
+It selects a supported compositor alpha mode and uses GENERAL layouts for sampled
+render targets and storage images on Qualcomm, keeping sampled descriptors and
+attachment layouts consistent. Sampled-only textures retain optimized layouts;
+feedback-loop images keep their required special handling. On Qualcomm, attachment
+load/store operations are preserved instead of demoting unused/read-only attachments
+to NONE. The tiled renderer and cached memory remain enabled. Apple and Switch
+source copies are unaffected.
+
+To request a single diagnostic frame from the running Android build:
+
+```sh
+adb shell run-as com.daniilvinogradov.dirt2 touch files/Dirt2Data/gpu-capture.request
+```
+
+The next frame writes `gpu-capture-N` under Dirt2Data with draw states, color/alpha
+previews, and bounded raw input data. GPU readbacks stall this diagnostic frame
+and may hide timing-dependent bugs. Previews cover RTV0 and the first input
+mip/slice only; these are not complete replay captures. Normal frames do no readback.
+
+## Texture-upload crash diagnostics
+
+For a reproducible crash during loading, create the optional marker before
+launching the diagnostic-capable build:
+
+```sh
+adb shell run-as com.daniilvinogradov.dirt2 touch files/Dirt2Data/trace-uploads
+```
+
+The game log records each buffer-to-image transfer immediately before the Vulkan
+call, including texture dimensions, format, mip/layer, buffer offset and pitches.
+This adds CPU logging only (no GPU readbacks/waits); logging can still affect timing.
+Remove the marker and restart to disable it:
+
+```sh
+adb shell run-as com.daniilvinogradov.dirt2 rm files/Dirt2Data/trace-uploads
+```
+
+Retrieve the end of `files/Dirt2Data/dirt2.log` and the Android crash buffer before
+relaunching, since startup replaces the game log. Prefer a bounded tail over
+copying the entire data directory when investigating large logs.
+
+Android accepts a usable `VK_SUBOPTIMAL_KHR` swapchain while its extent is
+unchanged, avoiding repeated identical rebuilds caused by compositor rotation.
+Extent changes still schedule recreation after presenting the acquired image;
+real surface errors retain their normal recovery path. The CPU-side policy
+regression can be run after Android DXVK preparation:
+
+```sh
+python3 tests/runtime/test_android_suboptimal.py
+```

@@ -4,8 +4,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT=$PWD
+MODE=${1:-all}
+case "$MODE" in all|libraries|game) ;; *) echo "Usage: $0 [all|libraries|game]" >&2; exit 2 ;; esac
+if [ "$MODE" != game ]; then
 python3 tools/scripts/fetch_switch_nvk_sdk.py
 python3 tools/scripts/prepare_switch_nvk.py
+fi
 export DEVKITPRO=$ROOT/build/nvk-sdk/root/opt/devkitpro
 export PATH=/opt/devkitpro/devkitA64/bin:/opt/devkitpro/tools/bin:/opt/local/bin:$PATH
 SDK=$DEVKITPRO
@@ -21,6 +25,9 @@ if [ -n "${DIRT2_SWITCH_CPU_ARCHIVE:-}" ]; then
 elif [ -f build/switch/libdirt2_gen.a ]; then
     GENERATED_ARGS=(-DDIRT2_SWITCH_GENERATED_ARCHIVE="$ROOT/build/switch/libdirt2_gen.a")
 fi
+if [ "$MODE" != game ]; then
+bash tools/scripts/build_deps.sh switch
+bash tools/scripts/prepare_sources.sh --dxvk-only
 # All unchanged audio/video dependencies stay the same as the normal build.
 [ -d "$PREFIX" ] || cp -R build/deps/switch "$PREFIX"
 SDL_SRC=$WORK/SDL3-src
@@ -46,9 +53,12 @@ meson setup "$ROOT/build/dxvk/switch-dx11" "$ROOT/build/src/dxvk-switch" \
     -Dnative_sdl3=enabled -Dnative_sdl2=disabled -Dnative_glfw=disabled
 ninja -C build/dxvk/switch-dx11 -j6
 python3 tools/scripts/prepare_switch_dxvk.py --archive
+fi
+[ "$MODE" != libraries ] || exit 0
 cmake -S . -B build/switch-dxvk -G Ninja -DCMAKE_TOOLCHAIN_FILE="$SDK/cmake/Switch.cmake" \
     -DCMAKE_MAKE_PROGRAM="$(command -v ninja)" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDIRT2_BUILD_TOOLS=OFF \
     -DDIRT2_SWITCH_DXVK=ON -DDIRT2_DEPS_DIR="$PREFIX" \
     "${GENERATED_ARGS[@]}"
-CCACHE_DISABLE=1 cmake --build build/switch-dxvk --target dirt2_nro -j6
+if [ "${DIRT2_ENABLE_CCACHE:-0}" != 1 ]; then export CCACHE_DISABLE=1; fi
+cmake --build build/switch-dxvk --target dirt2_nro -j6
 bash tools/scripts/package_switch.sh

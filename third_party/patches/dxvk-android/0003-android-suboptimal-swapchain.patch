@@ -1,0 +1,120 @@
+--- a/src/dxvk/dxvk_presenter.cpp
++++ b/src/dxvk/dxvk_presenter.cpp
+@@ -111,6 +111,18 @@
+         sync.acquire, VK_NULL_HANDLE, &m_imageIndex);
+     }
+ 
++#ifdef __ANDROID__
++    // SUBOPTIMAL still acquires an image and signals its semaphore. Consume
++    // that image normally, even if its extent requires recreation afterwards.
++    auto acceptSuboptimalAcquire = [this] {
++      if (m_acquireStatus == VK_SUBOPTIMAL_KHR) {
++        m_dirtySwapchain |= suboptimalNeedsRecreation();
++        m_acquireStatus = VK_SUCCESS;
++      }
++    };
++    acceptSuboptimalAcquire();
++#endif
++
+     // This is a normal occurence, but may be useful for
+     // debugging purposes in case WSI goes wrong somehow.
+     if (m_acquireStatus != VK_SUCCESS && m_swapchain)
+@@ -139,6 +151,11 @@
+         return softError(m_acquireStatus);
+       }
+     }
++
++#ifdef __ANDROID__
++    // Also handle SUBOPTIMAL from the first acquire on a fresh swapchain.
++    acceptSuboptimalAcquire();
++#endif
+ 
+     // Update HDR metadata after a successful acquire. We know
+     // that there won't be a present in flight at this point.
+@@ -262,6 +279,17 @@
+ 
+     VkResult status = m_vkd->vkQueuePresentKHR(
+       m_device->queues().graphics.queueHandle, &info);
++
++#ifdef __ANDROID__
++    // Android can report SUBOPTIMAL every frame when the compositor rotates
++    // our identity-transform images. Recreating the same extent cannot fix
++    // that; preserve normal successful-present bookkeeping and pre-acquire.
++    if (status == VK_SUBOPTIMAL_KHR) {
++      std::lock_guard lock(m_surfaceMutex);
++      if (!suboptimalNeedsRecreation())
++        status = VK_SUCCESS;
++    }
++#endif
+ 
+     // Maintain valid state if presentation succeeded, even if we want to
+     // recreate the swapchain. Spec says that 'queue' operations, i.e. the
+@@ -298,7 +326,16 @@
+ 
+     // On a successful present, try to acquire next image already, in
+     // order to hide potential delays from the application thread.
+-    if (status == VK_SUCCESS) {
++    bool preAcquire = status == VK_SUCCESS;
++#ifdef __ANDROID__
++    {
++      std::lock_guard lock(m_surfaceMutex);
++      // Finish the acquired frame before a deferred extent-change rebuild,
++      // without acquiring another image from the retiring swapchain.
++      preAcquire &= !m_dirtySwapchain && !m_dirtySurface;
++    }
++#endif
++    if (preAcquire) {
+       PresenterSync& nextSync = m_semaphores.at(m_frameIndex);
+       waitForSwapchainFence(nextSync);
+ 
+@@ -570,6 +607,24 @@
+ 
+     m_hdrMetadataDirty = true;
+   }
++
++
++#ifdef __ANDROID__
++  bool Presenter::suboptimalNeedsRecreation() {
++    VkSurfaceCapabilitiesKHR caps = { };
++    VkResult status = m_vki->vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
++      m_device->adapter()->handle(), m_surface, &caps);
++
++    // A failed query must not hide a lost surface or other real error. Let
++    // the normal recreation path query it again and propagate that result.
++    if (status != VK_SUCCESS || m_images.empty())
++      return true;
++
++    VkExtent2D extent = pickImageExtent(caps, m_preferredExtent);
++    const auto& current = m_images.front()->info().extent;
++    return extent.width != current.width || extent.height != current.height;
++  }
++#endif
+ 
+ 
+   VkResult Presenter::recreateSwapChain() {
+@@ -829,6 +884,12 @@
+       "\n  Present mode: ", swapInfo.presentMode, " (dynamic: ", (dynamicModes.empty() ? "no)" : "yes)"),
+       "\n  Buffer size:  ", swapInfo.imageExtent.width, "x", swapInfo.imageExtent.height,
+       "\n  Image count:  ", swapInfo.minImageCount));
++
++#ifdef __ANDROID__
++    Logger::info(str::format("Presenter: Android surface transform: current=",
++      uint32_t(caps.surfaceCapabilities.currentTransform), " selected=",
++      uint32_t(swapInfo.preTransform)));
++#endif
+     
+ #ifdef __SWITCH__
+     std::fprintf(stderr, "NVK: vkCreateSwapchainKHR entering (%ux%u, %u images)\n",
+--- a/src/dxvk/dxvk_presenter.h
++++ b/src/dxvk/dxvk_presenter.h
+@@ -359,6 +359,10 @@
+     static const std::array<std::pair<VkColorSpaceKHR, VkColorSpaceKHR>, 2> s_colorSpaceFallbacks;
+ 
+     void updateSwapChain();
++
++#ifdef __ANDROID__
++    bool suboptimalNeedsRecreation();
++#endif
+ 
+     VkResult recreateSwapChain();
+ 

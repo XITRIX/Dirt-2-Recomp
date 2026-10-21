@@ -159,7 +159,11 @@ uint32_t modify(uint32_t h, F&& f) {
 // deletion lock. DeleteCriticalSection recycles the slot (the DX11 renderer
 // creates and deletes them continually while streaming: never recycling ran
 // the table out mid-race). Host mutexes are never freed, so a lookup racing
-// a delete never touches freed memory; a recycled slot reuses its mutex.
+// a delete never touches freed memory. Recycle the table index, not the mutex:
+// a retiring lock can still have native ownership after its guest storage has
+// been reinitialised. Giving that mutex to a new lock inherits the old owner
+// and can block rendering forever. Old mutex generations remain alive for any
+// thread that already obtained a reference to them.
 struct HostCS {
     std::recursive_mutex m;
 };
@@ -176,6 +180,7 @@ uint32_t cs_new_slot(uint32_t p) {
     uint32_t slot;
     if (!g_cs_free.empty()) {
         slot = g_cs_free.back();
+        g_cs[slot - 1].store(new HostCS, std::memory_order_release);
         g_cs_free.pop_back();
     } else {
         const uint32_t n = g_cs_count.load();
@@ -210,9 +215,12 @@ void cs_init(uint32_t p) {
     const uint32_t old = rd32(p + 16);
     std::memset(rt::host_ptr(p), 0, 24);
     wr32(p + 4, 0xFFFFFFFF);  // LockCount
-    if (old && old <= g_cs_count.load() && g_cs_owner[old - 1] == p)
+    if (old && old <= g_cs_count.load() && g_cs_owner[old - 1] == p) {
+        // Reinitialisation resets guest ownership, so reset native ownership
+        // too. Keeping the table index must not keep its previous mutex state.
+        g_cs[old - 1].store(new HostCS, std::memory_order_release);
         __atomic_store_n(reinterpret_cast<uint32_t*>(rt::host_ptr(p + 16)), old, __ATOMIC_RELEASE);
-    else
+    } else
         cs_new_slot(p);
 }
 

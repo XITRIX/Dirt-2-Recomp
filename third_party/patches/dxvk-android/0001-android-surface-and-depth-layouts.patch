@@ -1,0 +1,50 @@
+diff --git a/src/dxvk/dxvk_presenter.cpp b/src/dxvk/dxvk_presenter.cpp
+--- a/src/dxvk/dxvk_presenter.cpp
++++ b/src/dxvk/dxvk_presenter.cpp
+@@ -787,7 +787,18 @@
+                                     | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+     swapInfo.imageSharingMode       = VK_SHARING_MODE_EXCLUSIVE;
+     swapInfo.preTransform           = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+-    swapInfo.compositeAlpha         = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
++    // Android surfaces may expose INHERIT only. Never request an unsupported
++    // compositor mode; the SDL SurfaceView is opaque in that case.
++    swapInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
++    for (auto alpha : { VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
++                        VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
++                        VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
++                        VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR }) {
++      if (caps.surfaceCapabilities.supportedCompositeAlpha & alpha) {
++        swapInfo.compositeAlpha = alpha;
++        break;
++      }
++    }
+     swapInfo.presentMode            = m_presentMode;
+     swapInfo.clipped                = VK_TRUE;
+ 
+diff --git a/src/dxvk/dxvk_image.cpp b/src/dxvk/dxvk_image.cpp
+--- a/src/dxvk/dxvk_image.cpp
++++ b/src/dxvk/dxvk_image.cpp
+@@ -652,9 +652,22 @@
+     if (!device.config().enableUnifiedImageLayout)
+       return false;
+ 
+-    // Speshul case
++    // Feedback loops require their dedicated layout without the extension.
+     if (m_info.usage & VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT)
+       return false;
++
++#ifdef __ANDROID__
++    // Adreno's sampled render-target path must agree on one layout across
++    // attachment, storage and sampled views. Keep GPU-writable sampled images
++    // in GENERAL; ordinary sampled-only textures retain optimized layouts.
++    // This does not relax access barriers or wait for the GPU on the CPU.
++    constexpr VkImageUsageFlags writableUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
++      | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
++    if (device.properties().vk12.driverID == VK_DRIVER_ID_QUALCOMM_PROPRIETARY
++     && (m_info.usage & writableUsage)
++     && (m_info.usage & VK_IMAGE_USAGE_SAMPLED_BIT))
++      return true;
++#endif
+ 
+     // On RDNA1/2 we can enable the unified path for everything
+     // that doesn't involve feedback loops or MSAA.

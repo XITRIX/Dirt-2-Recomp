@@ -1,3 +1,207 @@
+## Android post-race texture-upload crash investigation (2026-10-21, pending device test)
+
+User reports finishing race -> loading screen before menu. Extracted latest crash
+at18:03:03, PID30747/dxvk-cs30902, installed buildf29da175e37f7027ce9103d538fcc384d23b90eb.
+SIGSEGV in vendor vkCmdCopyBufferToImage2 -> DxvkContext::copyImageBufferData<true>
+-> uploadImageHw -> DxvkCsThread. Matching symbols and driver copied; fault
+0x10000000010c is driver metadata pointer dereference. This does NOT yet prove
+driver bug vs bad arguments/lifetime/corruption. Exact texture absent from old logs.
+
+Evidence build/android-crash-investigation/: crash.log, game.log (COMPLETE,
+1,978,648 bytes verified vs tar member header), game-tail.log, exit-info.txt,
+vulkan.adreno.so, findings.txt, build/test logs. data.tar is PARTIAL because
+wireless disconnected during a large preexisting capture transfer; NOT a backup.
+REA Hopper timed out before startup; direct NDK LLVM disassembly used instead.
+
+Implemented Android-only0003-android-suboptimal-swapchain.patch: stop identical
+swapchain recreation on usable SUBOPTIMAL with unchanged extent. Query is locked;
+changed extents defer recreation until acquired image is consumed. Real errors,
+explicit changes remain. New creation log reports current/selected transforms.
+Observed repeated identical3200x2136 FIFO swaps in old log. Rotation mismatch is
+inferred, not yet measured. This independent defect is NOT a proven crash fix.
+0004-android-upload-diagnostics.patch adds opt-in transfer breadcrumbs; create
+files/Dirt2Data/trace-uploads before launch to log image format/type/dims/mips/layers,
+copy region and buffer offsets/pitches before vendor call. No GPU waits/readbacks.
+Remove marker and restart to disable; CPU logging may still alter timing.
+
+Tests: tests/runtime/test_android_suboptimal.py PASS (actual extracted policy,
+mocked extents/errors/acquire deferral/locking); patch reverse checks PASS; Android
+DXVK + game build PASS; signed16KB APK verified, buildd7d785e85b1feac8809c09191a2ca55e1397164a,
+SHA2560a107c83a950bd47b8f350e6e9b836631ec24a602d10791c4bfbe758e990224e.
+Standard APK updated; previous APK+manifest preserved in evidence directory.
+NOT INSTALLED. Device disconnected; prior192.168.1.63:45733 timed out. Asked user
+to reconnect USB/wireless. Next: install -r, verify hash, enable trace marker,
+reproduce finishing race -> menu; retrieve log+crash BEFORE relaunch and fix exact
+upload issue. Retest normally without marker/validation. No device saves/settings
+changed, no commit. Earlier unrelated local edits retained.
+
+## Android ghost UI: attachment-preservation repair verified on tested screens (2026-10-21)
+
+ACTIVE build f29da175e37f7027ce9103d538fcc384d23b90eb; APK SHA256
+1e4121603ee699c43f34bc667f986f5511e97d288c5a633325258d880b088e1c.
+Full APK installed and read-back SHA verified. ADB SDK36 server15038,
+192.168.1.63:45733; package com.daniilvinogradov.dirt2. PID30747 at last check.
+User confirms Options CLEAN. Retrieved completed benchmark summary: car overlay
+ABSENT, average27.8/min23.4FPS. Evidence preserve-attachments/screen-later.png and
+game-later.log. No validation/readbacks/tiler override. App left on summary.
+These tested screens are fixed; broader gameplay is not exhaustively verified.
+
+Current run is NORMAL SPEED, no validation. maps.txt proves layer absent.
+Temporary dxvk.tilerMode=False config was restored to original (dxvk.conf absent).
+No save/assets changes except temporary config, now removed. Switch stays parked.
+
+### Findings and actual fix under test
+
+Original summary showed translucent car over UI, Options had vertical bands.
+GPU readback capture and Vulkan validation both HIDE the artifacts by changing
+execution timing. User confirmed clean+slow under validation, then bands returned
+at78FPS after removing validation and restarting. Do not claim diagnostic-only
+cleanliness proves a fix.
+
+Android patches applied after Switch native-integration patches by
+ tools/scripts/prepare_android_dxvk.py:
+- 0001-android-surface-and-depth-layouts.patch: choose a supported compositor alpha
+  mode (surface only supports INHERIT); consistent GENERAL layout for Qualcomm
+  sampled images with color/depth attachment or storage usage. Sampled-only
+  textures keep optimized layouts; feedback-loop exclusion runs first.
+  Depth-only build92d4c9d and expanded build72d59fb BOTH still had normal-speed
+  artifacts. This layout correction ALONE is not the visual fix.
+- 0002-qualcomm-attachment-preservation.patch: Android Qualcomm only, skip
+  adjustAttachmentLoadStoreOps demotion to NONE/DONT_CARE for unused/read-only
+  attachments. Retain original explicit operations. Keeps other tiler features:
+  secondary command buffers, render-area trimming, cached memory, barriers,
+  flush/resolve policy. User Options clean and host summary screenshot clean.
+
+Isolation: dxvk.tilerMode=False gave clean Options (user confirmed) and a clean
+summary with no car overlay (host screenshot). Average27.9/min22.0 vs earlier
+22.4/min17.3, but conditions not controlled: do not claim a measured gain.
+The narrower current patch restores tiler Auto and only preserves load/store ops.
+If current summary fails, known-good fallback is full tilerMode=False, not slowing
+all draws with readbacks. Both patches compiled, reverse-apply/preparation checks
+and diff check PASS. Merged DXVK10archives, linked game, signed16KB APK verified.
+
+### Evidence
+
+build/android-validation/:
+- logcat-start.txt: unsupported OPAQUE compositeAlpha; sampled depth descriptor
+  expects DEPTH_STENCIL_READ_ONLY_OPTIMAL vs mixed read-depth/write-stencil actual.
+- after-fix-validation.txt: startup zero errors with depth-only repair, BUT Options
+  later generated COLOR SHADER_READ_ONLY_OPTIMAL vs actual GENERAL, recorded in
+  options-fixed-validation.txt. Startup-only validation was insufficient.
+- normal-artifacts/screen.png: depth-only bands at78FPS.
+- expanded-normal/screen.png: broader layout policy still bands at73FPS;
+  maps.txt proves no validator loaded.
+- tiler-off/benchmark-screen.png: summary without car overlay; game-final.log.
+- preserve-attachments/: current run screenshot/log/maps (first screenshot race).
+- dxvk-conf-before.{status,txt}: original configuration; status42 means absent.
+- previous-settings.json: ORIGINAL global layer settings/properties, RESTORED.
+  settings-restored.txt confirms; validator binaries REMOVED from app root and
+  /data/local/tmp. Official host VVL1.4.363.0 ARM64 library retained here if needed.
+
+### Other retained local changes and capture caveats
+
+Map NO_OVERWRITE previously copied the ENTIRE guest shadow over GPU-owned bytes.
+shadow_write.h now copies changed spans against pre-map baseline and uses actual
+mapped length, not allocation capacity. Random/guard-page regression + runtime
+checks:5/5 PASS. User confirmed this ALONE did not remove patterns. Lock-generation
+and FIFO fixes below remain uncommitted too. No commit or push this session.
+
+Android-only frame_capture.inc polls files/Dirt2Data/gpu-capture.request atPresent,
+captures next frame up to1500draws with metadata, RTV0 previews and bounded raw
+first input mip/slice. Capture611draws took6.5s; synchronizing readbacks hide bug.
+No readbacks without request. Evidence build/android-screen-check/:
+20261021-113710/screen.png original summary; 20261021-115353/before.png broken
+Options; after.png clean after synchronous dump; capture.tar.gz + gpu-capture-10470/.
+Cube/array images only preview first mip/slice; float previews clamp0..1.
+Bundled runtime Python with Pillow can generate contact sheets via contact.py.
+
+## Android stale display: FIFO installed; visible startup frames verified (2026-10-21)
+
+User clarifies visible frame changes about once per minute while music/input
+continue. Replacement7e64255 verified installed, livePID19648; logs show sustained
+20FPS/45k+ presents. Two screenshots2s apart byte-identical including FPS21.6.
+Evidence build/android-freeze/20261021-112058/: screenshots, current game log,
+thread list, SurfaceFlinger/window/activity/logcat dumps. SurfaceFlinger repeatedly
+logs SF-BufferCheck: buffer processing hung tens of seconds due QTI frame early
+check for game's BLAST layer1294, while game remains visible/resumed. This is
+stronger/direct evidence for current display symptom than earlier mutex snapshot;
+DO NOT claim lock-generation patch resolved display freeze.
+
+Android SDL launcher now defaults DXVK_CONFIG="dxgi.syncInterval = 1" (setenv
+no overwrite) to select FIFO instead of MAILBOX. Android only, no Switch/Apple
+changes. DXVK source confirms syncInterval factory override used by Present.
+Full incremental Android build + signed16KB package PASS. Final buildd3b8c7101abfd3cc798136ae3f19919a67da799a installed and APK hash
+verified (SHA51e62bfd7c212eef6e565359c8a98f076985d513c9b00a51042ddf65781ac008).
+Actual log confirms VK_PRESENT_MODE_FIFO_KHR. New screenshots show animation
+and HUD changing23.2->25.6FPS; filtered new SurfaceFlinger capture contains no
+QTI frame-early errors. Evidence in112058/fifo/. App left at Press Start; needs
+user to repeat prior menu route/longer session before claiming fully resolved.
+Keep save untouched. Earlier lock-generation changes and4/4 tests remain local.
+
+## Android menu-lock repair installed; hardware retest pending (2026-10-21)
+
+Reconnected tablet192.168.1.63:45733. Captured lock-registers4.txt, lock-owner.txt,
+lock-alias.txt in build/android-freeze/20261021-095037. Live PID8127 render thread
+TID8214 waits native HostCS0xb40000777da147d0: bionic owner8242, state0x4002.
+Guest CS0x1dba3a64 has recursion0/owner0, slot437. Registry owner matches guest
+address; native owner8242 is sleeping in pool f_01183390 -> WaitForMultipleObjects.
+Therefore guest/native lock ownership diverged, not an active GPU/compile wait.
+
+sync.cpp now gives recycled slots fresh HostCS, and also resets native mutex
+on same-address InitialiseCriticalSection while retaining table index. Previous
+code reset guest ownership but reused native mutex, carrying stale owner into
+fresh locks. Retired mutex generations intentionally remain alive for outstanding
+references (existing no-free lifetime policy); allocations can accumulate across
+lock reinitialisations. Does not change scheduling, renderer or save data.
+
+Regression tests/runtime/test_critical_sections.py compiles actual registry
+fragment and recreates stale-native-owner, slot reuse and same-address reset;
+old implementation fails, corrected implementation passes. Registered CTest;
+4/4 runtime tests PASS. Full Android link and signed APK16KB checks PASS.
+Final build7e64255db0b70070c0c793d9723f5338e794bee8, APK SHA256
+b1d143044c3f9f9d8cff39103f51f62bb8aaef37e4c749cb0587564aec233507.
+Final install COMPLETE, APK hash verified; game relaunched. Do not claim hardware fix until retest. Post-launch startup/cleanup check returned device offline; private files/lldb-server may remain. Host port-forward removals attempted, not verified.
+First partialrepairf5e99df1 installed before same-address case added; final
+7e6425 supersedes it. Save files preserved. Native debugger successfully detached
+on completed captures. Tooling: use local matching libc/c++ modules in LLDB to
+recover callee-saved regs; raw frame-pointer unwinding cannot recover x19.
+
+## Android live menu freeze investigated (2026-10-21)
+
+User's game remains open/frozen. ADB last connected192.168.1.63:45733 (changed
+from41307); connection dropped during diagnostics, mDNS empty. Asked current
+Wireless debugging address; keep app open. App process is named SDLActivity,
+NOT package name: initial ps grep missed it. PID8127, uid10327. Do not mistake
+old exit-info SwipeUpClean PID6727/08:16 or storage SIGABRT00:54 for this freeze.
+
+Evidence build/android-freeze/20261021-095037/: game logs/data.tar, filtered.txt,
+proc-maps.txt, lldb-stacks.txt and symbolized-stacks.txt. Installed native image
+matches local build/android-arm64/libdirt2.so, load base0x758561b000.
+Live thread36 (TID8214 game main) blocked in EnterCriticalSection from
+f_011588C0 -> f_00BEB7F0 -> f_00691D80 -> f_00CD70D0_orig -> envmap snapshot
+hook. DXVK submit/queue/cs and all compiler workers wait idle. SDLThread event
+pump alive. No GPU device-loss error/ANR/native crash recorded for this run.
+This identifies wait site, NOT root cause/lock owner; no fix claimed or applied.
+
+Native debuggerd -b requires root. Pushed NDK29 lldb-server to private
+files/lldb-server; no INTERNET permission, so use Unix abstract socket instead
+of TCP. Host NDK lldb fails missing libpython3.11; /usr/bin/xcrun lldb works.
+Successful initial capture: server gdbserver unix-abstract:///dirt2-debug --attach
+8127; adb forward tcp:15039 localabstract:/dirt2-debug (leading slash matters).
+Host gdb-remote127.0.0.1:15039; thread backtrace all -c12; process detach.
+ART threads showed pending SIGSEGV in Dalvik JIT (not proof of game crash).
+Follow-up attach hung and disconnected before register capture. Last tracer
+PID12230, socket/dirt2-lock2 forwarded15040. Cleanup attempted but ADB device
+already absent: MUST check TracerPid and remove surviving diagnostic server
+on reconnect before leaving app. Do not kill game itself without preserving data.
+
+Next inspect blocked lock owner. EnterCriticalSection native offset0x9d0ba0,
+frame3 return0x9d0bf0: saved x19=X86*, x22=&recomp_mem; c->esp at+16;
+critical-section guest argument rd32(esp+4); fields+8 recursion,+12 guestowner,
++16 HostCS slot. Need debugger registers/memory then map guest owner to threads.
+HostCS mutex recycle/ownership in shims/kernel32/sync.cpp is a candidate to
+investigate, not established bug. Preserve Mac-imported save, no career changes.
+
 ## Android installed over Wi-Fi; Press Start renders (2026-10-21)
 
 ACTIVE TABLET: Xiaomi Pad8Pro, Android16, Adreno830. Paired through wireless ADB.

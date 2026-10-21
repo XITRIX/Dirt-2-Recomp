@@ -28,6 +28,15 @@ if(DIRT2_BUILD_TOOLS)
   add_subdirectory(tools/recomp)
 endif()
 
+# CI prepares the recompiler without configuring any target graphics/audio SDK.
+option(DIRT2_TOOLS_ONLY "Configure only host-side tools" OFF)
+if(DIRT2_TOOLS_ONLY)
+  if(NOT DIRT2_BUILD_TOOLS)
+    message(FATAL_ERROR "DIRT2_TOOLS_ONLY requires DIRT2_BUILD_TOOLS")
+  endif()
+  return()
+endif()
+
 # Lifter differential tests against Unicorn (fetched unless a system copy is found).
 option(DIRT2_BUILD_TESTS "Build the lifter differential tests" OFF)
 if(DIRT2_BUILD_TESTS AND DIRT2_BUILD_TOOLS)

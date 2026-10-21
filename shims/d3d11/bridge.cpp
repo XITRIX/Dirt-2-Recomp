@@ -32,6 +32,7 @@
 #include "../shim.h"
 #include "guest_string.h"
 #include "render_size.h"
+#include "shadow_write.h"
 #include "perf_stats.h"
 
 namespace shim {
@@ -190,6 +191,10 @@ uint32_t mip_count(uint32_t mips, uint32_t w, uint32_t h = 1, uint32_t d = 1) {
 // ---------------------------------------------------------------------------
 namespace {
 
+#if defined(__ANDROID__)
+#include "frame_capture.inc"
+#endif
+
 void dev_create_buffer(X86* c);
 void dev_create_texture1d(X86* c);
 void dev_create_texture2d(X86* c);
@@ -286,7 +291,9 @@ uint32_t wrap_by_iid(const GUID& iid, void* obj) {
 struct MapShadow {
     uint32_t guest = 0, size = 0;
     void* host = nullptr;  // host mapping while mapped
-    bool write = false;
+    bool write = false, no_overwrite = false;
+    uint32_t mapped_bytes = 0;
+    std::vector<uint8_t> baseline;
     ID3D11Resource* mapped_resource = nullptr;
 };
 std::map<std::pair<uint32_t, uint32_t>, MapShadow> g_maps;
@@ -556,6 +563,15 @@ void ctx_map(X86* c) {
             sh.host = m.pData;
             sh.mapped_resource = actual;
             sh.write = type != D3D11_MAP_READ;
+            sh.no_overwrite = type == D3D11_MAP_WRITE_NO_OVERWRITE;
+            sh.mapped_bytes = size;
+            if (sh.no_overwrite) {
+                sh.baseline.resize(size);
+                std::memcpy(sh.baseline.data(), rt::host_ptr(sh.guest), size);
+                static std::atomic<unsigned> logged{0};
+                if (logged.fetch_add(1, std::memory_order_relaxed) < 8)
+                    rt::log("d3d11: NO_OVERWRITE map %08X (%u bytes) from %08X", a[1], size, rd32(c->esp));
+            }
             if (type == D3D11_MAP_READ || type == D3D11_MAP_READ_WRITE) {
                 std::memcpy(rt::host_ptr(sh.guest), m.pData, size);
 #if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
@@ -632,7 +648,11 @@ void ctx_unmap(X86* c) {
             auto it = g_maps.find({a[1], a[2]});
             if (it != g_maps.end() && it->second.host) {
                 if (it->second.write) {
-                    std::memcpy(it->second.host, rt::host_ptr(it->second.guest), it->second.size);
+                    if (it->second.no_overwrite)
+                        shim::d3d11::write_shadow_changes(it->second.host, rt::host_ptr(it->second.guest),
+                                                         it->second.baseline.data(), it->second.mapped_bytes);
+                    else
+                        std::memcpy(it->second.host, rt::host_ptr(it->second.guest), it->second.mapped_bytes);
 #if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
                     if (performance_trace()) g_map_write_bytes.fetch_add(it->second.size, std::memory_order_relaxed);
 #endif
@@ -917,6 +937,9 @@ void swap_present(X86* c) {
     if (first) { first = false; rt::log("d3d11: entering first Present"); }
 #endif
     platform::gpu_checkpoint();
+#if defined(__ANDROID__)
+    frame_capture::boundary();
+#endif
     update_upscale_target(a[0]);
     static uint32_t frames = 0;
     if (self) capture(self, ++frames);

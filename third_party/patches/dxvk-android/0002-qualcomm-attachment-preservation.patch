@@ -1,0 +1,17 @@
+diff --git a/src/dxvk/dxvk_context.cpp b/src/dxvk/dxvk_context.cpp
+--- a/src/dxvk/dxvk_context.cpp
++++ b/src/dxvk/dxvk_context.cpp
+@@ -2685,6 +2685,13 @@
+   void DxvkContext::adjustAttachmentLoadStoreOps(
+           VkRenderingAttachmentInfo&  attachment,
+           DxvkAccess                  access) const {
++#ifdef __ANDROID__
++    // Conservative Adreno path: preserve the original explicit attachment
++    // load/store operations instead of demoting untouched/read-only aspects.
++    // Keep secondary command buffers, render-area trimming and cached memory.
++    if (m_device->properties().vk12.driverID == VK_DRIVER_ID_QUALCOMM_PROPRIETARY)
++      return;
++#endif
+     if (access == DxvkAccess::None) {
+       // If the attachment is not accessed at all, we can set both the
+       // load and store op to NONE if supported by the implementation.

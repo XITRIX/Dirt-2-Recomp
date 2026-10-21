@@ -641,6 +641,11 @@ int main(int argc, char** argv) {
     setenv("DIRT2_DX11_FRESH_EXPOSURE", "1", 0);
     setenv("DIRT2_DX11_ASYNC_EXPOSURE", "1", 0);
     setenv("DXVK_HUD", "fps,compiler", 0);
+    // Qualcomm's Android compositor can retain a MAILBOX frame for tens of
+    // seconds (SF-BufferCheck / QTI frame early check) even while Vulkan
+    // presents keep succeeding. Use FIFO independently of the PC game's
+    // default sync interval. External DXVK_CONFIG can override this default.
+    setenv("DXVK_CONFIG", "dxgi.syncInterval = 1", 0);
 #elif defined(SDL_PLATFORM_IOS) || defined(SDL_PLATFORM_TVOS) || defined(SDL_PLATFORM_VISIONOS)
     // The game data is copied into the app's Documents folder (Finder or the
     // Files app): either the "Dirt 2" folder itself or its contents.

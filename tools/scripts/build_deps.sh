@@ -17,7 +17,7 @@ SRC=$ROOT/build/deps/src
 MIN_IOS=16.0
 MIN_MACOS=12.0
 SDKS=${*:-macos iphoneos iphonesimulator}
-JOBS=$(sysctl -n hw.ncpu)
+JOBS=${DIRT2_BUILD_JOBS:-$(getconf _NPROCESSORS_ONLN)}
 
 SDL_VER=3.4.18
 OPENAL_VER=1.25.2

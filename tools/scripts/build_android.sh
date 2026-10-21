@@ -5,9 +5,12 @@ cd "$(dirname "$0")/../.."
 ROOT=$PWD
 SDK=${ANDROID_HOME:-$HOME/Library/Android/sdk}
 export ANDROID_NDK_HOME=${ANDROID_NDK_HOME:-$SDK/ndk/29.0.14206865}
-export CCACHE_DISABLE=1
+if [ "${DIRT2_ENABLE_CCACHE:-0}" != 1 ]; then export CCACHE_DISABLE=1; fi
 export PATH=/opt/homebrew/bin:/opt/local/bin:$PATH
 JOBS=${DIRT2_BUILD_JOBS:-6}
+MODE=${1:-all}
+case "$MODE" in all|libraries|game) ;; *) echo "Usage: $0 [all|libraries|game]" >&2; exit 2 ;; esac
+if [ "$MODE" != game ]; then
 bash tools/scripts/build_android_deps.sh
 bash tools/scripts/prepare_sources.sh --dxvk-only
 python3 tools/scripts/prepare_android_dxvk.py
@@ -25,6 +28,10 @@ libs=sorted(p for p in build.rglob('*.a') if p!=out)
 if not libs:raise SystemExit('Missing DXVK archives')
 subprocess.run([str(ar),'-M'],input='CREATE '+str(out)+'\n'+''.join('ADDLIB '+str(p)+'\n' for p in libs)+'SAVE\nEND\n',text=True,check=True)
 PY
-cmake --preset android-arm64
+fi
+[ "$MODE" != libraries ] || exit 0
+GAME_ARGS=()
+if [ -n "${DIRT2_GAME_DIR:-}" ]; then GAME_ARGS=(-DDIRT2_GAME_DIR="$DIRT2_GAME_DIR"); fi
+cmake --preset android-arm64 "${GAME_ARGS[@]}"
 cmake --build --preset android-arm64 -j"$JOBS"
 python3 tools/scripts/package_android.py

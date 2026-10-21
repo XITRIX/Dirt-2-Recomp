@@ -14,6 +14,7 @@ sdk = Path(os.environ.get('ANDROID_HOME', Path.home() / 'Library/Android/sdk'))
 ndk = Path(os.environ.get('ANDROID_NDK_HOME', sdk / 'ndk/29.0.14206865'))
 tools = ndk / 'toolchains/llvm/prebuilt/darwin-x86_64/bin'
 patches = sorted((root / 'third_party/patches/dxvk-switch').glob('*.patch'))
+patches += sorted((root / 'third_party/patches/dxvk-android').glob('*.patch'))
 if not (base / '.dirt2-stamp').exists():
     raise SystemExit('Run tools/scripts/prepare_sources.sh first')
 # Bump this version when source transformations below change. Cross flags may
