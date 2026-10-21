@@ -14,5 +14,7 @@ runs:
         apt-get update
         apt-get install -y --no-install-recommends cmake ninja-build meson glslang-tools pkg-config ccache python3 git curl ca-certificates patch perl make ripgrep
         python3 -c 'import sys; assert sys.version_info >= (3, 11), "Python 3.11+ required"'
+        # Checkout's temporary HOME does not carry over to container run steps.
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
         echo /opt/devkitpro/devkitA64/bin >> "$GITHUB_PATH"
         echo /opt/devkitpro/tools/bin >> "$GITHUB_PATH"

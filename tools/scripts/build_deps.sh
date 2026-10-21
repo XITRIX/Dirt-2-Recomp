@@ -103,7 +103,7 @@ for SDK in $SDKS; do
     cmake_lib openal "$SRC/openal-soft-$OPENAL_VER" -DLIBTYPE=STATIC -DALSOFT_UTILS=OFF -DALSOFT_EXAMPLES=OFF \
         -DALSOFT_TESTS=OFF -DALSOFT_INSTALL_EXAMPLES=OFF -DALSOFT_INSTALL_UTILS=OFF \
         -DHAVE_WFUNCTION_EFFECTS=OFF `# new clang flags coreaudio.cpp, and OpenAL makes it an error` \
-        "${OPENAL_ARGS[@]}"
+        ${OPENAL_ARGS[@]+"${OPENAL_ARGS[@]}"}
     cmake_lib ogg "$SRC/libogg-$OGG_VER" -DINSTALL_DOCS=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5
     cmake_lib vorbis "$SRC/libvorbis-$VORBIS_VER" -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 

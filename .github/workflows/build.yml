@@ -184,6 +184,9 @@ jobs:
       - name: Android SDK
         if: matrix.platform == 'android'
         uses: android-actions/setup-android@v3
+        with:
+          # The default also requests the retired SDK package named "tools".
+          packages: platform-tools
       - name: Cache pinned Android SDK packages
         if: matrix.platform == 'android'
         uses: actions/cache@v4
