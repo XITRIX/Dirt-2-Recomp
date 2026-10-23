@@ -26,6 +26,14 @@ add_library(dirt2_shims OBJECT
   video/bink_decoder.cpp
   audio/openal.cpp
   audio/vorbisfile.cpp)
+# Touch controls are absent from Switch and macOS binaries. Keep the implementation
+# portable for other SDL targets, including future non-Apple desktop builds.
+if(NOT DIRT2_SWITCH AND NOT (APPLE AND NOT DIRT2_IOS))
+  set(DIRT2_TOUCH_CONTROLLER ON)
+  target_sources(dirt2_shims PRIVATE ../platform/sdl/virtual_controller.cpp)
+  target_compile_definitions(dirt2_shims PUBLIC DIRT2_TOUCH_CONTROLLER=1)
+endif()
+
 # Static libraries from build/deps/<platform> (build_deps.sh): link with their
 # private dependencies.
 find_package(PkgConfig REQUIRED)
@@ -70,4 +78,9 @@ if(DIRT2_HAVE_DXMT OR DIRT2_HAVE_DXVK_D3D11)
     target_link_libraries(dirt2_shims_d3d11 PUBLIC recomp_runtime dxmt)
   endif()
   target_compile_options(dirt2_shims_d3d11 PRIVATE -Wall -Wno-unused-parameter -Wno-unused-function)
+endif()
+
+if(DIRT2_TOUCH_CONTROLLER AND TARGET dirt2_shims_d3d11)
+  target_compile_definitions(dirt2_shims_d3d11 PRIVATE DIRT2_TOUCH_CONTROLLER=1)
+  target_link_libraries(dirt2_shims_d3d11 PRIVATE SDL3::SDL3)
 endif()

@@ -6,6 +6,19 @@ namespace platform {
 namespace {
 jstring str(JNIEnv* env, const std::string& s) { return env->NewStringUTF(s.c_str()); }
 }
+namespace touch {
+bool android_keyboard_or_mouse() {
+    auto* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+    auto activity = static_cast<jobject>(SDL_GetAndroidActivity());
+    if (!env || !activity) return false;
+    jclass cls = env->GetObjectClass(activity);
+    jmethodID method = env->GetMethodID(cls, "hasPhysicalKeyboardOrMouse", "()Z");
+    bool connected = method && env->CallBooleanMethod(activity, method);
+    if (env->ExceptionCheck()) { env->ExceptionClear(); connected = false; }
+    env->DeleteLocalRef(cls); env->DeleteLocalRef(activity);
+    return connected;
+}
+}
 bool prompt_text(const std::string& title, const std::string& message,
                  const std::string& initial, std::string& result) {
     auto* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());

@@ -34,6 +34,7 @@
 #include "render_size.h"
 #include "shadow_write.h"
 #include "perf_stats.h"
+#include "../input/touch_d3d11.h"
 
 namespace shim {
 void* host_window(uint32_t hwnd);
@@ -946,6 +947,9 @@ void swap_present(X86* c) {
 #if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
     static const bool timing = [] { const char* e = std::getenv("DIRT2_DX11_PERF"); return e && e[0] == '1'; }();
     const auto present_start = timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+#endif
+#ifdef DIRT2_TOUCH_CONTROLLER
+    if (!(a[2] & DXGI_PRESENT_TEST)) platform::touch::present_d3d11(self);
 #endif
     const HRESULT hr = self ? self->Present(a[1], a[2]) : E_INVALIDARG;
 #if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)

@@ -1,3 +1,4 @@
+#include "virtual_controller.h"
 // Host entry point (SDL3). The main thread owns SDL: it pumps events and runs
 // window operations; the guest runs on its own thread with a large host stack,
 // since guest call depth nests host frames.
@@ -141,6 +142,7 @@ Window create_window(int width, int height, const char* title) {
 #endif
                              api | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
         if (!w) rt::log("SDL_CreateWindow failed: %s", SDL_GetError());
+        if (w) touch::attach(w);
         if (kSingleWindow && w) {
             g_shared_window = w;
             g_shared_refs = 1;
@@ -185,6 +187,7 @@ void destroy_window(Window w) {
             if (--g_shared_refs > 0) return;
             g_shared_window = nullptr;
         }
+        touch::detach(static_cast<SDL_Window*>(w));
         SDL_DestroyWindow(static_cast<SDL_Window*>(w));
     });
 }
@@ -450,6 +453,7 @@ bool SDLCALL lifecycle_watch(void*, SDL_Event* e) {
 }
 
 void translate(const SDL_Event& e) {
+    platform::touch::event(e);
     switch (e.type) {
         case SDL_EVENT_QUIT:
             shim::post_message(0, WM_CLOSE, 0, 0);
@@ -634,7 +638,7 @@ int main(int argc, char** argv) {
     setenv("DIRT2_DATA_DIR", android_data.c_str(), 1);
     if (dir.empty()) dir = storage + "/Dirt 2";
     if (!std::filesystem::exists(dir + "/dirt2_game.exe", storage_error)) {
-        const std::string message = "Use the installation helper to copy your PC game's Dirt 2 folder, including dirt2_game.exe, to:\n\n" + dir + "\n\nThen reopen DiRT 2. A gamepad is required.";
+        const std::string message = "Use the installation helper to copy your PC game's Dirt 2 folder, including dirt2_game.exe, to:\n\n" + dir + "\n\nThen reopen DiRT 2. Touch controls are available when no gamepad, keyboard or mouse is connected.";
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "DiRT 2: game data missing", message.c_str(), nullptr);
         return 2;
     }
@@ -839,6 +843,7 @@ int main(int argc, char** argv) {
 
     // Main thread: pump events (this also runs SDL_RunOnMainThread callbacks).
     while (!g_guest_done) {
+        platform::touch::update();
         SDL_Event e;
         if (SDL_WaitEventTimeout(&e, 10)) {
             translate(e);

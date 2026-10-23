@@ -2,6 +2,7 @@
 // Player 1 falls back to a keyboard-driven virtual pad when no gamepad is
 // connected, which is what development on a Mac without a controller needs.
 #include <SDL3/SDL.h>
+#include "../../platform/sdl/virtual_controller.h"
 
 #include <algorithm>
 #include <atomic>
@@ -207,7 +208,16 @@ STDCALL_ORD(xinput1_3, 2, 2) {  // XInputGetState(index, XINPUT_STATE*)
     refresh_pads();
     PadState s;
     if (g_pads[idx]) s = read_pad(g_pads[idx]);
-    else if (idx == 0) s = read_keyboard();
+    else if (idx == 0) {
+        s = read_keyboard();
+#ifdef DIRT2_TOUCH_CONTROLLER
+        const auto t = platform::touch::state();
+        s.buttons |= t.buttons;
+        s.lt = std::max(s.lt, t.lt); s.rt = std::max(s.rt, t.rt);
+        if (t.lx) s.lx=t.lx; if (t.ly) s.ly=t.ly;
+        if (t.rx) s.rx=t.rx; if (t.ry) s.ry=t.ry;
+#endif
+    }
     else {
         trace_call(2, idx, ERROR_DEVICE_NOT_CONNECTED);
         return ERROR_DEVICE_NOT_CONNECTED;

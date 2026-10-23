@@ -12,6 +12,7 @@
 // Lock/Unlock return guest-memory staging copies, since the game can only
 // address the 4 GB guest space.
 #include <d3d9.h>
+#include "../input/touch_d3d9.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -1248,6 +1249,9 @@ void dev_present(X86* c) {
         rt::log("d3d9: %u presents, %.1f fps", frame, 300.0 / std::chrono::duration<double>(now - t0).count());
         t0 = now;
     }
+#ifdef DIRT2_TOUCH_CONTROLLER
+    if (self) platform::touch::present_d3d9(self);
+#endif
     const HRESULT hr = self ? self->Present(a.ptr<const RECT>(1), a.ptr<const RECT>(2), nullptr,
                                             a.ptr<const RGNDATA>(4))
                             : D3DERR_INVALIDCALL;
@@ -1259,6 +1263,12 @@ void swap_present(X86* c) {
     const Args a{c};
     if (std::getenv("DIRT2_LOG_PRESENT")) rt::log("d3d9: SwapChain::Present by t%u (caller %08X)", rt::current_thread_id(), rd32(c->esp));
     auto* self = static_cast<IDirect3DSwapChain9*>(to_host(a[0]));
+#ifdef DIRT2_TOUCH_CONTROLLER
+    if (self) {
+        IDirect3DDevice9* device=nullptr;
+        if (SUCCEEDED(self->GetDevice(&device))) { platform::touch::present_d3d9(device,self); device->Release(); }
+    }
+#endif
     const HRESULT hr = self ? self->Present(a.ptr<const RECT>(1), a.ptr<const RECT>(2), nullptr,
                                             a.ptr<const RGNDATA>(4), a[5])
                             : D3DERR_INVALIDCALL;

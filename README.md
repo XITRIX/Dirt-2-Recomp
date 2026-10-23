@@ -10,13 +10,23 @@ The game's own code is lifted mechanically. Windows, DirectX, OpenAL, Bink and G
 | Direct3D 11 (Switch / Android) | DXVK → Vulkan (NVK on Switch; device driver on Android) |
 | Direct3D 9 (Apple fallback) | DXVK (d3d9) → Vulkan → MoltenVK → Metal |
 | OpenAL / Rapture3D | OpenAL Soft |
-| XInput / DirectInput | SDL3 gamepad (GameController on Apple) |
+| XInput / DirectInput | SDL3 gamepad, keyboard fallback, and automatic touch controller |
 | Win32 window and messages | SDL3 |
 | Bink 1 video | FFmpeg `bink` / `binkaudio` |
 | GFWL (`xlive.dll`) | Offline stub |
 | Winsock | BSD sockets |
 
 No game data or executable is included. You need your own copy of the game.
+
+On iOS and Android, an on-screen controller appears when no gamepad, physical keyboard or mouse is connected. It follows RPCSX-iOS's bottom-corner layout: D-pad and left stick on the left, face buttons and right stick on the right, shoulders above each cluster, and Back/Start at the bottom center. Multiple fingers can steer, accelerate and press buttons together. Connecting a physical input device hides it; disconnecting restores it. Touches reset on focus loss, backgrounding, window resizing and safe-area changes. The overlay is compiled out on macOS and Switch. Shared SDL input/layout code feeds both the D3D9 and D3D11 renderers. Android supplies keyboard/mouse detection through InputManager because SDL 3.4 does not enumerate those devices there.
+
+Touch-input regression tests run without a display or GPU:
+
+```sh
+cmake -S tests/input -B build/touch-tests -G Ninja -DSDL3_INCLUDE_DIR="$PWD/build/deps/macos/include"
+cmake --build build/touch-tests
+ctest --test-dir build/touch-tests --output-on-failure
+```
 
 ## Layout
 
