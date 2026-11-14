@@ -304,7 +304,27 @@ bool performance_trace() {
     static const bool on = [] { const char* e = std::getenv("DIRT2_DX11_PERF"); return e && e[0] == '1'; }();
     return on;
 }
-std::atomic<uint64_t> g_map_calls{0}, g_map_ns{0}, g_map_read_bytes{0}, g_map_write_bytes{0};
+std::atomic<uint64_t> g_map_calls{0}, g_map_ns{0}, g_map_read_bytes{0}, g_map_write_bytes{0}, g_map_scan_bytes{0};
+std::atomic<uint64_t> g_bridge_map_ns{0}, g_map_shadow_ns{0}, g_bridge_unmap_ns{0};
+std::atomic<uint64_t> g_shadow_write_ns{0}, g_native_unmap_ns{0}, g_map_lock_ns{0};
+// Inclusive wall time: lock waits and native operations can overlap other
+// threads. These counters locate bridge costs; they are not exclusive CPU time.
+class BridgeTimer {
+    std::atomic<uint64_t>& counter;
+    bool active = performance_trace();
+    std::chrono::steady_clock::time_point start = active ? std::chrono::steady_clock::now()
+                                                        : std::chrono::steady_clock::time_point{};
+public:
+    explicit BridgeTimer(std::atomic<uint64_t>& value) : counter(value) {}
+    void stop() {
+        if (!active) return;
+        const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - start).count();
+        counter.fetch_add(uint64_t(ns), std::memory_order_relaxed);
+        active = false;
+    }
+    ~BridgeTimer() { stop(); }
+};
 #endif
 struct ExposureCopy { uint32_t proxy = 0, frame = 0; uint64_t ns = 0; uint32_t context = 0; };
 std::map<uint32_t, ExposureCopy> g_exposure_copies;
@@ -475,6 +495,9 @@ uint32_t mapped_size(ID3D11Resource* r, UINT sub, const D3D11_MAPPED_SUBRESOURCE
 
 // Map(resource, subresource, type, flags, D3D11_MAPPED_SUBRESOURCE*)
 void ctx_map(X86* c) {
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+    BridgeTimer total_timer(g_bridge_map_ns);
+#endif
     const Args a{c};
     auto* self = static_cast<ID3D11DeviceContext*>(to_host(a[0]));
     auto* res = static_cast<ID3D11Resource*>(to_host(a[1]));
@@ -550,7 +573,13 @@ void ctx_map(X86* c) {
         }
 #endif
         if (SUCCEEDED(hr)) {
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+            BridgeTimer shadow_timer(g_map_shadow_ns), lock_timer(g_map_lock_ns);
+#endif
             std::lock_guard lk(g_mu);
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+            lock_timer.stop();
+#endif
             MapShadow& sh = g_maps[{a[1], sub}];
             const uint32_t size = mapped_size(res, sub, m);
             if (sh.guest && sh.size < size) {
@@ -639,23 +668,43 @@ void ctx_map(X86* c) {
 
 // Unmap(resource, subresource)
 void ctx_unmap(X86* c) {
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+    BridgeTimer total_timer(g_bridge_unmap_ns);
+#endif
     const Args a{c};
     auto* self = static_cast<ID3D11DeviceContext*>(to_host(a[0]));
     auto* res = static_cast<ID3D11Resource*>(to_host(a[1]));
     if (self && res) {
         ID3D11Resource* actual = res;
         {
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+            BridgeTimer lock_timer(g_map_lock_ns);
+#endif
             std::lock_guard lk(g_mu);
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+            lock_timer.stop();
+#endif
             auto it = g_maps.find({a[1], a[2]});
             if (it != g_maps.end() && it->second.host) {
                 if (it->second.write) {
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+                    BridgeTimer write_timer(g_shadow_write_ns);
+#endif
+                    size_t written = it->second.mapped_bytes;
                     if (it->second.no_overwrite)
-                        shim::d3d11::write_shadow_changes(it->second.host, rt::host_ptr(it->second.guest),
-                                                         it->second.baseline.data(), it->second.mapped_bytes);
+                        written = shim::d3d11::write_shadow_changes(it->second.host, rt::host_ptr(it->second.guest),
+                                                                  it->second.baseline.data(), it->second.mapped_bytes);
                     else
                         std::memcpy(it->second.host, rt::host_ptr(it->second.guest), it->second.mapped_bytes);
 #if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
-                    if (performance_trace()) g_map_write_bytes.fetch_add(it->second.size, std::memory_order_relaxed);
+                    write_timer.stop();
+                    if (performance_trace()) {
+                        // Report actual writes separately from scanned buffer
+                        // capacity; NO_OVERWRITE can touch only a small fraction.
+                        g_map_write_bytes.fetch_add(written, std::memory_order_relaxed);
+                        if (it->second.no_overwrite)
+                            g_map_scan_bytes.fetch_add(it->second.mapped_bytes, std::memory_order_relaxed);
+                    }
 #endif
                 }
                 it->second.host = nullptr;
@@ -663,6 +712,9 @@ void ctx_unmap(X86* c) {
                 it->second.mapped_resource = nullptr;
             }
         }
+#if defined(DIRT2_D3D11_DXVK) && defined(__SWITCH__)
+        BridgeTimer native_timer(g_native_unmap_ns);
+#endif
         self->Unmap(actual, a[2]);
     }
     c->esp += 4 * 4;
@@ -910,20 +962,40 @@ void profile_dx11_frame(IDXGISwapChain* self, double present_ms) {
     const bool valid = dirt2D3D11GetPerfStats(device, counters.data(), counters.size()) != 0;
     device->Release();
     if (!valid) return;
+    const auto cache_stats = proxy_cache().take_statistics();
+    static uint64_t previous_retirements = g_proxy_generation.load(std::memory_order_acquire);
+    const uint64_t retirements = g_proxy_generation.load(std::memory_order_acquire);
     if (have) {
         const auto d = perf_delta(counters, previous);
         const double f = frames;
         rt::log("perf-dx11: %u frames %.1f fps, frame %.3f ms, Present %.3f ms/frame", frames, f * 1000 / ms, ms / f, present_total / f);
         rt::log("perf-dx11: per frame draws %.1f dispatches %.1f passes %.1f barriers %.1f submissions %.1f cs-chunks %.1f", d[Draws]/f, d[Dispatches]/f, d[RenderPasses]/f, d[Barriers]/f, d[Submits]/f, d[CsChunks]/f);
         rt::log("perf-dx11: wait ms/frame GPU %.3f CS %.3f, waits/frame GPU %.1f CS %.1f, queue-idle %.3f ms/frame, cs-idle %.3f ms/frame", d[GpuWaitUs]/(1000*f), d[CsWaitUs]/(1000*f), d[GpuWaits]/f, d[CsWaits]/f, d[GpuIdleUs]/(1000*f), d[CsIdleUs]/(1000*f));
-        rt::log("perf-dx11: maps/frame %.1f native-Map %.3f ms/frame, shadow copies read %.3f MiB/frame write %.3f MiB/frame",
+        rt::log("perf-dx11: maps/frame %.1f native-Map %.3f ms/frame, shadow copies read %.3f MiB/frame write %.3f MiB/frame, NO_OVERWRITE scan %.3f MiB/frame",
             g_map_calls.exchange(0, std::memory_order_relaxed)/f, g_map_ns.exchange(0, std::memory_order_relaxed)/(1e6*f),
-            g_map_read_bytes.exchange(0, std::memory_order_relaxed)/(1048576*f), g_map_write_bytes.exchange(0, std::memory_order_relaxed)/(1048576*f));
+            g_map_read_bytes.exchange(0, std::memory_order_relaxed)/(1048576*f), g_map_write_bytes.exchange(0, std::memory_order_relaxed)/(1048576*f),
+            g_map_scan_bytes.exchange(0, std::memory_order_relaxed)/(1048576*f));
+        rt::log("perf-dx11: bridge ms/frame Map-total %.3f Map-shadow %.3f Unmap-total %.3f write-copy %.3f native-Unmap %.3f map-lock-wait %.3f (inclusive wall timings)",
+            g_bridge_map_ns.exchange(0, std::memory_order_relaxed)/(1e6*f),
+            g_map_shadow_ns.exchange(0, std::memory_order_relaxed)/(1e6*f),
+            g_bridge_unmap_ns.exchange(0, std::memory_order_relaxed)/(1e6*f),
+            g_shadow_write_ns.exchange(0, std::memory_order_relaxed)/(1e6*f),
+            g_native_unmap_ns.exchange(0, std::memory_order_relaxed)/(1e6*f),
+            g_map_lock_ns.exchange(0, std::memory_order_relaxed)/(1e6*f));
+        const double lookups = double(cache_stats[0]) + double(cache_stats[1]);
+        rt::log("perf-dx11: COM-cache %s %.1f lookups/frame %.1f%% hit, %llu hits %llu misses, %llu proxy retirements/window (present-thread lookups only)",
+            proxy_cache_enabled() ? "enabled" : "disabled", lookups/f,
+            lookups ? 100.0 * double(cache_stats[0])/lookups : 0.0,
+            (unsigned long long)cache_stats[0], (unsigned long long)cache_stats[1],
+            (unsigned long long)(retirements - previous_retirements));
         rt::log("perf-dx11: compiler %llu/%llu completed (window +%llu/+%llu); queue-idle is not a hardware GPU occupancy measurement", (unsigned long long)counters[CompileDone], (unsigned long long)counters[CompileTotal], (unsigned long long)d[CompileDone], (unsigned long long)d[CompileTotal]);
     }
     if (!have) {
-        g_map_calls = 0; g_map_ns = 0; g_map_read_bytes = 0; g_map_write_bytes = 0;
+        g_map_calls = 0; g_map_ns = 0; g_map_read_bytes = 0; g_map_write_bytes = 0; g_map_scan_bytes = 0;
+        g_bridge_map_ns = 0; g_map_shadow_ns = 0; g_bridge_unmap_ns = 0;
+        g_shadow_write_ns = 0; g_native_unmap_ns = 0; g_map_lock_ns = 0;
     }
+    previous_retirements = retirements;
     previous = counters; have = true; frames = 0; present_total = 0; start = now;
 }
 #endif

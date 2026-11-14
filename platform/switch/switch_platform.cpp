@@ -12,6 +12,7 @@
 #include <iterator>
 #include "resolution_restrictions.h"
 #include "worker_topology.h"
+#include "stock_worker_map.h"
 #include "../../shims/vfs.h"
 #include <string>
 
@@ -112,6 +113,34 @@ void install_resolution_restrictions() {
 
 
 void install_worker_topology() {
+#if defined(__SWITCH2__)
+    const char* stock = std::getenv("DIRT2_SWITCH_STOCK_8CORE_JOBS");
+    if (stock && std::string_view(stock) == "1") {
+        u64 mask = 0;
+        const Result rc = svcGetInfo(&mask, InfoType_CoreMask, CUR_PROCESS_HANDLE, 0);
+        if (!stock_parallel_process_allowed(rc, mask)) {
+            rt::log("Switch 2: stock parallel map requires six process-allowed cores (process mask %llX, result %08X)",
+                    (unsigned long long)mask, unsigned(rc));
+            return;
+        }
+        const std::string path = vfs::host_path(std::string(vfs::kInstallDir) + "/system/workerMap8Core.xml");
+        std::ifstream input(path, std::ios::binary);
+        const std::string xml((std::istreambuf_iterator<char>(input)), {});
+        if (!input || !known_stock_parallel_map(xml)) {
+            rt::log("Switch 2: original parallel map missing or unrecognized; retaining normal worker map");
+            return;
+        }
+        // The full shipped graph preserves solver/softbody separation and all
+        // independent workers. Horizon schedules them; no host affinity change.
+        vfs::set_override("system/workerMap4Core.xml", path);
+        s32 preferred = -1;
+        u64 startup_mask = 0;
+        const Result startup_rc = svcGetThreadCoreMask(&preferred, &startup_mask, threadGetSelf()->handle);
+        rt::log("Switch 2: original 8-core worker graph enabled;16 workers, process core mask %llX; startup thread mask %llX result %08X; no worker merging",
+                (unsigned long long)mask, (unsigned long long)startup_mask, unsigned(startup_rc));
+        return;
+    }
+#endif
     const char* setting = std::getenv("DIRT2_SWITCH_PARALLEL_JOBS");
     if (!setting || std::string_view(setting) != "1") return;
     const std::string directory = vfs::data_dir() + "/switch-overrides";

@@ -114,19 +114,26 @@ uint32_t wrap_with(IUnknown* host, const VTableDesc& d) {
     return p;
 }
 
+bool proxy_cache_enabled() {
+    static const bool enabled = [] { const char* e = std::getenv("DIRT2_COM_CACHE"); return e && e[0] == '1'; }();
+    return enabled;
+}
+ProxyLookupCache<IUnknown*>& proxy_cache() {
+    static thread_local ProxyLookupCache<IUnknown*> cache;
+    return cache;
+}
 IUnknown* to_host(uint32_t guest) {
     if (!guest) return nullptr;
-    static const bool cache_enabled = [] { const char* e = std::getenv("DIRT2_COM_CACHE"); return e && e[0] == '1'; }();
-    static thread_local ProxyLookupCache<IUnknown*> cache;
-    if (cache_enabled)
-        if (auto* host = cache.find(guest, g_proxy_generation.load(std::memory_order_acquire))) return host;
+    auto* cache = proxy_cache_enabled() ? &proxy_cache() : nullptr;
+    if (cache)
+        if (auto* host = cache->find(guest, g_proxy_generation.load(std::memory_order_acquire))) return host;
     std::lock_guard lk(g_mu);
     auto it = g_by_guest.find(guest);
     if (it == g_by_guest.end()) {
         rt::log("%s: unknown proxy 0x%08X", kBridge, guest);
         return nullptr;
     }
-    if (cache_enabled) cache.put(guest, g_proxy_generation.load(std::memory_order_relaxed), it->second.host);
+    if (cache) cache->put(guest, g_proxy_generation.load(std::memory_order_relaxed), it->second.host);
     return it->second.host;
 }
 

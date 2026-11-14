@@ -1,9 +1,13 @@
 // CPU accounting and optional diagnostic sampling for guest threads. Native
-// instruction sampling briefly pauses one selected guest worker; no stack is
-// inspected. The native compiler/driver threads are not
+// instruction sampling briefly pauses one selected guest worker. Optional
+// frame-chain sampling stays inside its registered readable stack mapping.
+// The native compiler/driver threads are not
 // registered here; DXVK counters report that side separately.
 #include "recomp/host.h"
 #include "recomp/pc_sampling.h"
+#include "recomp/native_stack_walk.h"
+#include <cstring>
+#include <string>
 #if defined(__SWITCH__)
 #include <switch.h>
 #include <array>
@@ -20,15 +24,17 @@ namespace rt {
 std::atomic<bool> profile_indirect_enabled{false};
 thread_local std::atomic<uint64_t> profile_indirect_context{0};
 namespace {
-struct Tracked { Handle handle = 0; uint32_t guest_id = 0, entry = 0; u64 ticks = 0, affinity = 0; s32 preferred = 0; Result affinity_rc = 0; bool have = false; std::atomic<uint64_t>* context = nullptr; };
+struct Tracked { Handle handle = 0; uint32_t guest_id = 0, entry = 0; u64 ticks = 0, affinity = 0, stack_lo = 0, stack_hi = 0; s32 preferred = 0; Result affinity_rc = 0; bool have = false; std::atomic<uint64_t>* context = nullptr; };
 std::array<Tracked, 128> tracked;
 std::mutex mutex;
 std::atomic<bool> enabled{false};
-bool pc_enabled = false;
+bool pc_enabled = false, stack_enabled = false;
 uint32_t pc_tid = 264;
 struct PcResult {
     sampling::CaptureResult calls{};
     u64 pc = 0, lr = 0, ticks = 0;
+    std::array<uint64_t, 12> frames{};
+    std::size_t depth = 0;
     bool found = false;
 };
 PcResult sample_pc() {
@@ -42,7 +48,17 @@ PcResult sample_pc() {
         const u64 start = armGetSystemTick();
         out.calls = sampling::capture(
             [&] { return svcSetThreadActivity(t.handle, ThreadActivity_Paused); },
-            [&] { return svcGetThreadContext3(&context, t.handle); },
+            [&] {
+                const Result rc = svcGetThreadContext3(&context, t.handle);
+                if (R_SUCCEEDED(rc) && stack_enabled && threadContextIsAArch64(&context))
+                    out.depth = sampling::walk_native_frames(context.fp, context.sp, t.stack_lo, t.stack_hi, out.frames,
+                        [](u64 fp, uint64_t& previous, uint64_t& link) {
+                            uint64_t record[2];
+                            std::memcpy(record, reinterpret_cast<const void*>(uintptr_t(fp)), sizeof(record));
+                            previous = record[0]; link = record[1]; return true;
+                        });
+                return rc;
+            },
             [&] { return svcSetThreadActivity(t.handle, ThreadActivity_Runnable); });
         out.ticks = armGetSystemTick() - start;
         if (out.calls.suspended && R_FAILED(out.calls.resume)) {
@@ -66,6 +82,8 @@ void run(void*) {
     // or self CPU samples. No target thread is paused or inspected unsafely.
     std::map<std::pair<uint32_t, uint64_t>, uint32_t> contexts;
     std::map<std::pair<u64,u64>, uint32_t> pcs;
+    std::map<std::array<u64, 14>, uint32_t> stacks;
+    uint32_t stack_samples = 0;
     u64 pc_ticks = 0; uint32_t pc_samples = 0, pc_failed = 0;
     Result first_pc_error = 0;
     uint32_t jitter = uint32_t(last);
@@ -82,6 +100,11 @@ void run(void*) {
                 pc_ticks += sample.ticks;
                 if (!sample.calls.pause && !sample.calls.read && sample.pc) {
                     ++pcs[{sample.pc,sample.lr}]; ++pc_samples;
+                    if (stack_enabled && sample.depth) {
+                        std::array<u64, 14> key{}; key[0] = sample.pc; key[1] = sample.lr;
+                        std::copy(sample.frames.begin(), sample.frames.end(), key.begin() + 2);
+                        ++stacks[key]; ++stack_samples;
+                    }
                 } else {
                     ++pc_failed;
                     if (!first_pc_error) first_pc_error = sample.calls.pause ? sample.calls.pause : sample.calls.read;
@@ -149,6 +172,25 @@ void run(void*) {
                 const auto [pc,lr]=ranked[i].second;
                 log("prof-pc: tid %u pc main%+lld lr main%+lld samples %u/%u",pc_tid,(long long)pc-(long long)(uintptr_t)&::main,(long long)lr-(long long)(uintptr_t)&::main,ranked[i].first,pc_samples);
             }
+            if (stack_enabled) {
+                log("prof-stack: tid %u frame chains %u/%u; bounded12 saved links, inclusive wall snapshots", pc_tid, stack_samples, pc_samples);
+                std::vector<std::pair<uint32_t, std::array<u64, 14>>> ranked_stacks;
+                for (const auto& [key,n] : stacks) ranked_stacks.push_back({n,key});
+                std::sort(ranked_stacks.begin(), ranked_stacks.end(), [](const auto& a,const auto& b) { return a.first > b.first; });
+                // Preserve recurrent blocking chains while bounding log volume.
+                for (size_t i = 0; i < ranked_stacks.size() && i < 48; ++i) {
+                    const auto& [n, key] = ranked_stacks[i];
+                    std::string chain;
+                    for (size_t k = 1; k < key.size() && key[k]; ++k) {
+                        const long long offset = (long long)key[k] - (long long)(uintptr_t)&::main;
+                        chain += " main"; if (offset >= 0) chain += "+";
+                        chain += std::to_string(offset);
+                    }
+                    log("prof-stack: tid %u pc main%+lld samples %u/%u links%s", pc_tid,
+                        (long long)key[0] - (long long)(uintptr_t)&::main, n, pc_samples, chain.c_str());
+                }
+            }
+            stacks.clear(); stack_samples = 0;
             if (!pc_samples && pc_failed) {
                 pc_enabled = false;
                 log("prof-pc: disabled after failed kernel sampling; CPU accounting continues");
@@ -161,9 +203,20 @@ void run(void*) {
 }
 void profile_register_thread(uint32_t entry, uint32_t guest_id) {
     if (!enabled.load()) return;
+    u64 stack_lo = 0, stack_hi = 0;
+    if (stack_enabled && pc_enabled && guest_id == pc_tid) {
+        MemoryInfo info{}; u32 page_info = 0;
+        const Result rc = svcQueryMemory(&info, &page_info, uintptr_t(&stack_lo));
+        if (R_SUCCEEDED(rc) && (info.perm & Perm_R) && info.size >= 16 && info.addr <= UINT64_MAX - info.size) {
+            stack_lo = info.addr; stack_hi = info.addr + info.size;
+        }
+        log("prof-stack: tid %u readable native stack [%llX,%llX), query %08X", guest_id,
+            (unsigned long long)stack_lo, (unsigned long long)stack_hi, unsigned(rc));
+    }
     std::lock_guard guard(mutex);
     for (auto& t : tracked) if (!t.handle) {
         t = {}; t.handle = threadGetSelf()->handle; t.entry = entry; t.guest_id = guest_id; t.context = &profile_indirect_context;
+        t.stack_lo = stack_lo; t.stack_hi = stack_hi;
         t.affinity_rc = svcGetThreadCoreMask(&t.preferred, &t.affinity, t.handle);
         t.have = R_SUCCEEDED(svcGetInfo(&t.ticks, tick_info(), t.handle, TickCountInfo_Total));
         return;
@@ -181,6 +234,8 @@ void start_profiler() {
     profile_indirect_enabled = setting && setting[0] == '1';
     const char* pc_setting = std::getenv("DIRT2_PROFILE_PC");
     pc_enabled = pc_setting && pc_setting[0] == '1';
+    const char* stack_setting = std::getenv("DIRT2_PROFILE_STACK");
+    stack_enabled = stack_setting && stack_setting[0] == '1';
     if (pc_enabled && (!envIsSyscallHinted(0x32) || !envIsSyscallHinted(0x33))) {
         pc_enabled = false;
         log("prof-pc: disabled; loader does not advertise thread pause/context syscalls");
@@ -194,7 +249,7 @@ void start_profiler() {
     }
     if (R_FAILED(rc)) { enabled = false; log("prof-switch: disabled; thread creation failed %08X", unsigned(rc)); return; }
     log("prof-switch: guest CPU accounting enabled; 10s reporting interval, no per-draw logging");
-    if (pc_enabled) log("prof-pc: 20Hz instruction sampling enabled for guest tid %u; briefly suspends only that worker, captures PC/LR, then resumes before allocation/logging",pc_tid);
+    if (pc_enabled) log("prof-pc: 20Hz instruction sampling enabled for guest tid %u; briefly suspends only that worker, captures PC/LR and optional bounded frame chain, then resumes before allocation/logging",pc_tid);
     if (profile_indirect_enabled.load()) log("prof-switch: 100Hz indirect-call wall sampling enabled; inclusive context, not instruction PC/self CPU time");
 }
 }

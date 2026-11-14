@@ -3,26 +3,35 @@
 #include <threads.h>
 #include <pthread.h>
 #include "recomp/host.h"
+#if !defined(__SWITCH2__)
 extern "C" int dirt2_mesa_tss_create(pthread_key_t*, void (*)(void*));
 extern "C" int dirt2_mesa_tss_set(pthread_key_t, void*);
 extern "C" void* dirt2_mesa_tss_get(pthread_key_t);
 extern "C" void dirt2_mesa_tss_delete(pthread_key_t);
+#endif
 
 namespace switch_platform {
 bool check_c11_abis() {
     tss_t native;
+#if !defined(__SWITCH2__)
     pthread_key_t mesa;
+#endif
     int value = 7;
     int rc = tss_create(&native, nullptr);
     rt::log("C11 ABI check: native tss_create=%d (expected %d)", rc, thrd_success);
     if (rc != thrd_success) return false;
     const bool native_ok = tss_set(native, &value) == thrd_success && tss_get(native) == &value;
     tss_delete(native);
+#if !defined(__SWITCH2__)
     rc = dirt2_mesa_tss_create(&mesa, nullptr);
     rt::log("C11 ABI check: Mesa tss_create=%d (expected 0)", rc);
     if (rc != 0) return false;
     const bool mesa_ok = dirt2_mesa_tss_set(mesa, &value) == 0 && dirt2_mesa_tss_get(mesa) == &value;
     dirt2_mesa_tss_delete(mesa);
+#else
+    // OunceVK does not link the renamed Switch 1 Mesa C11 implementation.
+    const bool mesa_ok = true;
+#endif
     mtx_t mutex;
     rc = mtx_init(&mutex, mtx_plain);
     if (rc != thrd_success) return false;

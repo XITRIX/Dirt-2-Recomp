@@ -32,7 +32,11 @@ target_link_libraries(dirt2 PRIVATE dirt2_shims "$<LINK_GROUP:RESCAN,dirt2_gen,r
 
 set(DIRT2_VERSION "0.1.0" CACHE STRING "NRO version")
 if(DIRT2_SWITCH_DXVK)
-  set(_nro_name "DiRT 2")
+  if(DIRT2_SWITCH2)
+    set(_nro_name "DiRT 2 Switch 2")
+  else()
+    set(_nro_name "DiRT 2")
+  endif()
 else()
   set(_nro_name "DiRT 2 DX9 fallback")
 endif()
@@ -50,7 +54,7 @@ if(EXISTS "${CMAKE_BINARY_DIR}/dirt2-icon.jpg")
 endif()
 nx_create_nro(dirt2 NACP dirt2.nacp ${_nro_icon})
 
-if(DIRT2_SWITCH_DXVK)
+if(DIRT2_SWITCH_DXVK AND NOT DIRT2_SWITCH2)
   # Small native probe, without the recompiled game's static data/constructors
   # or custom exception handler. A CPU crash follows libnx/Atmosphere normally.
   add_executable(dirt2_dx11_probe EXCLUDE_FROM_ALL

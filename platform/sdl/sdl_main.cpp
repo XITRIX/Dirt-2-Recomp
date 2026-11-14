@@ -24,6 +24,7 @@
 
 #include "../platform.h"
 #include "recomp/host.h"
+#include "recomp/startup_trace.h"
 #include "../../shims/vfs.h"
 
 namespace shim {
@@ -576,7 +577,9 @@ void setup_pipeline_warmup(const std::string& data) {
 #if defined(SDL_PLATFORM_SWITCH)
 // Everything lives on the SD card: the game in sdmc:/switch/dirt2/Dirt 2, our
 // data (log, saves, settings) in sdmc:/switch/dirt2.
-#if defined(DIRT2_SWITCH_DXVK)
+#if defined(__SWITCH2__)
+constexpr const char* kSwitchDataDir = "sdmc:/switch/dirt2";
+#elif defined(DIRT2_SWITCH_DXVK)
 constexpr const char* kSwitchDataDir = "sdmc:/switch/dirt2-dx11";
 #else
 constexpr const char* kSwitchDataDir = "sdmc:/switch/dirt2";
@@ -746,7 +749,11 @@ int main(int argc, char** argv) {
         const std::string mesa_cache = data + "/mesa-cache";
         std::filesystem::create_directories(mesa_cache, ec);
         setenv("MESA_SHADER_CACHE_DIR", mesa_cache.c_str(), 0);
+#if defined(__SWITCH2__)
+        rt::log("Switch 2: Direct3D 11 -> DXVK -> OunceVK");
+#else
         rt::log("Switch prototype: Direct3D 11 -> DXVK -> NVK (separate data directory)");
+#endif
 #endif
         rt::set_discovery_log(data + "/recomp_discovered.txt");
         tee_stderr(data + "/dirt2.log");
@@ -813,7 +820,9 @@ int main(int argc, char** argv) {
 #endif
     g_hw_config = data + "/C/Users/Player/Documents/My Games/DiRT2/hardwaresettings/hardware_settings_config.xml";
 
+    rt::startup_trace("startup.guest-memory.begin");
     if (!rt::mem_init()) return 1;
+    rt::startup_trace("startup.guest-memory.end");
     std::string err;
     if (!rt::load_image(dir + "/dirt2_game.exe", err)) {
         std::fprintf(stderr, "error: %s\n", err.c_str());

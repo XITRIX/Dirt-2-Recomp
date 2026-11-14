@@ -20,6 +20,13 @@ int main() {
     assert(!vfs::is_data_path(data+"-other/file"));
     vfs::set_override("system/test.bin", "/patched");
     assert(vfs::host_path("C:/Dirt2/system/test.bin") == "/patched");
+    const std::string stock_map = vfs::host_path("C:/Dirt2/system/workerMap8Core.xml");
+    vfs::set_override("system/workerMap4Core.xml", stock_map);
+    assert(vfs::host_path("C:/Dirt2/system/workerMap4Core.xml") == stock_map);
+    assert(vfs::host_path("c:/dirt2/SYSTEM/../system/WORKERMAP4CORE.XML") == stock_map);
+    assert(vfs::host_path("C:/Dirt2/system/workerMap8Core.xml") == stock_map);
+    assert(vfs::host_path(win+"hardwaresettings/config.xml") == data+"/C/Users/Player/Documents/My Games/DiRT2/hardwaresettings/config.xml");
+    assert(vfs::host_path(win+"savegame/profile/save.dat") == original+"/profile/save.dat");
     vfs::set_save_dir("");
     assert(vfs::host_path(win+"savegame/a").starts_with(data+"/C/"));
 }

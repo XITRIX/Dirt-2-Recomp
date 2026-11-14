@@ -89,7 +89,11 @@ bool offscreen(ID3D11Device* device, ID3D11DeviceContext* context, DXGI_FORMAT f
         unsigned(format), mapped.RowPitch, first_pixel[0], first_pixel[1], first_pixel[2], first_pixel[3],
         first_pixel[4], first_pixel[5], first_pixel[6], first_pixel[7]);
     char dump_path[256];
+#if defined(__SWITCH2__)
+    std::snprintf(dump_path, sizeof dump_path, "sdmc:/switch/dirt2/preflight-format-%u.bin", unsigned(format));
+#else
     std::snprintf(dump_path, sizeof dump_path, "sdmc:/switch/dirt2-dx11/preflight-format-%u.bin", unsigned(format));
+#endif
     FILE* dump = std::fopen(dump_path, "wb");
     bool ok = true;
     unsigned mismatches = 0;

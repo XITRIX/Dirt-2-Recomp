@@ -28,17 +28,19 @@ FFMPEG_VER=7.1.1
 fetch() {  # url dir [tar flags]
     [ -d "$SRC/$2" ] && return
     echo "fetching $1"
-    curl -fsSL "$1" | tar -x -C "$SRC.tmp" ${3:-}
+    curl -fsSL "$1" | tar -x -C "$SRC.tmp" ${3:--z}
     mv "$SRC.tmp/$2" "$SRC/$2"
 }
 mkdir -p "$SRC" "$SRC.tmp"
 until mkdir "$SRC.lock" 2>/dev/null; do sleep 2; done
+trap 'rmdir "$SRC.lock" 2>/dev/null || true' EXIT
 fetch "https://github.com/libsdl-org/SDL/releases/download/release-$SDL_VER/SDL3-$SDL_VER.tar.gz" "SDL3-$SDL_VER"
 fetch "https://github.com/kcat/openal-soft/archive/refs/tags/$OPENAL_VER.tar.gz" "openal-soft-$OPENAL_VER"
 fetch "https://downloads.xiph.org/releases/ogg/libogg-$OGG_VER.tar.gz" "libogg-$OGG_VER"
 fetch "https://downloads.xiph.org/releases/vorbis/libvorbis-$VORBIS_VER.tar.gz" "libvorbis-$VORBIS_VER"
 fetch "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VER.tar.xz" "ffmpeg-$FFMPEG_VER" -J
 rmdir "$SRC.lock"
+trap - EXIT
 
 # Android uses the same pinned inputs with a separate NDK build script.
 if [ "${1:-}" = "--fetch-only" ]; then exit 0; fi
@@ -49,6 +51,7 @@ for SDK in $SDKS; do
     mkdir -p "$PREFIX" "$BLD"
     SDL_SRC=$SRC/SDL3-$SDL_VER
     OPENAL_ARGS=()
+    SWITCH_SDL_ARGS=()
     case $SDK in
         macos) TRIPLE=arm64-apple-macos$MIN_MACOS XSDK=macosx
             PLATFORM_ARGS=(-DCMAKE_OSX_DEPLOYMENT_TARGET=$MIN_MACOS) ;;
@@ -56,10 +59,18 @@ for SDK in $SDKS; do
             PLATFORM_ARGS=(-DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_DEPLOYMENT_TARGET=$MIN_IOS) ;;
         iphonesimulator) TRIPLE=arm64-apple-ios$MIN_IOS-simulator XSDK=iphonesimulator
             PLATFORM_ARGS=(-DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_DEPLOYMENT_TARGET=$MIN_IOS) ;;
-        switch) XSDK=
+        switch|switch2) XSDK=
             export DEVKITPRO=${DEVKITPRO:-/opt/devkitpro}
-            [ -f "$DEVKITPRO/cmake/Switch.cmake" ] || { echo "devkitPro with libnx not found in $DEVKITPRO" >&2; exit 1; }
-            PLATFORM_ARGS=(-DCMAKE_TOOLCHAIN_FILE="$DEVKITPRO/cmake/Switch.cmake")
+            PLATFORM_TOOLCHAIN="$DEVKITPRO/cmake/Switch.cmake"
+            NX_ROOT="$DEVKITPRO/libnx"
+            SWITCH_SDL_ARGS=()
+            if [ "$SDK" = switch2 ]; then
+                PLATFORM_TOOLCHAIN="$DEVKITPRO/libounce/cmake/Switch2.cmake"
+                NX_ROOT="$DEVKITPRO/libounce"
+                SWITCH_SDL_ARGS=(-DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON -DSDL_VULKAN=ON -DSDL_OPENGL=OFF -DSDL_OPENGLES=OFF -DSDL_RENDER_GPU=OFF -DSDL_GPU=OFF)
+            fi
+            [ -f "$PLATFORM_TOOLCHAIN" ] || { echo "devkitPro with libnx not found in $DEVKITPRO" >&2; exit 1; }
+            PLATFORM_ARGS=(-DCMAKE_TOOLCHAIN_FILE="$PLATFORM_TOOLCHAIN")
             # Output through SDL3's audio (audren); no RTKit/dbus on Horizon. GCC's
             # C++20 module scan emits one OpenAL source twice, so no modules.
             OPENAL_ARGS=(-DALSOFT_BACKEND_SDL3=ON -DALSOFT_REQUIRE_SDL3=ON -DALSOFT_RTKIT=OFF -DALSOFT_BACKEND_WAVE=OFF
@@ -74,7 +85,11 @@ for SDK in $SDKS; do
         export PKG_CONFIG_LIBDIR=$PREFIX/lib/pkgconfig PKG_CONFIG_PATH=
     else
         # libnx's portlibs (EGL, Mesa's GL, zlib) are the platform's SDK here.
-        export PKG_CONFIG_LIBDIR=$PREFIX/lib/pkgconfig:$DEVKITPRO/portlibs/switch/lib/pkgconfig PKG_CONFIG_PATH=
+        if [ "$SDK" = switch2 ]; then
+            export PKG_CONFIG_LIBDIR=$PREFIX/lib/pkgconfig:$DEVKITPRO/portlibs/switch2/lib/pkgconfig:$DEVKITPRO/portlibs/switch/lib/pkgconfig PKG_CONFIG_PATH=
+        else
+            export PKG_CONFIG_LIBDIR=$PREFIX/lib/pkgconfig:$DEVKITPRO/portlibs/switch/lib/pkgconfig PKG_CONFIG_PATH=
+        fi
         # SDL3 with the Switch port: a copy of the pinned source, patched;
         # prepared again when the patches change.
         hash=$(cat "$ROOT"/third_party/patches/sdl3/*.patch | shasum | cut -d' ' -f1)
@@ -99,7 +114,7 @@ for SDK in $SDKS; do
         touch "$BLD/$name.done"
     }
 
-    cmake_lib sdl3 "$SDL_SRC" -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST_LIBRARY=OFF
+    cmake_lib sdl3 "$SDL_SRC" -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST_LIBRARY=OFF ${SWITCH_SDL_ARGS[@]+"${SWITCH_SDL_ARGS[@]}"}
     cmake_lib openal "$SRC/openal-soft-$OPENAL_VER" -DLIBTYPE=STATIC -DALSOFT_UTILS=OFF -DALSOFT_EXAMPLES=OFF \
         -DALSOFT_TESTS=OFF -DALSOFT_INSTALL_EXAMPLES=OFF -DALSOFT_INSTALL_UTILS=OFF \
         -DHAVE_WFUNCTION_EFFECTS=OFF `# new clang flags coreaudio.cpp, and OpenAL makes it an error` \
@@ -116,9 +131,14 @@ for SDK in $SDKS; do
         else
             # libnx's compiler flags (switch_rules); configure links test programs with its specs.
             NX_ARCH="-march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE"
+            NX_DEFINE="-D__SWITCH__"
+            if [ "$SDK" = switch2 ]; then
+                NX_ARCH="-mcpu=cortex-a78c+crypto -mtp=soft -fPIE"
+                NX_DEFINE="$NX_DEFINE -D__SWITCH2__"
+            fi
             FF_TARGET=(--target-os=none --cross-prefix="$DEVKITPRO/devkitA64/bin/aarch64-none-elf-"
-                --extra-cflags="-D__SWITCH__ $NX_ARCH -ftls-model=local-exec -isystem $DEVKITPRO/libnx/include"
-                --extra-ldflags="-specs=$DEVKITPRO/libnx/switch.specs $NX_ARCH -L$DEVKITPRO/libnx/lib" --extra-libs="-lnx")
+                --extra-cflags="$NX_DEFINE $NX_ARCH -ftls-model=local-exec -isystem $NX_ROOT/include"
+                --extra-ldflags="-specs=$NX_ROOT/switch.specs $NX_ARCH -L$NX_ROOT/lib" --extra-libs="-lnx")
         fi
         (cd "$BLD/ffmpeg" && "$SRC/ffmpeg-$FFMPEG_VER/configure" --prefix="$PREFIX" \
             --enable-cross-compile --arch=aarch64 "${FF_TARGET[@]}" \

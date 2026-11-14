@@ -165,6 +165,12 @@ Additional artifacts are `DiRT2-Android` (development-signed APK) and `DiRT2-Swi
   - The previous run's log is kept as `dirt2.prev.log`.
 - **More detail:** [HANDOVER.md](HANDOVER.md) covers the build system, shader warm-up data, pitfalls and the debugging switches.
 
+## Nintendo Switch 2 (homebrew)
+
+An isolated libounce/OunceVK build and Windows build helper are available.
+See [the Switch 2 build instructions](docs/SWITCH2.md). Saves/settings remain
+under `sdmc:/switch/dirt2`. Hardware rendering and gameplay require validation.
+
 ## Nintendo Switch (homebrew)
 
 The primary Switch renderer is **DX11 → DXVK → Mesa NVK**. Hardware testing

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "recomp/host.h"
+#include "recomp/startup_trace.h"
 #include "recomp/sha256.h"
 
 namespace rt {
@@ -13,13 +14,17 @@ namespace rt {
 uint32_t thunk_for_import(uint32_t index) { return kThunkBase + index * 16; }
 
 bool load_image(const std::string& exe_path, std::string& error) {
+    startup_trace("image.open.begin");
     std::ifstream in(exe_path, std::ios::binary);
+    startup_trace("image.open.end",in?1:0);
     if (!in) {
         error = "cannot open " + exe_path;
         return false;
     }
     std::vector<uint8_t> file((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    startup_trace("image.read.end",0,file.size());
     const std::string sha = recomp::sha256_hex(file.data(), file.size());
+    startup_trace("image.hash.end",sha==recomp_image_info.sha256?1:0);
     if (sha != recomp_image_info.sha256) {
         error = "executable does not match the recompiled build (sha256 " + sha + ")";
         return false;
@@ -35,10 +40,12 @@ bool load_image(const std::string& exe_path, std::string& error) {
         error = "unexpected image layout";
         return false;
     }
+    startup_trace("image.commit.begin",base,size);
     if (vm_alloc(base, size, true) != base) {
         error = "image range is not available";
         return false;
     }
+    startup_trace("image.commit.end",base,size);
     std::memcpy(host_ptr(base), file.data(), hdr_size);
     for (uint16_t i = 0; i < nsec; ++i) {
         const size_t s = opt + opt_size + i * 40;
@@ -53,6 +60,7 @@ bool load_image(const std::string& exe_path, std::string& error) {
         wr32(imp.iat, thunk);
         register_thunk(thunk, imp.fn);
     }
+    startup_trace("image.ready",base,size);
     log("loaded %s (%u imports)", exe_path.c_str(), recomp_import_count);
     return true;
 }

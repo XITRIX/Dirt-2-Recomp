@@ -2,6 +2,7 @@
 #include <cassert>
 #include <map>
 #include <random>
+#include <cstdio>
 int main() {
     ProxyLookupCache<void*, 8> cache;
     int a = 1, b = 2;
@@ -35,4 +36,28 @@ int main() {
         }
         }
     }
+    // Allocator-aligned live proxies can share all six low index bits. A
+    // cyclic working set must stay hot rather than repeatedly lock/hash the
+    // authoritative registry. Compare with the actual former indexing rule.
+    for (uint32_t stride : {32u, 64u, 128u, 1024u, 4096u}) {
+        ProxyLookupCache<void*> aligned;
+        struct OldEntry { uint32_t guest = 0; void* host = nullptr; };
+        OldEntry old[64]{};
+        uint64_t old_hits = 0;
+        for (unsigned i = 0; i < 10000; ++i) {
+            const uint32_t key = 0x20000010u + (i % 16) * stride;
+            if (auto* found = aligned.find(key, 9)) assert(found == &a);
+            else aligned.put(key, 9, &a);
+            auto& e = old[((key >> 4) * 0x9E3779B1u) & 63];
+            if (e.guest == key && e.host) ++old_hits;
+            else e = {key, &a};
+        }
+        const auto stats = aligned.take_statistics();
+        assert(stats[0] + stats[1] == 10000);
+        assert(stats[0] >= 9900);
+        assert(aligned.take_statistics()[0] == 0);
+        std::printf("stride%u: old hits%llu, new hits%llu/10000\n", stride,
+                    (unsigned long long)old_hits, (unsigned long long)stats[0]);
+    }
+
 }

@@ -53,7 +53,7 @@ commit_and_patch() {
     # ones before it: git diff <its parent commit>.
     for p in "$ROOT/third_party/patches/$set"/*.patch; do
         [ -f "$p" ] || continue
-        git -C "$dir" apply "$p" || { echo "error: $(basename "$p") does not apply to $set $label" >&2; exit 1; }
+        python3 "$ROOT/tools/scripts/apply_source_patch.py" "$dir" "$p" || { echo "error: $(basename "$p") does not apply to $set $label" >&2; exit 1; }
         (cd "$dir" && git add -A -f && git -c user.name=prepare -c user.email=prepare@local commit -q --allow-empty \
             -m "$(basename "$p")")
     done
@@ -118,7 +118,7 @@ prepare_moltenvk() {
         git -C "$dep" clean -fdq
         git -C "$dep" tag -f upstream > /dev/null
         for p in "$set"*.patch; do
-            git -C "$dep" apply "$p" || { echo "error: $(basename "$p") does not apply to $name $rev" >&2; exit 1; }
+            python3 "$ROOT/tools/scripts/apply_source_patch.py" "$dep" "$p" || { echo "error: $(basename "$p") does not apply to $name $rev" >&2; exit 1; }
         done
         # Recorded as a local commit in the copy, like the other trees.
         (cd "$dep" && git add -A && git -c user.name=prepare -c user.email=prepare@local commit -q -m patched &&

@@ -9,11 +9,16 @@
 //   avoid exhausting Horizon's mapping resources during race loading. Backing
 //   stays mapped; release/decommit zero it. Windows commitment is bookkeeping
 //   at page granularity; physical backing is coarser on Horizon.
+//   Switch 2/HEN: one owned 4 GiB heap slice, initially inaccessible. Commit
+//   enables ordinary RW page permissions; no privileged process/code mapping.
 // The low 64 KB stay inaccessible to catch null-pointer accesses.
 #if defined(__SWITCH__)
 #include <switch.h>
 
 #include <malloc.h>
+#if defined(__SWITCH2__)
+#include <switch2/memory/heap.h>
+#endif
 #else
 #include <sys/mman.h>
 #include <unistd.h>
@@ -26,6 +31,8 @@
 #include <vector>
 
 #include "recomp/host.h"
+#include "recomp/startup_trace.h"
+#include "recomp/owned_guest_window.h"
 
 uint8_t* recomp_mem = nullptr;
 
@@ -85,28 +92,52 @@ constexpr uint32_t kMaxRun = 16 * 1024 * 1024;
 std::vector<bool> g_mapped(kSpace / kChunk);       // chunk is backed by memory
 uint64_t g_mapped_bytes = 0;
 uint32_t g_mapping_count = 0;
+#if !defined(__SWITCH2__)
 uint8_t* g_code_alias = nullptr;
+#endif
 
 // Backs [lo, hi) (chunk aligned, all unmapped) with one host block.
 void map_run(uint32_t lo, uint64_t hi) {
     const size_t n = hi - lo;
+#if defined(__SWITCH2__)
+    static unsigned traced_runs=0;
+    const bool trace=traced_runs++<4;
+    if(!owned_window::can_commit(lo,n,kSpace,kAllocFloor,0x1000))
+        fatal("guest heap commit is outside the owned window: 0x%X+0x%zX",lo,n);
+    if(trace) startup_trace("memory.SetMemoryPermission.begin",uintptr_t(recomp_mem+lo),n);
+    const Result rc=svcSetMemoryPermission(recomp_mem+lo,n,Perm_Rw);
+    if(trace) startup_trace("memory.SetMemoryPermission.end",uintptr_t(recomp_mem+lo),n,rc);
+    if(R_FAILED(rc)) fatal("guest RW permission 0x%X+0x%zX failed: 0x%X",lo,n,rc);
+    std::memset(recomp_mem+lo,0,n);
+#else
     const size_t align = !(lo & (kBigChunk - 1)) ? kBigChunk : 0x1000;
+    static unsigned traced_runs=0;
+    const bool trace=traced_runs++<4;
+    if(trace) startup_trace("memory.allocate.begin",lo,n);
     void* backing = memalign(align, n);
+    if(trace) startup_trace("memory.allocate.end",uintptr_t(backing),n);
     if (!backing) fatal("out of memory committing %u KB of guest memory at 0x%08X (%llu MB committed)",
                         unsigned(n >> 10), lo, (unsigned long long)(g_mapped_bytes >> 20));
     std::memset(backing, 0, n);
     const Handle self = envGetOwnProcessHandle();
+    if(trace) startup_trace("memory.process-handle",self);
     void* alias = g_code_alias + lo;
     const char* stage = "MapProcessCodeMemory";
+    if(trace) startup_trace("memory.MapProcessCodeMemory.begin",uintptr_t(alias),n);
     Result rc = svcMapProcessCodeMemory(self, u64(alias), u64(backing), n);
+    if(trace) startup_trace("memory.MapProcessCodeMemory.end",uintptr_t(alias),n,rc);
     const bool code_mapped = R_SUCCEEDED(rc);
     if (R_SUCCEEDED(rc)) {
         stage = "SetProcessMemoryPermission";
+        if(trace) startup_trace("memory.SetProcessMemoryPermission.begin",uintptr_t(alias),n);
         rc = svcSetProcessMemoryPermission(self, u64(alias), n, Perm_Rw);
+        if(trace) startup_trace("memory.SetProcessMemoryPermission.end",uintptr_t(alias),n,rc);
     }
     if (R_SUCCEEDED(rc)) {
         stage = "MapProcessMemory";
+        if(trace) startup_trace("memory.MapProcessMemory.begin",uintptr_t(recomp_mem+lo),n);
         rc = svcMapProcessMemory(recomp_mem + lo, self, u64(alias), n);
+        if(trace) startup_trace("memory.MapProcessMemory.end",uintptr_t(recomp_mem+lo),n,rc);
     }
     if (R_FAILED(rc)) {
         // Only recycle backing once any kernel alias has been removed.
@@ -115,6 +146,7 @@ void map_run(uint32_t lo, uint64_t hi) {
         fatal("guest %s 0x%08X+0x%zX failed: 0x%X (%llu MB backed, %u mappings, rollback 0x%X)",
               stage, lo, n, rc, (unsigned long long)(g_mapped_bytes >> 20), g_mapping_count, undo);
     }
+#endif
     for (uint32_t c = lo / kChunk; c < hi / kChunk; ++c) g_mapped[c] = true;
     g_mapped_bytes += n;
     ++g_mapping_count;
@@ -171,13 +203,56 @@ void zero_range(uint32_t addr, uint32_t size) {
 }  // namespace
 
 bool mem_init() {
-#if defined(__SWITCH__)
+#if defined(__SWITCH2__)
+    startup_trace("memory.heap.total",heapGetTotalSize());
+    startup_trace("memory.heap.free",heapGetFreeSize());
+    startup_trace("memory.heap.allocate.begin",0,kSpace);
+    const auto window=owned_window::acquire(kSpace,owned_window::kSwitch2HeapAlignment,
+        [](size_t alignment,size_t bytes) {
+            startup_trace("memory.heap.alignment",alignment);
+            errno=0;
+            void* allocation=memalign(alignment,bytes);
+            const int allocation_errno=errno;
+            startup_trace("memory.heap.allocate.result",uintptr_t(allocation),bytes,allocation_errno);
+            return allocation;
+        },
+        [](void* address,size_t bytes) {
+            startup_trace("memory.heap.protect.begin",uintptr_t(address),bytes);
+            const Result rc=svcSetMemoryPermission(address,bytes,Perm_None);
+            startup_trace("memory.heap.protect.end",uintptr_t(address),bytes,rc);
+            return rc;
+        },
+        [](void* address) { std::free(address); });
+    startup_trace("memory.heap.allocate.end",uintptr_t(window.address),kSpace,window.error);
+    if(window.stage!=owned_window::Stage::ready) {
+        log("mem_init: owned 4 GiB heap window unavailable (stage %u, result 0x%X)",
+            unsigned(window.stage),window.error);
+        return false;
+    }
+    recomp_mem=static_cast<uint8_t*>(window.address);
+    log("guest memory: owned 4 GiB heap window at %p; low 64 KiB inaccessible",recomp_mem);
+#elif defined(__SWITCH__)
+    startup_trace("memory.lock.begin");
     virtmemLock();
+    startup_trace("memory.lock.end");
+    startup_trace("memory.FindAslr.begin",0,kSpace);
     void* m = virtmemFindAslr(kSpace, kBigChunk);
-    if (m) virtmemAddReservation(m, kSpace);
+    startup_trace("memory.FindAslr.end",uintptr_t(m),kSpace);
+    if (m) {
+        startup_trace("memory.ReserveGuest.begin",uintptr_t(m),kSpace);
+        auto* reservation=virtmemAddReservation(m,kSpace);
+        startup_trace("memory.ReserveGuest.end",uintptr_t(reservation));
+    }
+    startup_trace("memory.FindCodeMemory.begin",0,kSpace);
     void* alias = m ? virtmemFindCodeMemory(kSpace, kBigChunk) : nullptr;
-    if (alias) virtmemAddReservation(alias, kSpace);
+    startup_trace("memory.FindCodeMemory.end",uintptr_t(alias),kSpace);
+    if (alias) {
+        startup_trace("memory.ReserveAlias.begin",uintptr_t(alias),kSpace);
+        auto* reservation=virtmemAddReservation(alias,kSpace);
+        startup_trace("memory.ReserveAlias.end",uintptr_t(reservation));
+    }
     virtmemUnlock();
+    startup_trace("memory.unlock.end");
     if (!m || !alias) {
         log("mem_init: cannot reserve guest and alias address windows");
         return false;

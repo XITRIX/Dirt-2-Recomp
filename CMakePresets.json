@@ -115,6 +115,17 @@
         "ANDROID_STL": "c++_shared",
         "DIRT2_BUILD_TOOLS": "OFF"
       }
+    },
+    {
+      "name": "switch2",
+      "inherits": "base",
+      "toolchainFile": "$env{DEVKITPRO}/libounce/cmake/Switch2.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "DIRT2_BUILD_TOOLS": "OFF",
+        "DIRT2_SWITCH_DXVK": "ON",
+        "DIRT2_DEPS_DIR": "${sourceDir}/build/deps/switch2"
+      }
     }
   ],
   "buildPresets": [
@@ -149,6 +160,13 @@
     {
       "name": "android-arm64",
       "configurePreset": "android-arm64"
+    },
+    {
+      "name": "switch2",
+      "configurePreset": "switch2",
+      "targets": [
+        "dirt2_nro"
+      ]
     }
   ],
   "testPresets": [

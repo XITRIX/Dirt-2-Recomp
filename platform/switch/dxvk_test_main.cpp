@@ -20,6 +20,7 @@ void log(const char* format, ...) {
 }
 }
 namespace switch_platform { bool check_c11_abis(); int run_dx11_preflight(); }
+#if !defined(__SWITCH2__)
 namespace {
 std::atomic<bool> allocation_logs_ready{false};
 std::atomic<unsigned> nv_references{0};
@@ -104,13 +105,20 @@ extern "C" Result __wrap_tmemCreate(TransferMemory* t, size_t size, Permission p
     }
     return rc;
 }
+#endif
 int main(int, char**) {
+#if defined(__SWITCH2__)
+    constexpr const char* directory = "sdmc:/switch/dirt2";
+#else
     constexpr const char* directory = "sdmc:/switch/dirt2-dx11";
+    #endif
     std::filesystem::create_directories(directory);
-    std::rename("sdmc:/switch/dirt2-dx11/dirt2.log", "sdmc:/switch/dirt2-dx11/dirt2.prev.log");
-    std::freopen("sdmc:/switch/dirt2-dx11/dirt2.log", "w", stderr);
+    std::rename((std::string(directory)+"/dirt2.log").c_str(), (std::string(directory)+"/dirt2.prev.log").c_str());
+    std::freopen((std::string(directory)+"/dirt2.log").c_str(), "w", stderr);
     std::setvbuf(stderr, nullptr, _IOLBF, 0);
+#if !defined(__SWITCH2__)
     allocation_logs_ready = true;
+#endif
     rt::log("Standalone DX11 probe: no guest runtime/FFmpeg; normal libnx exception handling");
     setenv("DXVK_WSI_DRIVER", "SDL3", 1);
     setenv("DXVK_LOG_LEVEL", "info", 1);

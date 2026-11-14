@@ -77,6 +77,8 @@ if(DIRT2_HAVE_DXMT OR DIRT2_HAVE_DXVK_D3D11)
   else()
     target_link_libraries(dirt2_shims_d3d11 PUBLIC recomp_runtime dxmt)
   endif()
+  # touch_d3d11.h includes SDL types even when the overlay is disabled.
+  target_link_libraries(dirt2_shims_d3d11 PRIVATE SDL3::SDL3)
   target_compile_options(dirt2_shims_d3d11 PRIVATE -Wall -Wno-unused-parameter -Wno-unused-function)
 endif()
 
