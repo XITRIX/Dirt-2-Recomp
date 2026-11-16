@@ -5,6 +5,12 @@ DX11/DXVK and the existing SDL3 Switch backend. Guest memory uses an owned
 4 GiB heap window with ordinary page-permission changes.
 Switch 1 NVK and deko3d are separate targets and are not linked into this build.
 
+On game startup, the Switch 2 build requests a 1.7 GHz CPU clock
+(1,700,000,000 Hz) through libounce's `clkrst` service. The previous and reported
+rates, or any service failure, are recorded in `dirt2.log`. The previous CPU rate
+is restored on normal exit, including an early startup return. If the clock API
+fails, the game continues. GPU and memory clocks are unchanged.
+
 ## Windows environment
 
 The local setup uses MSYS2 at `%USERPROFILE%/.dirt2-tools/msys64` and devkitPro at

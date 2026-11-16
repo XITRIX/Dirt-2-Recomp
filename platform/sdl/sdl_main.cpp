@@ -40,6 +40,10 @@ bool check_launch_mode();
 void install_resolution_restrictions();
 void install_worker_topology();
 void report_missing_game(const std::string& dir);
+#if defined(__SWITCH2__)
+void boost_cpu_clock();
+void restore_cpu_clock();
+#endif
 }  // namespace switch_platform
 #endif
 
@@ -74,6 +78,9 @@ void on_main(F&& f) {
 #if defined(__SWITCH__)
 [[noreturn]] void exit_process(uint32_t code) {
     on_main([code] {
+#if defined(__SWITCH2__)
+        switch_platform::restore_cpu_clock();
+#endif
         // NROs normally return to hbloader. Live native GPU/guest threads make
         // unloading our address space unsafe. libnx mode1 instead asks AM to
         // close the application and waits for Horizon to terminate the process.
@@ -757,6 +764,9 @@ int main(int argc, char** argv) {
 #endif
         rt::set_discovery_log(data + "/recomp_discovered.txt");
         tee_stderr(data + "/dirt2.log");
+#if defined(__SWITCH2__)
+        switch_platform::boost_cpu_clock();
+#endif
 #if defined(DIRT2_SWITCH_DXVK)
         if (!switch_platform::check_c11_abis()) {
             rt::log("Stopping before GPU initialization: C11 ABI self-check failed");

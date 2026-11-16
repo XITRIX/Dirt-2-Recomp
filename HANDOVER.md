@@ -1,3 +1,54 @@
+## Switch 2 CPU clock build installed (2026-11-16)
+
+Installed `/switch/dirt2/Dirt2.nro` on `192.168.211.39:5000` with the automatic
+1,700,000,000 Hz CPU request, clock readback/error logging, and normal-exit restore.
+Build ID `06c16125bf4ed706d0175991ba292fe10869792e`; NRO 161490729 bytes,
+SHA256 `ea50c4861f5686746b93a5a3d7790af92144395a35f0450c81344a13b11dee82`. Staged and activated FTP readbacks matched.
+Previous executable: `/switch/dirt2/Dirt2.nro.before-cpu-clock-20261116-155628`.
+The existing env.txt was verified unchanged; assets and saves were untouched.
+
+Built locally with the supplied libounce/OunceVK SDK; all native code uses the
+Switch 2 toolchain. Generated code uses the cached GCC/TSO baseline after all
+540 source hashes and runtime-header hashes were verified. Exact ELF/NRO are
+retained in `build/package/switch2/cpu-clock-20261116`; deployment and build
+validation records are alongside it. The game was not launched during install;
+the applied CPU rate still requires a launch and a dirt2.log readback.
+
+## Android driver selector (2026-11-04)
+
+User wants Vulkan retained, with an always-visible native driver selector and
+Play before starting the game. Implemented DriverActivity (launcher), private
+Dirt2Activity in :game, and disposable bound DriverProbeService in :driver_probe.
+The picker remembers system/custom selection, imports AdrenoTools ZIPs through
+Android's document picker, checks compatibility, and enables Play only on success.
+Imported drivers can be removed. No drivers are bundled or downloaded by the app.
+
+Native bridge dirt2_driver loads system Vulkan or the chosen custom driver via
+pinned libadrenotools 8fae8ce254dfc1344527e05301e43f37dea2df80 and its pinned
+linkernsbypass submodule. DXVK resolves a unique bridge symbol; SDL uses the same
+bridge through SDL_HINT_VULKAN_LIBRARY. No direct libvulkan DT_NEEDED on the game.
+The bridge rejects custom-driver fallback if the requested library isn't mapped.
+All hook libraries and BSD notices are packaged with 16KB alignment. Sources are
+prepared in build/deps/src; existing CI script/cache hashing includes their pin.
+
+Android-only DXVK patch 0005 adds a headless probe mode. driver_probe.cpp uses the
+actual DxvkDeviceCapabilities::isSuitable check, Android surface-extension checks,
+and logical-device creation. Probe errors/crashes/timeouts leave the launcher
+alive. Each check/new game gets a fresh process; no live driver switching.
+
+Validation: native build + Java compilation + signed/16KB-aligned APK PASS.
+11 host Java tests exercise production archive extraction (traversal, duplicates,
+metadata/entry limits, missing metadata, valid package, ARM64/ELF rejection).
+Android API34 ARM64 emulator verified unsupported-driver feedback/disabled Play,
+native ZIP import, unloadable-driver handling, saved selection after process
+restart, and recovery after deliberately killing the probe during a retry.
+The final APK also preserved import/selection across an in-place update; removing
+the test driver restored system selection and rechecked it successfully.
+Evidence in build/android-driver-*.xml/.png/.log and build/driver-*.xml.
+Odin/Xiaomi are not connected on either ADB server (5037/15038). Real custom-driver
+loading, compatible Play and gameplay still need hardware validation. The original
+tablet post-race crash below remains unresolved. No commit made for this change.
+
 ## Android post-race texture-upload crash investigation (2026-10-21, pending device test)
 
 User reports finishing race -> loading screen before menu. Extracted latest crash

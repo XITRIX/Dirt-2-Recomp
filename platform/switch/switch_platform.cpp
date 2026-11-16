@@ -93,6 +93,59 @@ void set_metalfx_enabled(bool) {}
 
 namespace switch_platform {
 
+#if defined(__SWITCH2__)
+namespace {
+ClkrstSession g_cpu_clock_session{};
+u32 g_original_cpu_clock_hz = 0;
+}  // namespace
+
+void restore_cpu_clock() {
+    if (!serviceIsActive(&g_cpu_clock_session.s)) return;
+    const Result rc = clkrstSetClockRate(&g_cpu_clock_session, g_original_cpu_clock_hz);
+    if (R_FAILED(rc))
+        rt::log("Switch 2: CPU clock restore to %u Hz failed: %08X", g_original_cpu_clock_hz, unsigned(rc));
+    clkrstCloseSession(&g_cpu_clock_session);
+    clkrstExit();
+}
+
+void boost_cpu_clock() {
+    if (serviceIsActive(&g_cpu_clock_session.s)) return;
+    // Request 1.7 GHz for the game; leave GPU and memory clocks alone.
+    constexpr u32 kCpuClockHz = 1'700'000'000;
+    Result rc = clkrstInitialize();
+    if (R_FAILED(rc)) {
+        rt::log("Switch 2: CPU clock service unavailable: %08X", unsigned(rc));
+        return;
+    }
+    rc = clkrstOpenSession(&g_cpu_clock_session, PcvModuleId_CpuBus, 3);
+    if (R_FAILED(rc)) {
+        rt::log("Switch 2: CPU clock session failed: %08X", unsigned(rc));
+        clkrstExit();
+        return;
+    }
+    rc = clkrstGetClockRate(&g_cpu_clock_session, &g_original_cpu_clock_hz);
+    if (R_FAILED(rc) || std::atexit(restore_cpu_clock) != 0) {
+        rt::log("Switch 2: cannot preserve CPU clock for exit (query result %08X); skipping boost", unsigned(rc));
+        clkrstCloseSession(&g_cpu_clock_session);
+        clkrstExit();
+        return;
+    }
+    rc = clkrstSetClockRate(&g_cpu_clock_session, kCpuClockHz);
+    if (R_FAILED(rc)) {
+        rt::log("Switch 2: CPU clock request for %u Hz failed: %08X", kCpuClockHz, unsigned(rc));
+        restore_cpu_clock();
+        return;
+    }
+    u32 actual_hz = 0;
+    rc = clkrstGetClockRate(&g_cpu_clock_session, &actual_hz);
+    if (R_SUCCEEDED(rc))
+        rt::log("Switch 2: CPU clock %u -> %u Hz (requested %u Hz)",
+                g_original_cpu_clock_hz, actual_hz, kCpuClockHz);
+    else
+        rt::log("Switch 2: CPU clock requested %u Hz; readback failed: %08X", kCpuClockHz, unsigned(rc));
+}
+#endif
+
 void install_resolution_restrictions() {
     constexpr const char* relative = "system/hardware_settings_restrictions.xml";
     std::ifstream input(vfs::host_path(std::string(vfs::kInstallDir) + "/" + relative), std::ios::binary);
